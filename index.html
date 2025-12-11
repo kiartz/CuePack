@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CuePack Manager (Locale)</title>
+    
+    <!-- 1. Caricamento Librerie Esterne (React, Tailwind, Icone, PDF) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              slate: { 850: '#151f32', 900: '#0f172a', 950: '#020617' }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #0f172a; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel per tradurre JSX nel browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide-react@0.344.0/dist/umd/lucide-react.js"></script>
+    
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.1/",
+    "react/": "https://esm.sh/react@^19.2.1/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.560.0",
+    "jspdf": "https://esm.sh/jspdf@^3.0.4",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.2",
+    "vite": "https://esm.sh/vite@^7.2.7",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased h-screen overflow-hidden">
+    <div id="root" class="h-full flex flex-col"></div>
+
+    <!-- 2. Logica Applicativa (Tutto il codice React qui dentro) -->
+    <script type="text/babel">
+        // --- Setup Globale ---
+        const { useState, useEffect, useRef } = React;
+        const { 
+            Plus, Search, Edit2, Trash2, Copy, Package, X, Layers, ClipboardList, 
+            Menu, Home, FileDown, Settings2, Box, Package: PackageIcon, Calendar, 
+            MapPin, StickyNote, Download, Upload, RefreshCw, LayoutDashboard, 
+            Database, FileText, AlertCircle, Archive, AlertTriangle 
+        } = lucideReact;
+        const jsPDF = window.jspdf.jsPDF;
+
+        // --- Types & Constants (Simulati) ---
+        const Category = {
+            AUDIO: 'Audio',
+            LIGHTS: 'Luci',
+            VIDEO: 'Video',
+            STRUCTURE: 'Strutture',
+            CABLES: 'Cablaggi',
+            REGIA: 'Regia',
+            OTHER: 'Altro'
+        };
+
+        const INITIAL_INVENTORY = [
+            { id: '1', name: 'Line Array Top (K2)', category: Category.AUDIO, weight: 56, inStock: 24, description: 'High power module' },
+            { id: '2', name: 'Subwoofer (KS28)', category: Category.AUDIO, weight: 79, inStock: 16, description: 'Dual 18 inch sub' },
+            { id: '3', name: 'Amplificatore LA12X', category: Category.AUDIO, weight: 14, inStock: 10, description: '4 channel amp' },
+            { id: '4', name: 'Moving Head Beam', category: Category.LIGHTS, weight: 18, inStock: 40, description: 'Sharp beam fixture' },
+            { id: '5', name: 'LED Wash', category: Category.LIGHTS, weight: 12, inStock: 30, description: 'RGBW Wash' },
+            { id: '6', name: 'Truss 2m (Black)', category: Category.STRUCTURE, weight: 15, inStock: 50, description: 'SQ-30 heavy duty' },
+            { id: '7', name: 'Base Plate (Steel)', category: Category.STRUCTURE, weight: 25, inStock: 20, description: '80x80cm' },
+            { id: '8', name: 'Video Wall Panel (3.9mm)', category: Category.VIDEO, weight: 8, inStock: 100, description: '50x50cm outdoor' },
+            { id: '9', name: 'Power Distro 63A', category: Category.CABLES, weight: 20, inStock: 5, description: '3-phase distro' },
+            { id: '10', name: 'Shure SM58', category: Category.AUDIO, weight: 0.3, inStock: 20, description: 'Dynamic Mic' },
+        ];
+
+        const INITIAL_KITS = [
+            {
+                id: 'k1',
+                name: 'PA Tower (Left/Right)',
+                description: 'Stack standard per lato (6 top + 2 sub)',
+                items: [
+                { itemId: '1', quantity: 6 },
+                { itemId: '2', quantity: 2 },
+                { itemId: '3', quantity: 2 },
+                ]
+            },
+            {
+                id: 'k2',
+                name: 'Totem Luci Standard',
+                description: 'Totem 2m con 1 beam e 1 wash',
+                items: [
+                { itemId: '6', quantity: 1 },
+                { itemId: '7', quantity: 1 },
+                { itemId: '4', quantity: 1 },
+                { itemId: '5', quantity: 1 },
+                ]
+            }
+        ];
+
+        // --- Components ---
+
+        const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
+            if (!isOpen) return null;
+            const sizeClasses = { md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-6xl' };
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                    <div className={`bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] flex flex-col`}>
+                        <div className="flex justify-between items-center p-6 border-b border-slate-700">
+                            <h2 className="text-xl font-bold text-white">{title}</h2>
+                            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X size={24} /></button>
+                        </div>
+                        <div className="p-6 overflow-y-auto custom-scrollbar">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="p-3 bg-rose-900/30 rounded-full text-rose-500"><AlertTriangle size={24} /></div>
+                            <h2 className="text-xl font-bold text-white">{title}</h2>
+                        </div>
+                        <p className="text-slate-300 mb-6 leading-relaxed">{message}</p>
+                        <div className="flex justify-end gap-3">
+                            <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all">Annulla</button>
+                            <button onClick={() => { onConfirm(); onClose(); }} className="px-6 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-medium shadow-lg shadow-rose-900/20 transition-all">Elimina</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ItemFormModal = ({ isOpen, onClose, onSave, initialData, title }) => {
+            const [formData, setFormData] = useState({ category: Category.AUDIO, inStock: 0, weight: 0, name: '', description: '' });
+            const [weightInput, setWeightInput] = useState('0');
+
+            useEffect(() => {
+                if (isOpen) {
+                    if (initialData) {
+                        setFormData({ ...initialData });
+                        setWeightInput(initialData.weight?.toString() || '0');
+                    } else {
+                        setFormData({ category: Category.AUDIO, inStock: 0, weight: 0, name: '', description: '' });
+                        setWeightInput('0');
+                    }
+                }
+            }, [isOpen, initialData]);
+
+            const handleSubmit = () => {
+                if (!formData.name) return;
+                const parsedWeight = parseFloat(weightInput.replace(',', '.'));
+                const finalWeight = isNaN(parsedWeight) ? 0 : parsedWeight;
+                onSave({
+                    name: formData.name,
+                    category: formData.category || Category.AUDIO,
+                    inStock: formData.inStock || 0,
+                    weight: finalWeight,
+                    description: formData.description || ''
+                });
+                onClose();
+            };
+
+            return (
+                <Modal isOpen={isOpen} onClose={onClose} title={title}>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Nome</label>
+                            <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none"
+                                value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Es. Cavo XLR 10m" autoFocus />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Categoria</label>
+                                <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none"
+                                    value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                                    {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Stock Totale</label>
+                                <input type="number" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none"
+                                    value={formData.inStock} onChange={e => setFormData({...formData, inStock: Number(e.target.value)})} />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Peso (kg)</label>
+                            <input type="text" inputMode="decimal" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none"
+                                value={weightInput} onChange={e => { const val = e.target.value; if (/^[\d.,]*$/.test(val)) setWeightInput(val); }}
+                                onBlur={() => { const parsed = parseFloat(weightInput.replace(',', '.')); if (!isNaN(parsed)) setWeightInput(parsed.toString()); }} />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Descrizione</label>
+                            <textarea className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none h-24"
+                                value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} />
+                        </div>
+                        <div className="flex justify-end gap-2 mt-6">
+                            <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white">Annulla</button>
+                            <button onClick={handleSubmit} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">Salva</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        };
+
+        const InventoryView = ({ items, setItems }) => {
+            const [searchTerm, setSearchTerm] = useState('');
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [itemToDelete, setItemToDelete] = useState(null);
+
+            const filteredItems = items.filter(item => 
+                item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                item.category.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            const handleOpenModal = (item) => {
+                setEditingItem(item || null);
+                setIsModalOpen(true);
+            };
+
+            const handleSave = (itemData) => {
+                if (editingItem) {
+                    setItems(prev => prev.map(i => i.id === editingItem.id ? { ...itemData, id: i.id } : i));
+                } else {
+                    const newItem = { ...itemData, id: crypto.randomUUID() };
+                    setItems(prev => [...prev, newItem]);
+                }
+            };
+
+            const confirmDelete = () => {
+                if (itemToDelete) {
+                    setItems(prev => prev.filter(i => i.id !== itemToDelete));
+                    setItemToDelete(null);
+                }
+            };
+
+            const handleDuplicate = (item) => {
+                const newItem = { ...item, id: crypto.randomUUID(), name: `${item.name} (Copia)` };
+                setItems(prev => [...prev, newItem]);
+            };
+
+            return (
+                <div className="h-full flex flex-col p-6 space-y-4">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                        <h1 className="text-3xl font-bold text-white">Inventario Materiale</h1>
+                        <div className="flex gap-2 w-full md:w-auto">
+                            <div className="relative w-full md:w-64">
+                                <Search className="absolute left-3 top-2.5 text-slate-400" size={20} />
+                                <input type="text" placeholder="Cerca materiale..." className="w-full bg-slate-800 border border-slate-700 text-white pl-10 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                    value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            </div>
+                            <button onClick={() => handleOpenModal()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors">
+                                <Plus size={20} /><span className="hidden md:inline">Nuovo</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+                        <div className="overflow-auto flex-1">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-800 text-slate-300 sticky top-0 z-10">
+                                    <tr>
+                                        <th className="p-4 font-semibold">Nome</th>
+                                        <th className="p-4 font-semibold">Categoria</th>
+                                        <th className="p-4 font-semibold text-right">Peso (kg)</th>
+                                        <th className="p-4 font-semibold text-right">Stock</th>
+                                        <th className="p-4 font-semibold text-center">Azioni</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800">
+                                    {filteredItems.map(item => (
+                                        <tr key={item.id} className="hover:bg-slate-800/50 transition-colors">
+                                            <td className="p-4">
+                                                <div className="font-medium text-white">{item.name}</div>
+                                                <div className="text-sm text-slate-500 truncate max-w-xs">{item.description}</div>
+                                            </td>
+                                            <td className="p-4">
+                                                <span className={`px-2 py-1 rounded-md text-xs font-semibold ${
+                                                    item.category === Category.AUDIO ? 'bg-amber-900/30 text-amber-500' : 
+                                                    item.category === Category.LIGHTS ? 'bg-purple-900/30 text-purple-500' :
+                                                    item.category === Category.VIDEO ? 'bg-blue-900/30 text-blue-500' :
+                                                    'bg-slate-700 text-slate-300'
+                                                }`}>{item.category}</span>
+                                            </td>
+                                            <td className="p-4 text-right text-slate-300">{item.weight}</td>
+                                            <td className="p-4 text-right text-slate-300">{item.inStock}</td>
+                                            <td className="p-4">
+                                                <div className="flex justify-center gap-2">
+                                                    <button onClick={() => handleOpenModal(item)} className="p-2 text-blue-400 hover:bg-blue-900/30 rounded-lg"><Edit2 size={16} /></button>
+                                                    <button onClick={() => handleDuplicate(item)} className="p-2 text-emerald-400 hover:bg-emerald-900/30 rounded-lg"><Copy size={16} /></button>
+                                                    <button onClick={() => setItemToDelete(item.id)} className="p-2 text-rose-400 hover:bg-rose-900/30 rounded-lg"><Trash2 size={16} /></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <ItemFormModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSave} initialData={editingItem} title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"} />
+                    <ConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={confirmDelete} title="Elimina Materiale" message="Sei sicuro?" />
+                </div>
+            );
+        };
+
+        const KitsView = ({ kits, setKits, inventory, setInventory }) => {
+            const [searchTerm, setSearchTerm] = useState('');
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [editingKit, setEditingKit] = useState(null);
+            const [formData, setFormData] = useState({ items: [] });
+            const [itemSearch, setItemSearch] = useState('');
+            const [kitToDelete, setKitToDelete] = useState(null);
+            const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
+            
+            const qtyInputRefs = useRef({});
+            const [lastAddedItemId, setLastAddedItemId] = useState(null);
+
+            const filteredKits = kits.filter(kit => kit.name.toLowerCase().includes(searchTerm.toLowerCase()));
+
+            useEffect(() => {
+                if (lastAddedItemId && qtyInputRefs.current[lastAddedItemId]) {
+                    qtyInputRefs.current[lastAddedItemId]?.focus();
+                    qtyInputRefs.current[lastAddedItemId]?.select();
+                    setLastAddedItemId(null);
+                }
+            }, [formData.items, lastAddedItemId]);
+
+            const handleOpenModal = (kit) => {
+                if (kit) {
+                    setEditingKit(kit);
+                    setFormData({ ...kit });
+                } else {
+                    setEditingKit(null);
+                    setFormData({ name: '', description: '', items: [] });
+                }
+                setIsModalOpen(true);
+            };
+
+            const handleSave = () => {
+                if (!formData.name) return;
+                if (editingKit) {
+                    setKits(prev => prev.map(k => k.id === editingKit.id ? { ...formData, id: k.id } : k));
+                } else {
+                    const newKit = { ...formData, id: crypto.randomUUID() };
+                    setKits(prev => [...prev, newKit]);
+                }
+                setIsModalOpen(false);
+            };
+
+            const confirmDelete = () => {
+                if (kitToDelete) {
+                    setKits(prev => prev.filter(k => k.id !== kitToDelete));
+                    setKitToDelete(null);
+                }
+            };
+
+            const handleDuplicate = (kit) => {
+                const newKit = { ...kit, id: crypto.randomUUID(), name: `${kit.name} (Copia)` };
+                setKits(prev => [...prev, newKit]);
+            };
+
+            const addItemToKit = (invItem) => {
+                const existing = formData.items?.find(i => i.itemId === invItem.id);
+                if (existing) {
+                    const updatedItems = formData.items?.map(i => i.itemId === invItem.id ? { ...i, quantity: i.quantity + 1 } : i);
+                    setFormData({ ...formData, items: updatedItems });
+                } else {
+                    setFormData({ ...formData, items: [...(formData.items || []), { itemId: invItem.id, quantity: 1 }] });
+                }
+                setLastAddedItemId(invItem.id);
+            };
+
+            const removeItemFromKit = (itemId) => {
+                setFormData({ ...formData, items: formData.items?.filter(i => i.itemId !== itemId) });
+            };
+
+            const updateItemQty = (itemId, qty) => {
+                if (qty < 1) return;
+                setFormData({ ...formData, items: formData.items?.map(i => i.itemId === itemId ? { ...i, quantity: qty } : i) });
+            };
+
+            const getInventoryName = (id) => inventory.find(i => i.id === id)?.name || 'Unknown Item';
+
+            const handleCreateNewItem = (itemData) => {
+                const newItem = { ...itemData, id: crypto.randomUUID() };
+                setInventory(prev => [...prev, newItem]);
+                addItemToKit(newItem);
+            };
+
+            return (
+                <div className="h-full flex flex-col p-6 space-y-4">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                        <h1 className="text-3xl font-bold text-white">Gestione Kit</h1>
+                        <div className="flex gap-2 w-full md:w-auto">
+                            <div className="relative w-full md:w-64">
+                                <Search className="absolute left-3 top-2.5 text-slate-400" size={20} />
+                                <input type="text" placeholder="Cerca kit..." className="w-full bg-slate-800 border border-slate-700 text-white pl-10 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                                    value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            </div>
+                            <button onClick={() => handleOpenModal()} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors">
+                                <Plus size={20} /><span className="hidden md:inline">Nuovo Kit</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto pb-4">
+                        {filteredKits.map(kit => (
+                            <div key={kit.id} className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col gap-4 hover:border-slate-700 transition-all">
+                                <div className="flex justify-between items-start">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg"><Package size={24} /></div>
+                                        <div><h3 className="text-lg font-bold text-white">{kit.name}</h3><p className="text-sm text-slate-500">{kit.items.length} Elementi</p></div>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        <button onClick={() => handleDuplicate(kit)} className="p-2 text-slate-400 hover:text-white rounded-lg"><Copy size={16} /></button>
+                                        <button onClick={() => handleOpenModal(kit)} className="p-2 text-blue-400 hover:text-blue-300 rounded-lg"><Edit2 size={16} /></button>
+                                        <button onClick={() => setKitToDelete(kit.id)} className="p-2 text-rose-400 hover:text-rose-300 rounded-lg"><Trash2 size={16} /></button>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-950/50 rounded-lg p-3 text-sm text-slate-400 h-24 overflow-y-auto">{kit.description || 'Nessuna descrizione.'}</div>
+                            </div>
+                        ))}
+                    </div>
+                    <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingKit ? "Modifica Kit" : "Nuovo Kit"} size="xl">
+                        <div className="flex flex-col lg:flex-row gap-6 h-[70vh]">
+                            <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+                                <div className="space-y-4">
+                                    <div><label className="block text-sm text-slate-400 mb-1">Nome Kit</label><input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-purple-500 outline-none" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
+                                    <div><label className="block text-sm text-slate-400 mb-1">Descrizione</label><textarea className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-purple-500 outline-none h-20" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
+                                </div>
+                                <div className="flex-1 bg-slate-950 rounded-lg border border-slate-800 p-4 overflow-hidden flex flex-col">
+                                    <h4 className="text-sm font-semibold text-purple-400 mb-2 uppercase tracking-wider">Contenuto Kit</h4>
+                                    <div className="overflow-y-auto flex-1 space-y-2 pr-2 custom-scrollbar">
+                                        {formData.items?.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800">
+                                                <span className="text-slate-300 text-sm">{getInventoryName(item.itemId)}</span>
+                                                <div className="flex items-center gap-3">
+                                                    <input ref={(el) => { qtyInputRefs.current[item.itemId] = el }} type="number" className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center text-white text-sm focus:border-purple-500 outline-none" value={item.quantity} onChange={(e) => updateItemQty(item.itemId, Number(e.target.value))} />
+                                                    <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500 hover:text-rose-400"><X size={16} /></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700">
+                                <div className="flex justify-between items-center mb-3"><h4 className="font-semibold text-white">Aggiungi Materiale</h4><button onClick={() => setIsNewItemModalOpen(true)} className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"><Plus size={16} /></button></div>
+                                <div className="relative mb-3"><Search className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="text" placeholder="Cerca..." className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm focus:border-purple-500 outline-none" value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} /></div>
+                                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
+                                    {inventory.filter(i => i.name.toLowerCase().includes(itemSearch.toLowerCase())).map(item => (
+                                        <button key={item.id} onClick={() => addItemToKit(item)} className="w-full text-left p-2 hover:bg-slate-700 rounded flex justify-between items-center group transition-colors"><span className="text-sm text-slate-300 truncate w-48">{item.name}</span><Plus size={16} className="text-slate-500 group-hover:text-purple-400" /></button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-6 border-t border-slate-800 pt-4">
+                            <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Annulla</button>
+                            <button onClick={handleSave} className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium">Salva Kit</button>
+                        </div>
+                    </Modal>
+                    <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={handleCreateNewItem} title="Nuovo Materiale" />
+                    <ConfirmationModal isOpen={!!kitToDelete} onClose={() => setKitToDelete(null)} onConfirm={confirmDelete} title="Elimina Kit" message="Sei sicuro?" />
+                </div>
+            );
+        };
+
+        const PackingListBuilder = ({ inventory, setInventory, kits, lists, setLists, activeListId, setActiveListId }) => {
+            const [activeSectionId, setActiveSectionId] = useState('');
+            const [pickerSearch, setPickerSearch] = useState('');
+            const [activeTab, setActiveTab] = useState('items');
+            const [openNoteIds, setOpenNoteIds] = useState(new Set());
+            const [isDeleteListModalOpen, setIsDeleteListModalOpen] = useState(false);
+            const [sectionToDelete, setSectionToDelete] = useState(null);
+            const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
+            const [sectionModal, setSectionModal] = useState({ isOpen: false, type: 'create', name: '' });
+            const qtyInputRefs = useRef({});
+            const [lastAddedComponentId, setLastAddedComponentId] = useState(null);
+
+            const activeList = lists.find(l => l.id === activeListId);
+            const sections = activeList?.sections || [];
+
+            useEffect(() => {
+                if (lists.length > 0 && !lists.find(l => l.id === activeListId)) setActiveListId(lists[0].id);
+                else if (lists.length === 0 && activeListId !== '') setActiveListId('');
+            }, [lists, activeListId]);
+
+            useEffect(() => {
+                if (activeList) {
+                    const currentSectionExists = activeList.sections.find(s => s.id === activeSectionId);
+                    if (!activeSectionId || !currentSectionExists) {
+                        if (activeList.sections.length > 0) setActiveSectionId(activeList.sections[0].id);
+                        else setActiveSectionId('');
+                    }
+                }
+            }, [activeListId, activeList, activeSectionId]);
+
+            useEffect(() => {
+                if (lastAddedComponentId && qtyInputRefs.current[lastAddedComponentId]) {
+                    qtyInputRefs.current[lastAddedComponentId]?.focus();
+                    qtyInputRefs.current[lastAddedComponentId]?.select();
+                    setLastAddedComponentId(null);
+                }
+            }, [sections, lastAddedComponentId]);
+
+            const handleCreateList = () => {
+                const newList = {
+                    id: crypto.randomUUID(),
+                    eventName: 'Nuovo Evento',
+                    eventDate: '',
+                    location: '',
+                    creationDate: new Date().toISOString(),
+                    notes: '',
+                    sections: [
+                        { id: crypto.randomUUID(), name: 'Audio', components: [] },
+                        { id: crypto.randomUUID(), name: 'Luci', components: [] },
+                        { id: crypto.randomUUID(), name: 'Video', components: [] },
+                        { id: crypto.randomUUID(), name: 'Regia', components: [] },
+                    ]
+                };
+                setLists([...lists, newList]);
+                setActiveListId(newList.id);
+            };
+
+            const confirmDeleteList = () => {
+                if (!activeList) return;
+                const newLists = lists.filter(l => l.id !== activeListId);
+                let nextId = '';
+                if (newLists.length > 0) nextId = newLists[0].id;
+                setLists(newLists);
+                setActiveListId(nextId);
+            };
+
+            const updateActiveList = (updates) => {
+                setLists(prev => prev.map(l => l.id === activeListId ? { ...l, ...updates } : l));
+            };
+
+            const activeSection = sections.find(s => s.id === activeSectionId);
+
+            const openAddSectionModal = () => setSectionModal({ isOpen: true, type: 'create', name: '' });
+            const openRenameSectionModal = (id, currentName) => setSectionModal({ isOpen: true, type: 'rename', sectionId: id, name: currentName });
+
+            const handleSectionModalSave = () => {
+                if (!activeList || !sectionModal.name.trim()) return;
+                if (sectionModal.type === 'create') {
+                    const newId = crypto.randomUUID();
+                    const newSection = { id: newId, name: sectionModal.name.trim(), components: [] };
+                    updateActiveList({ sections: [...sections, newSection] });
+                    setActiveSectionId(newId);
+                } else {
+                    const newSections = sections.map(s => s.id === sectionModal.sectionId ? { ...s, name: sectionModal.name.trim() } : s);
+                    updateActiveList({ sections: newSections });
+                }
+                setSectionModal(prev => ({ ...prev, isOpen: false }));
+            };
+
+            const confirmRemoveSection = () => {
+                if (!activeList || !sectionToDelete) return;
+                if (sections.length <= 1) { setSectionToDelete(null); return; }
+                const newSections = sections.filter(s => s.id !== sectionToDelete);
+                updateActiveList({ sections: newSections });
+                setSectionToDelete(null);
+            };
+
+            const addToSection = (item, type) => {
+                if (!activeList || !activeSection) return;
+                const existingComponent = activeSection.components.find(c => c.type === type && c.referenceId === item.id);
+
+                if (existingComponent) {
+                    const newSections = sections.map(s => {
+                        if (s.id === activeSectionId) {
+                            return { ...s, components: s.components.map(c => c.uniqueId === existingComponent.uniqueId ? { ...c, quantity: c.quantity + 1 } : c) };
+                        }
+                        return s;
+                    });
+                    updateActiveList({ sections: newSections });
+                    setLastAddedComponentId(existingComponent.uniqueId);
+                } else {
+                    let component;
+                    if (type === 'kit') {
+                        const kitContents = item.items.map(ki => {
+                            const invItem = inventory.find(i => i.id === ki.itemId);
+                            return { name: invItem?.name || 'Unknown', quantity: ki.quantity, category: invItem?.category || 'Altro' };
+                        });
+                        component = { uniqueId: crypto.randomUUID(), type: 'kit', referenceId: item.id, name: item.name, quantity: 1, category: 'Kit', contents: kitContents, notes: '' };
+                    } else {
+                        component = { uniqueId: crypto.randomUUID(), type: 'item', referenceId: item.id, name: item.name, quantity: 1, category: item.category, notes: '' };
+                    }
+                    const newSections = sections.map(s => {
+                        if (s.id === activeSectionId) return { ...s, components: [...s.components, component] };
+                        return s;
+                    });
+                    updateActiveList({ sections: newSections });
+                    setLastAddedComponentId(component.uniqueId);
+                }
+            };
+
+            const updateComponentQty = (sectionId, uniqueId, qty) => {
+                if (qty < 1 || !activeList) return;
+                const newSections = sections.map(s => {
+                    if (s.id === sectionId) return { ...s, components: s.components.map(c => c.uniqueId === uniqueId ? { ...c, quantity: qty } : c) };
+                    return s;
+                });
+                updateActiveList({ sections: newSections });
+            };
+
+            const updateComponentNote = (sectionId, uniqueId, note) => {
+                if (!activeList) return;
+                const newSections = sections.map(s => {
+                    if (s.id === sectionId) return { ...s, components: s.components.map(c => c.uniqueId === uniqueId ? { ...c, notes: note } : c) };
+                    return s;
+                });
+                updateActiveList({ sections: newSections });
+            };
+
+            const toggleNoteInput = (uniqueId) => {
+                const newSet = new Set(openNoteIds);
+                if (newSet.has(uniqueId)) newSet.delete(uniqueId); else newSet.add(uniqueId);
+                setOpenNoteIds(newSet);
+            };
+
+            const removeComponent = (sectionId, uniqueId) => {
+                if (!activeList) return;
+                const newSections = sections.map(s => {
+                    if (s.id === sectionId) return { ...s, components: s.components.filter(c => c.uniqueId !== uniqueId) };
+                    return s;
+                });
+                updateActiveList({ sections: newSections });
+            };
+
+            const handleCreateNewItem = (itemData) => {
+                const newItem = { ...itemData, id: crypto.randomUUID() };
+                setInventory(prev => [...prev, newItem]);
+                addToSection(newItem, 'item');
+            };
+
+            const exportPDF = () => {
+                if (!activeList) return;
+                const doc = new jsPDF();
+                doc.setFontSize(22);
+                doc.text(`LISTA MATERIALE "${activeList.eventName.toUpperCase()}"`, 14, 20);
+                doc.setFontSize(12);
+                doc.text(`Evento: ${activeList.eventName}`, 14, 30);
+                doc.text(`Luogo: ${activeList.location}`, 14, 36);
+                doc.text(`Data: ${activeList.eventDate}`, 14, 42);
+                let finalY = 50;
+                activeList.sections.forEach(section => {
+                    if (section.components.length === 0) return;
+                    doc.setFontSize(14); doc.setFillColor(200, 200, 200); doc.rect(14, finalY, 182, 8, 'F'); doc.setTextColor(0, 0, 0);
+                    doc.text(section.name.toUpperCase(), 16, finalY + 5.5);
+                    finalY += 10;
+                    const tableData = [];
+                    section.components.forEach(comp => {
+                        let nameContent = comp.type === 'kit' ? `[KIT] ${comp.name}` : comp.name;
+                        if (comp.notes) nameContent += `\nNOTE: ${comp.notes}`;
+                        tableData.push([nameContent, comp.quantity, '']);
+                        if (comp.type === 'kit' && comp.contents) {
+                            comp.contents.forEach(kItem => tableData.push([`  - ${kItem.name}`, kItem.quantity * comp.quantity, '']));
+                        }
+                    });
+                    doc.autoTable({
+                        startY: finalY, head: [['Materiale', 'Qta', 'Check']], body: tableData, theme: 'grid',
+                        headStyles: { fillColor: [40, 40, 40] }, styles: { fontSize: 10, cellPadding: 2 }, columnStyles: { 0: { cellWidth: 130 }, 1: { cellWidth: 20, halign: 'center' } },
+                        didDrawPage: (data) => { finalY = data.cursor?.y || 0; const pageSize = doc.internal.pageSize; doc.setFontSize(8); doc.setTextColor(150); doc.text("Pagina " + data.pageNumber, pageSize.getWidth() - 14, pageSize.getHeight() - 10, { align: 'right' }); }
+                    });
+                    finalY = doc.lastAutoTable.finalY + 10;
+                });
+                if (activeList.notes) {
+                    if (finalY > 250) { doc.addPage(); finalY = 20; }
+                    doc.setFontSize(10); doc.setTextColor(0, 0, 0); doc.text("Note Magazzino:", 14, finalY); doc.setFontSize(9); doc.text(activeList.notes, 14, finalY + 5);
+                }
+                doc.save(`Lista_${(activeList.eventName || 'evento').replace(/\s/g, '_')}.pdf`);
+            };
+
+            const exportCSV = () => {
+                if (!activeList) return;
+                let csvContent = "data:text/csv;charset=utf-8,Sezione,Tipo,Nome,Quantità,Note\n";
+                activeList.sections.forEach(s => s.components.forEach(c => csvContent += `${s.name},${c.type},${c.name},${c.quantity},"${c.notes || ''}"\n`));
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `lista_${activeList.eventName || 'evento'}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            if (lists.length === 0) {
+                return <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-4"><ClipboardList size={64} className="opacity-20" /><h2 className="text-xl font-bold">Nessun evento presente</h2><button onClick={handleCreateList} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-lg flex items-center gap-2 font-medium transition-colors"><Plus size={20} /> Crea Primo Evento</button></div>;
+            }
+
+            return (
+                <div className="h-full flex flex-col md:flex-row gap-0 md:gap-4 p-4 overflow-hidden">
+                    <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+                        <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-3 w-full sm:w-auto"><div className="bg-emerald-900/30 p-2 rounded-lg text-emerald-500"><Settings2 size={20} /></div><div className="flex flex-col flex-1"><span className="text-xs text-slate-500 uppercase font-bold tracking-wider">Gestione Eventi</span><div className="flex items-center gap-2"><select value={activeListId} onChange={(e) => setActiveListId(e.target.value)} className="bg-slate-900 border border-slate-700 text-white text-sm rounded p-1 pr-8 outline-none focus:border-emerald-500 cursor-pointer">{lists.map(l => <option key={l.id} value={l.id}>{l.eventName ? l.eventName : 'Nuovo Evento'} ({l.eventDate ? l.eventDate : 'No Data'})</option>)}</select></div></div></div>
+                            <div className="flex gap-2 w-full sm:w-auto"><button onClick={handleCreateList} className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-medium transition-colors"><Plus size={16} /> <span className="hidden sm:inline">Nuovo Evento</span></button><button onClick={() => setIsDeleteListModalOpen(true)} className="px-3 py-2 bg-rose-900/20 hover:bg-rose-900/40 text-rose-400 border border-rose-900/50 rounded transition-colors group" title="Elimina Evento"><Trash2 size={16} className="group-hover:scale-110 transition-transform" /></button></div>
+                        </div>
+                        {activeList && (
+                            <div className="p-6 bg-slate-800 border-b border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="relative"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className="text-slate-500 font-bold text-xs">EV</span></div><input placeholder="Nome Evento" className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500" value={activeList.eventName} onChange={e => updateActiveList({ eventName: e.target.value })} /></div>
+                                <div className="relative"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><MapPin size={14} className="text-slate-500" /></div><input placeholder="Location" className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500" value={activeList.location} onChange={e => updateActiveList({ location: e.target.value })} /></div>
+                                <div className="relative"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Calendar size={14} className="text-slate-500" /></div><input type="date" className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500" value={activeList.eventDate} onChange={e => updateActiveList({ eventDate: e.target.value })} /></div>
+                            </div>
+                        )}
+                        {activeList && (
+                            <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-700 overflow-x-auto">
+                                {sections.map(s => (
+                                    <button key={s.id} onClick={() => setActiveSectionId(s.id)} className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2 group ${activeSectionId === s.id ? 'bg-slate-700 text-white border-t border-x border-slate-600' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>{s.name}<span className="bg-slate-900 px-1.5 py-0.5 rounded-full text-xs text-slate-500">{s.components.length}</span>{activeSectionId === s.id && (<div className="flex items-center gap-1 ml-1"><span onClick={(e) => { e.stopPropagation(); openRenameSectionModal(s.id, s.name); }} className="p-1 hover:bg-slate-600 rounded-full text-slate-400 hover:text-white transition-colors"><Edit2 size={12} /></span>{sections.length > 1 && (<span onClick={(e) => { e.stopPropagation(); setSectionToDelete(s.id); }} className="p-1 hover:bg-slate-600 rounded-full text-slate-400 hover:text-rose-500 transition-colors"><Trash2 size={12} /></span>)}</div>)}</button>
+                                ))}
+                                <button onClick={openAddSectionModal} className="p-2 text-emerald-500 hover:bg-emerald-900/30 rounded-lg hover:text-emerald-400 transition-colors"><Plus size={18} /></button>
+                            </div>
+                        )}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950/30">
+                            {!activeList ? <div className="text-center py-20 text-slate-500">Seleziona o crea un evento</div> : !activeSection || activeSection.components.length === 0 ? <div className="text-center py-20 text-slate-600"><Box size={48} className="mx-auto mb-4 opacity-50" /><p>Questa sezione è vuota.</p></div> : 
+                                activeSection.components.map(comp => {
+                                    const isNoteVisible = openNoteIds.has(comp.uniqueId) || !!comp.notes;
+                                    return (
+                                        <div key={comp.uniqueId} className={`relative group p-4 rounded-lg border transition-all ${comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30' : 'bg-slate-800 border-slate-700'}`}>
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex items-center gap-3">{comp.type === 'kit' ? <PackageIcon size={20} className="text-purple-400" /> : <Box size={20} className="text-slate-400" />}<div><div className="font-medium text-slate-200">{comp.name} {comp.type === 'kit' && <span className="ml-2 text-xs bg-purple-900 text-purple-200 px-1 rounded">KIT</span>}</div><div className="text-xs text-slate-500">{comp.category}</div></div></div>
+                                                <div className="flex items-center gap-3"><button onClick={() => toggleNoteInput(comp.uniqueId)} className={`p-1.5 rounded transition-colors ${comp.notes ? 'text-yellow-400 hover:bg-yellow-900/20' : 'text-slate-500 hover:bg-slate-700 hover:text-white'}`}><StickyNote size={18} /></button><input ref={(el) => { qtyInputRefs.current[comp.uniqueId] = el }} type="number" min="1" className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-center text-white focus:border-blue-500 outline-none" value={comp.quantity} onChange={(e) => updateComponentQty(activeSection.id, comp.uniqueId, Number(e.target.value))} /><button onClick={() => removeComponent(activeSection.id, comp.uniqueId)} className="text-slate-500 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={18} /></button></div>
+                                            </div>
+                                            {isNoteVisible && <div className="mt-2 pl-8 pr-24"><input type="text" placeholder="Aggiungi una nota..." className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-300 focus:border-blue-500 outline-none placeholder-slate-600 transition-all focus:bg-slate-900" value={comp.notes || ''} onChange={(e) => updateComponentNote(activeSection.id, comp.uniqueId, e.target.value)} /></div>}
+                                            {comp.type === 'kit' && comp.contents && <div className="mt-3 ml-2 pl-4 border-l-2 border-slate-700 space-y-1">{comp.contents.map((item, idx) => <div key={idx} className="text-xs text-slate-400 flex justify-between w-full max-w-md"><span>{item.name}</span><span className="text-slate-500">x {item.quantity * comp.quantity}</span></div>)}</div>}
+                                        </div>
+                                    )
+                                })
+                            }
+                        </div>
+                        {activeList && (
+                            <div className="p-4 border-t border-slate-700 bg-slate-800 flex flex-col md:flex-row gap-4 justify-between items-center">
+                                <div className="w-full md:w-1/2"><input placeholder="Note per il magazzino..." className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white" value={activeList.notes} onChange={e => updateActiveList({ notes: e.target.value })} /></div>
+                                <div className="flex gap-2"><button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded transition-colors text-sm font-medium"><FileDown size={16} /> CSV</button><button onClick={exportPDF} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded shadow-lg shadow-emerald-900/20 transition-all font-medium"><FileDown size={16} /> Esporta PDF</button></div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="w-full md:w-80 lg:w-96 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                        <div className="p-4 bg-slate-800 border-b border-slate-700">
+                            <h3 className="font-bold text-white mb-3">Catalogo</h3>
+                            <div className="flex gap-2 mb-3 bg-slate-900 p-1 rounded-lg"><button onClick={() => setActiveTab('items')} className={`flex-1 text-sm py-1.5 rounded-md text-center transition-all ${activeTab === 'items' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>Materiale</button><button onClick={() => setActiveTab('kits')} className={`flex-1 text-sm py-1.5 rounded-md text-center transition-all ${activeTab === 'kits' ? 'bg-purple-900/50 text-purple-200 shadow' : 'text-slate-500 hover:text-slate-300'}`}>Kits</button></div>
+                            <div className="flex gap-2 relative"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 text-slate-500" size={16} /><input placeholder="Cerca..." className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none focus:border-blue-500" value={pickerSearch} onChange={e => setPickerSearch(e.target.value)} /></div>{activeTab === 'items' && (<button onClick={() => setIsNewItemModalOpen(true)} className="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg" title="Crea nuovo materiale"><Plus size={20} /></button>)}</div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                            {activeTab === 'items' ? inventory.filter(i => i.name.toLowerCase().includes(pickerSearch.toLowerCase())).map(item => (<button key={item.id} onClick={() => addToSection(item, 'item')} className="w-full text-left p-3 hover:bg-slate-800 rounded-lg group border border-transparent hover:border-slate-700 transition-all flex justify-between items-center"><div><div className="text-sm text-slate-200">{item.name}</div><div className="text-xs text-slate-500">{item.category} • {item.weight}kg</div></div><Plus size={16} className="text-slate-600 group-hover:text-blue-400" /></button>)) : kits.filter(k => k.name.toLowerCase().includes(pickerSearch.toLowerCase())).map(kit => (<button key={kit.id} onClick={() => addToSection(kit, 'kit')} className="w-full text-left p-3 hover:bg-purple-900/10 rounded-lg group border border-transparent hover:border-purple-900/30 transition-all flex justify-between items-center"><div><div className="text-sm text-slate-200 font-medium">{kit.name}</div><div className="text-xs text-slate-500">{kit.items.length} elementi</div></div><PackageIcon size={16} className="text-purple-600 group-hover:text-purple-400" /></button>))}
+                        </div>
+                    </div>
+                    <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={handleCreateNewItem} title="Nuovo Materiale Rapido" />
+                    <ConfirmationModal isOpen={isDeleteListModalOpen} onClose={() => setIsDeleteListModalOpen(false)} onConfirm={confirmDeleteList} title="Elimina Evento" message="Sei sicuro?" />
+                    <ConfirmationModal isOpen={!!sectionToDelete} onClose={() => setSectionToDelete(null)} onConfirm={confirmRemoveSection} title="Elimina Sezione" message="Sei sicuro?" />
+                    <Modal isOpen={sectionModal.isOpen} onClose={() => setSectionModal(prev => ({...prev, isOpen: false}))} title={sectionModal.type === 'create' ? "Nuova Sezione" : "Rinomina Sezione"}>
+                        <div className="space-y-4"><div><label className="block text-sm text-slate-400 mb-1">Nome Sezione</label><input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={sectionModal.name} onChange={e => setSectionModal(prev => ({...prev, name: e.target.value}))} placeholder="Es. Palco, Backline..." autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleSectionModalSave(); }} /></div><div className="flex justify-end gap-2"><button onClick={() => setSectionModal(prev => ({...prev, isOpen: false}))} className="px-4 py-2 text-slate-400 hover:text-white">Annulla</button><button onClick={handleSectionModalSave} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">Salva</button></div></div>
+                    </Modal>
+                </div>
+            );
+        };
+
+        const HomeView = ({ inventory, setInventory, kits, setKits, lists, setLists, setActiveListId }) => {
+            const listsFileInputRef = useRef(null);
+            const catalogFileInputRef = useRef(null);
+            const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+
+            const totalItems = inventory.length;
+            const totalKits = kits.length;
+            const totalLists = lists.length;
+            const totalItemsInLists = lists.reduce((acc, list) => acc + list.sections.reduce((sAcc, section) => sAcc + section.components.length, 0), 0);
+
+            const handleExportLists = () => {
+                const dataStr = JSON.stringify(lists, null, 2);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url; link.download = `cuepack_events_${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
+            };
+
+            const handleListsFileChange = (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const content = e.target?.result;
+                        const importedLists = JSON.parse(content);
+                        if (!Array.isArray(importedLists)) return alert("File non valido");
+                        const sanitizedLists = importedLists.map(l => ({ ...l, id: crypto.randomUUID(), eventName: `${l.eventName} (Importato)` }));
+                        setLists(prev => [...prev, ...sanitizedLists]);
+                        if (sanitizedLists.length > 0) setActiveListId(sanitizedLists[0].id);
+                        listsFileInputRef.current.value = '';
+                    } catch (e) { alert("Errore file"); }
+                };
+                reader.readAsText(file);
+            };
+
+            const handleExportCatalog = () => {
+                const catalogData = { type: 'cuepack_catalog', exportDate: new Date().toISOString(), inventory, kits };
+                const dataStr = JSON.stringify(catalogData, null, 2);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url; link.download = `cuepack_catalog_${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
+            };
+
+            const handleCatalogFileChange = (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const content = e.target?.result;
+                        const data = JSON.parse(content);
+                        if (data.inventory) setInventory(prev => [...prev, ...data.inventory.map(i => ({...i, id: crypto.randomUUID()}))]);
+                        if (data.kits) setKits(prev => [...prev, ...data.kits.map(k => ({...k, id: crypto.randomUUID()}))]);
+                        alert("Importazione completata!");
+                        catalogFileInputRef.current.value = '';
+                    } catch (e) { alert("Errore file"); }
+                };
+                reader.readAsText(file);
+            };
+
+            const handleResetLists = () => {
+                const newList = { id: crypto.randomUUID(), eventName: 'Nuovo Evento', eventDate: '', location: '', creationDate: new Date().toISOString(), notes: '', sections: [ { id: crypto.randomUUID(), name: 'Audio', components: [] }, { id: crypto.randomUUID(), name: 'Luci', components: [] }, { id: crypto.randomUUID(), name: 'Video', components: [] }, { id: crypto.randomUUID(), name: 'Regia', components: [] } ] };
+                setLists([newList]); setActiveListId(newList.id);
+            };
+
+            const StatCard = ({ icon: Icon, label, value, color, iconColor }) => (
+                <div className={`${color} border border-slate-700 rounded-xl p-4 flex items-center gap-4`}><div className={`p-3 rounded-lg bg-slate-950 ${iconColor}`}><Icon size={24} /></div><div><div className="text-2xl font-bold text-white">{value}</div><div className="text-xs text-slate-400 uppercase tracking-wide font-medium">{label}</div></div></div>
+            );
+
+            return (
+                <div className="h-full p-6 overflow-y-auto custom-scrollbar"><div className="max-w-5xl mx-auto space-y-8"><div className="flex items-center gap-4 mb-8"><div className="p-3 bg-blue-600 rounded-xl shadow-lg shadow-blue-900/20"><LayoutDashboard size={32} className="text-white" /></div><div><h1 className="text-3xl font-bold text-white">Dashboard</h1><p className="text-slate-400">Panoramica e gestione workspace</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><StatCard icon={Database} label="Articoli" value={totalItems} color="bg-slate-800" iconColor="text-blue-500" /><StatCard icon={Package} label="Kits" value={totalKits} color="bg-slate-800" iconColor="text-purple-500" /><StatCard icon={FileText} label="Eventi" value={totalLists} color="bg-slate-800" iconColor="text-emerald-500" /><StatCard icon={LayoutDashboard} label="Totale Materiale" value={totalItemsInLists} color="bg-slate-800" iconColor="text-amber-500" /></div><div className="bg-slate-900 border border-slate-800 rounded-xl p-6"><h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><FileText className="text-emerald-400" /> Gestione Eventi (Liste)</h2><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-emerald-500/50 transition-colors"><div className="w-16 h-16 bg-emerald-900/20 rounded-full flex items-center justify-center mb-4"><Download size={32} className="text-emerald-500" /></div><h3 className="text-lg font-bold text-slate-200 mb-2">Esporta Eventi</h3><button onClick={handleExportLists} className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors">Salva Eventi</button></div><div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-emerald-500/50 transition-colors"><div className="w-16 h-16 bg-emerald-900/20 rounded-full flex items-center justify-center mb-4"><Upload size={32} className="text-emerald-500" /></div><h3 className="text-lg font-bold text-slate-200 mb-2">Importa Eventi</h3><input type="file" ref={listsFileInputRef} onChange={handleListsFileChange} className="hidden" accept=".json" /><button onClick={() => listsFileInputRef.current?.click()} className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors">Carica Eventi</button></div><div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-rose-500/50 transition-colors"><div className="w-16 h-16 bg-rose-900/20 rounded-full flex items-center justify-center mb-4"><RefreshCw size={32} className="text-rose-500" /></div><h3 className="text-lg font-bold text-slate-200 mb-2">Reset Eventi</h3><button onClick={() => setIsResetModalOpen(true)} className="w-full py-2 bg-rose-900/20 border border-rose-900/50 hover:bg-rose-900/40 text-rose-400 rounded-lg font-medium transition-colors">Resetta Liste</button></div></div></div><div className="bg-slate-900 border border-slate-800 rounded-xl p-6"><h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><Archive className="text-indigo-400" /> Gestione Catalogo</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors"><div className="w-16 h-16 bg-indigo-900/20 rounded-full flex items-center justify-center mb-4"><Download size={32} className="text-indigo-500" /></div><h3 className="text-lg font-bold text-slate-200 mb-2">Esporta Catalogo</h3><button onClick={handleExportCatalog} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors">Salva Catalogo</button></div><div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors"><div className="w-16 h-16 bg-indigo-900/20 rounded-full flex items-center justify-center mb-4"><Upload size={32} className="text-indigo-500" /></div><h3 className="text-lg font-bold text-slate-200 mb-2">Importa Catalogo</h3><input type="file" ref={catalogFileInputRef} onChange={handleCatalogFileChange} className="hidden" accept=".json" /><button onClick={() => catalogFileInputRef.current?.click()} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors">Carica Catalogo</button></div></div></div><div className="bg-blue-900/10 border border-blue-900/30 rounded-lg p-4 flex items-start gap-3"><AlertCircle className="text-blue-400 shrink-0 mt-0.5" size={20} /><div className="text-sm text-blue-200"><strong>Nota:</strong> Questa app funziona interamente nel browser. Se chiudi la pagina, i dati non salvati andranno persi. Usa Esporta Eventi regolarmente.</div></div></div><ConfirmationModal isOpen={isResetModalOpen} onClose={() => setIsResetModalOpen(false)} onConfirm={handleResetLists} title="Reset Completo" message="Sei sicuro?" /></div>
+            );
+        };
+
+        const App = () => {
+            const [currentView, setCurrentView] = useState('home');
+            const [inventory, setInventory] = useState(INITIAL_INVENTORY);
+            const [kits, setKits] = useState(INITIAL_KITS);
+            const [packingLists, setPackingLists] = useState([{
+                id: 'default-1', eventName: 'Nuovo Evento', eventDate: '', location: '', creationDate: new Date().toISOString(), notes: '',
+                sections: [{ id: '1', name: 'Audio', components: [] }, { id: '2', name: 'Luci', components: [] }, { id: '3', name: 'Video', components: [] }, { id: '4', name: 'Regia', components: [] }]
+            }]);
+            const [activeListId, setActiveListId] = useState('default-1');
+            const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+            const navItems = [
+                { id: 'home', label: 'Home', icon: Home },
+                { id: 'inventory', label: 'Inventario', icon: Layers },
+                { id: 'kits', label: 'Kit Materiale', icon: Package },
+                { id: 'lists', label: 'Crea Liste', icon: ClipboardList },
+            ];
+
+            const renderContent = () => {
+                switch (currentView) {
+                    case 'home': return <HomeView inventory={inventory} setInventory={setInventory} kits={kits} setKits={setKits} lists={packingLists} setLists={setPackingLists} setActiveListId={setActiveListId} />;
+                    case 'inventory': return <InventoryView items={inventory} setItems={setInventory} />;
+                    case 'kits': return <KitsView kits={kits} setKits={setKits} inventory={inventory} setInventory={setInventory} />;
+                    case 'lists': return <PackingListBuilder inventory={inventory} setInventory={setInventory} kits={kits} lists={packingLists} setLists={setPackingLists} activeListId={activeListId} setActiveListId={setActiveListId} />;
+                    default: return <div>Seleziona una voce dal menu</div>;
+                }
+            };
+
+            return (
+                <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+                    <aside className="hidden md:flex w-64 flex-col bg-slate-900 border-r border-slate-800">
+                        <div className="p-6 border-b border-slate-800"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white">C</div><h1 className="text-xl font-bold tracking-tight">CuePack</h1></div><p className="text-xs text-slate-500 mt-1">Rental Management</p></div>
+                        <nav className="flex-1 p-4 space-y-2">{navItems.map(item => { const Icon = item.icon; return (<button key={item.id} onClick={() => setCurrentView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${currentView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Icon size={20} /><span className="font-medium">{item.label}</span></button>) })}</nav>
+                        <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1"><span className="font-mono opacity-50">v0.1.0</span><span>© By Roberto Chiartano</span></div>
+                    </aside>
+                    <div className={`fixed inset-0 z-50 bg-slate-900 md:hidden transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                        <div className="flex justify-between items-center p-6 border-b border-slate-800"><h1 className="text-xl font-bold">Menu</h1><button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-400"><Menu /></button></div>
+                        <nav className="p-6 space-y-4">{navItems.map(item => (<button key={item.id} onClick={() => { setCurrentView(item.id); setIsMobileMenuOpen(false); }} className={`w-full text-left px-4 py-3 rounded-lg text-lg font-medium ${currentView === item.id ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>{item.label}</button>))}</nav>
+                    </div>
+                    <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+                        <header className="md:hidden flex items-center justify-between p-4 bg-slate-900 border-b border-slate-800"><div className="font-bold text-lg">CuePack</div><button onClick={() => setIsMobileMenuOpen(true)} className="text-slate-300"><Menu /></button></header>
+                        <div className="flex-1 overflow-hidden bg-slate-950 relative">{renderContent()}</div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
