@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2 } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent } from '../types';
+import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, Filter, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical } from 'lucide-react';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
@@ -32,6 +32,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // Search/Picker State
   const [pickerSearch, setPickerSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'items' | 'kits'>('items');
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   
   // Note Toggle State
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
@@ -41,6 +42,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   
   // Deletion State for SECTION
   const [sectionToDelete, setSectionToDelete] = useState<string | null>(null);
+
+  // MULTI-SELECTION & CLIPBOARD STATE
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [clipboard, setClipboard] = useState<ListComponent[]>([]);
+
+  // REPLACEMENT STATE
+  const [replacingComponentId, setReplacingComponentId] = useState<string | null>(null);
 
   // New Item Modal
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
@@ -56,6 +64,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     type: 'create',
     name: ''
   });
+
+  // DRAG AND DROP STATE
+  const dragItem = useRef<{ sectionId: string, index: number, uniqueId: string } | null>(null);
+  const dragOverItem = useRef<{ sectionId: string, index: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Auto-focus Refs
   const qtyInputRefs = useRef<{ [uniqueId: string]: HTMLInputElement | null }>({});
@@ -91,6 +104,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
        }
     }
   }, [activeListId, activeList, activeSectionId]);
+
+  // Reset selection when switching lists
+  useEffect(() => {
+      setSelectedIds(new Set());
+      setClipboard([]);
+      setReplacingComponentId(null);
+  }, [activeListId]);
 
   // Effect to auto-focus newly added item's quantity
   useEffect(() => {
@@ -143,6 +163,85 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setLists(prev => prev.map(l => l.id === activeListId ? { ...l, ...updates } : l));
   };
 
+  // --- Multi-Selection & Clipboard Logic ---
+
+  const toggleSelection = (uniqueId: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(uniqueId)) {
+        newSet.delete(uniqueId);
+    } else {
+        newSet.add(uniqueId);
+    }
+    setSelectedIds(newSet);
+  };
+
+  const selectAllInSection = () => {
+      if (!activeList || !activeSectionId) return;
+      const section = activeList.sections.find(s => s.id === activeSectionId);
+      if (!section) return;
+
+      const newSet = new Set(selectedIds);
+      section.components.forEach(c => newSet.add(c.uniqueId));
+      setSelectedIds(newSet);
+  };
+
+  const deselectAll = () => {
+      setSelectedIds(new Set());
+  };
+
+  const getSelectedComponents = (): ListComponent[] => {
+      if (!activeList) return [];
+      const allComponents = activeList.sections.flatMap(s => s.components);
+      return allComponents.filter(c => selectedIds.has(c.uniqueId));
+  };
+
+  const handleCopy = () => {
+      const itemsToCopy = getSelectedComponents();
+      if (itemsToCopy.length > 0) {
+          setClipboard(itemsToCopy);
+      }
+  };
+
+  const handleCut = () => {
+      const itemsToCut = getSelectedComponents();
+      if (itemsToCut.length > 0) {
+          setClipboard(itemsToCut);
+          handleBulkDelete();
+      }
+  };
+
+  const handlePaste = () => {
+      if (!activeList || !activeSectionId || clipboard.length === 0) return;
+
+      const newComponents = clipboard.map(item => ({
+          ...item,
+          uniqueId: crypto.randomUUID(), // MUST generate new ID
+      }));
+
+      const newSections = sections.map(s => {
+          if (s.id === activeSectionId) {
+              return { ...s, components: [...s.components, ...newComponents] };
+          }
+          return s;
+      });
+
+      updateActiveList({ sections: newSections });
+      setSelectedIds(new Set());
+  };
+
+  const handleBulkDelete = () => {
+      if (!activeList || selectedIds.size === 0) return;
+
+      const newSections = sections.map(s => ({
+          ...s,
+          components: s.components.filter(c => !selectedIds.has(c.uniqueId))
+      }));
+
+      updateActiveList({ sections: newSections });
+      setSelectedIds(new Set());
+  };
+
+
   // --- Section Management ---
 
   const activeSection = sections.find(s => s.id === activeSectionId);
@@ -186,7 +285,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   const confirmRemoveSection = () => {
     if (!activeList || !sectionToDelete) return;
-    // Don't delete if it's the last one (safety check, though UI shouldn't allow it)
     if (sections.length <= 1) {
         setSectionToDelete(null);
         return;
@@ -199,10 +297,112 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // --- Component Management ---
 
+  const generateComponentFromItem = (item: InventoryItem | Kit, type: 'item' | 'kit'): Omit<ListComponent, 'uniqueId' | 'quantity' | 'notes'> => {
+      if (type === 'kit') {
+        const k = item as Kit;
+        const kitContents = k.items.map(ki => {
+          const invItem = inventory.find(i => i.id === ki.itemId);
+          return {
+            name: invItem?.name || 'Unknown',
+            quantity: ki.quantity,
+            category: invItem?.category || 'Altro'
+          };
+        });
+
+        return {
+          type: 'kit',
+          referenceId: k.id,
+          name: k.name,
+          category: 'Kit',
+          contents: kitContents,
+        };
+      } else {
+        const i = item as InventoryItem;
+        
+        let itemAccessories: { name: string; quantity: number; category: string }[] | undefined = undefined;
+        if (i.accessories && i.accessories.length > 0) {
+            itemAccessories = i.accessories.map(acc => {
+                const accItem = inventory.find(inv => inv.id === acc.itemId);
+                return {
+                    name: accItem?.name || 'Accessorio Sconosciuto',
+                    quantity: acc.quantity,
+                    category: accItem?.category || 'Altro'
+                };
+            });
+        }
+
+        return {
+          type: 'item',
+          referenceId: i.id,
+          name: i.name,
+          category: i.category,
+          contents: itemAccessories,
+        };
+      }
+  };
+
   const addToSection = (item: InventoryItem | Kit, type: 'item' | 'kit') => {
     if (!activeList || !activeSection) return;
 
-    // 1. Check if the component (Item OR Kit) already exists in this section
+    // --- REPLACEMENT LOGIC ---
+    if (replacingComponentId) {
+        // Check if the target item already exists in the section (to avoid duplicates)
+        const targetReferenceId = item.id;
+        const existingDuplicate = activeSection.components.find(
+            c => c.type === type && c.referenceId === targetReferenceId && c.uniqueId !== replacingComponentId
+        );
+
+        if (existingDuplicate) {
+             // MERGE SCENARIO: The item we want to swap in already exists.
+             // We take the quantity from the replaced item and add it to the existing duplicate.
+             const componentBeingReplaced = activeSection.components.find(c => c.uniqueId === replacingComponentId);
+             const qtyToTransfer = componentBeingReplaced ? componentBeingReplaced.quantity : 1;
+
+             const newSections = sections.map(s => {
+                if (s.id === activeSectionId) {
+                    return {
+                        ...s,
+                        components: s.components
+                            .filter(c => c.uniqueId !== replacingComponentId) // Remove the replaced item
+                            .map(c => {
+                                if (c.uniqueId === existingDuplicate.uniqueId) {
+                                    // Add quantity to existing item
+                                    return { ...c, quantity: c.quantity + qtyToTransfer };
+                                }
+                                return c;
+                            })
+                    };
+                }
+                return s;
+             });
+             updateActiveList({ sections: newSections });
+        } else {
+            // STANDARD REPLACE SCENARIO
+            const newComponentData = generateComponentFromItem(item, type);
+            
+            const newSections = sections.map(s => ({
+                ...s,
+                components: s.components.map(c => {
+                    if (c.uniqueId === replacingComponentId) {
+                        return {
+                            ...c,
+                            ...newComponentData,
+                            // Maintain quantity and notes, uniqueId
+                        };
+                    }
+                    return c;
+                })
+            }));
+            
+            updateActiveList({ sections: newSections });
+        }
+        
+        setReplacingComponentId(null);
+        return;
+    }
+
+    // --- STANDARD ADD LOGIC ---
+    // 1. Check if the component already exists in this section
     const existingComponent = activeSection.components.find(
       c => c.type === type && c.referenceId === item.id
     );
@@ -227,41 +427,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
     } else {
       // CASE B: It's new, create and add
-      let component: ListComponent;
-
-      if (type === 'kit') {
-        const k = item as Kit;
-        const kitContents = k.items.map(ki => {
-          const invItem = inventory.find(i => i.id === ki.itemId);
-          return {
-            name: invItem?.name || 'Unknown',
-            quantity: ki.quantity,
-            category: invItem?.category || 'Altro'
-          };
-        });
-
-        component = {
+      const baseData = generateComponentFromItem(item, type);
+      const component: ListComponent = {
           uniqueId: crypto.randomUUID(),
-          type: 'kit',
-          referenceId: k.id,
-          name: k.name,
           quantity: 1,
-          category: 'Kit',
-          contents: kitContents,
-          notes: ''
-        };
-      } else {
-        const i = item as InventoryItem;
-        component = {
-          uniqueId: crypto.randomUUID(),
-          type: 'item',
-          referenceId: i.id,
-          name: i.name,
-          quantity: 1,
-          category: i.category,
-          notes: ''
-        };
-      }
+          notes: '',
+          ...baseData
+      };
 
       const newSections = sections.map(s => {
         if (s.id === activeSectionId) {
@@ -287,6 +459,93 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       return s;
     });
     updateActiveList({ sections: newSections });
+  };
+
+  // Drag and Drop Handlers
+  const handleDragStart = (e: React.DragEvent, sectionId: string, index: number, uniqueId: string) => {
+      // Logic: If dragging an item that IS NOT selected, select ONLY that item.
+      // If dragging an item that IS selected, keep the current selection (allowing multi-drag).
+      if (!selectedIds.has(uniqueId)) {
+          setSelectedIds(new Set([uniqueId]));
+      }
+
+      dragItem.current = { sectionId, index, uniqueId };
+      setIsDragging(true);
+      // e.dataTransfer.effectAllowed = "move"; // Optional: customize cursor
+  };
+
+  const handleDragEnter = (e: React.DragEvent, sectionId: string, index: number) => {
+      e.preventDefault(); // allow drop
+      dragOverItem.current = { sectionId, index };
+  };
+
+  const handleDragEnd = () => {
+      setIsDragging(false);
+      
+      // If valid drop target and dropping in same section (simplification for now)
+      if (dragItem.current && dragOverItem.current && activeList) {
+          const sourceSectionId = dragItem.current.sectionId;
+          const destSectionId = dragOverItem.current.sectionId;
+          const destIndex = dragOverItem.current.index; // Index in the ORIGINAL list where we dropped
+
+          if (sourceSectionId === destSectionId) {
+              const section = sections.find(s => s.id === sourceSectionId);
+              if (section) {
+                  // Determine exactly which items are moving
+                  // If the dragged item was part of the selection, move ALL selected items.
+                  // Otherwise (shouldn't happen due to DragStart logic, but safe fallback), move just the dragged one.
+                  let idsToMove = new Set<string>();
+                  if (selectedIds.has(dragItem.current.uniqueId)) {
+                      idsToMove = selectedIds;
+                  } else {
+                      idsToMove.add(dragItem.current.uniqueId);
+                  }
+
+                  const targetComponent = section.components[destIndex];
+
+                  // Prevent dropping onto itself or onto another selected item (no-op for simplicity)
+                  if (!idsToMove.has(targetComponent.uniqueId)) {
+                      
+                      // Split list into "Moving" and "Staying"
+                      // We filter based on the 'idsToMove' set to preserve original relative order of moving items
+                      const itemsToMove: ListComponent[] = [];
+                      const itemsToStay: ListComponent[] = [];
+
+                      section.components.forEach(c => {
+                          if (idsToMove.has(c.uniqueId)) {
+                              itemsToMove.push(c);
+                          } else {
+                              itemsToStay.push(c);
+                          }
+                      });
+
+                      // Find the new insertion index in the "itemsToStay" array.
+                      // We look for the component we dropped ONTO.
+                      let insertionIndex = itemsToStay.findIndex(c => c.uniqueId === targetComponent.uniqueId);
+                      
+                      // If we dropped onto an item, we insert BEFORE it.
+                      // Note: If dragging downwards, users sometimes expect 'after', but 'before' is standard "insert" logic.
+                      if (insertionIndex === -1) {
+                          // Should not happen if logic is correct, append to end fallback
+                          insertionIndex = itemsToStay.length;
+                      }
+
+                      // Reconstruct
+                      const newComponents = [
+                          ...itemsToStay.slice(0, insertionIndex),
+                          ...itemsToMove,
+                          ...itemsToStay.slice(insertionIndex)
+                      ];
+
+                      const newSections = sections.map(s => s.id === sourceSectionId ? { ...s, components: newComponents } : s);
+                      updateActiveList({ sections: newSections });
+                  }
+              }
+          }
+      }
+
+      dragItem.current = null;
+      dragOverItem.current = null;
   };
   
   const updateComponentNote = (sectionId: string, uniqueId: string, note: string) => {
@@ -322,6 +581,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       return s;
     });
     updateActiveList({ sections: newSections });
+    if (selectedIds.has(uniqueId)) {
+        const newSet = new Set(selectedIds);
+        newSet.delete(uniqueId);
+        setSelectedIds(newSet);
+    }
+  };
+
+  const handleStartReplace = (uniqueId: string) => {
+      setReplacingComponentId(uniqueId);
   };
 
   const handleCreateNewItem = (itemData: Omit<InventoryItem, 'id'>) => {
@@ -372,9 +640,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         tableData.push([nameContent, comp.quantity, '']);
         
-        if (comp.type === 'kit' && comp.contents) {
-          comp.contents.forEach(kItem => {
-            tableData.push([`  - ${kItem.name}`, kItem.quantity * comp.quantity, '']);
+        if (comp.contents && comp.contents.length > 0) {
+          comp.contents.forEach(subItem => {
+            tableData.push([`  - ${subItem.name}`, subItem.quantity * comp.quantity, '']);
           });
         }
       });
@@ -389,20 +657,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         columnStyles: { 0: { cellWidth: 130 }, 1: { cellWidth: 20, halign: 'center' } },
         didDrawPage: (data) => {
             finalY = data.cursor?.y || 0;
-            
-            // Footer Logic
             const pageSize = doc.internal.pageSize;
             const pageHeight = pageSize.height ? pageSize.height : pageSize.getHeight();
             const pageWidth = pageSize.width ? pageSize.width : pageSize.getWidth();
-            
             doc.setFontSize(8);
             doc.setTextColor(150);
-            
-            // Page Number (Right)
             const pageStr = 'Pagina ' + data.pageNumber;
             doc.text(pageStr, pageWidth - 14, pageHeight - 10, { align: 'right' });
-            
-            // App Branding (Left)
             doc.text("Generato con CUEPACK Manager", 14, pageHeight - 10);
         }
       });
@@ -411,7 +672,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     });
 
     if (activeList.notes) {
-        // Check if we need a new page for notes
         if (finalY > 250) {
             doc.addPage();
             finalY = 20;
@@ -429,18 +689,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const exportCSV = () => {
     if (!activeList) return;
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Sezione,Tipo,Nome,Quantità,Note,Contenuto Kit (se applicabile)\n";
+    csvContent += "Sezione,Tipo,Nome,Quantità,Note,Contenuto Kit/Accessori\n";
 
     activeList.sections.forEach(s => {
       s.components.forEach(c => {
         const note = c.notes ? c.notes.replace(/"/g, '""') : '';
-        if (c.type === 'kit') {
-            csvContent += `${s.name},KIT,${c.name},${c.quantity},"${note}",""\n`;
-            c.contents?.forEach(ki => {
-                csvContent += `${s.name},Parte Kit,${ki.name},${ki.quantity * c.quantity},"","Appartiene a: ${c.name}"\n`;
+        const typeLabel = c.type === 'kit' ? 'KIT' : 'Singolo';
+        
+        csvContent += `${s.name},${typeLabel},${c.name},${c.quantity},"${note}",""\n`;
+        
+        if (c.contents && c.contents.length > 0) {
+            c.contents.forEach(subItem => {
+                const subLabel = c.type === 'kit' ? 'Parte Kit' : 'Accessorio';
+                csvContent += `${s.name},${subLabel},${subItem.name},${subItem.quantity * c.quantity},"","Appartiene a: ${c.name}"\n`;
             });
-        } else {
-            csvContent += `${s.name},Singolo,${c.name},${c.quantity},"${note}",""\n`;
         }
       });
     });
@@ -453,6 +715,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     link.click();
     document.body.removeChild(link);
   };
+
+  const activeReplacementComponent = replacingComponentId 
+    ? activeSection?.components.find(c => c.uniqueId === replacingComponentId)
+    : null;
 
   if (lists.length === 0) {
     return (
@@ -473,7 +739,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     <div className="h-full flex flex-col md:flex-row gap-0 md:gap-4 p-4 overflow-hidden">
       
       {/* LEFT: Builder & List Preview */}
-      <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+      <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
         
         {/* Top Bar: Event Management */}
         <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -607,74 +873,161 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         </div>
         )}
 
+        {/* BULK ACTIONS TOOLBAR */}
+        {activeList && (selectedIds.size > 0 || clipboard.length > 0) && (
+            <div className="px-4 py-2 bg-blue-900/20 border-b border-blue-900/30 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <button onClick={selectAllInSection} className="text-xs text-blue-300 hover:text-white underline">Tutti</button>
+                    <button onClick={deselectAll} className="text-xs text-blue-300 hover:text-white underline">Nessuno</button>
+                    <span className="text-sm text-blue-200 font-medium ml-2">
+                        {selectedIds.size} selezionati
+                    </span>
+                    {clipboard.length > 0 && (
+                         <span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+                            Clipboard: {clipboard.length}
+                         </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                    {selectedIds.size > 0 && (
+                        <>
+                            <button onClick={handleCopy} className="p-1.5 text-blue-400 hover:bg-blue-900/40 rounded flex items-center gap-1 text-xs" title="Copia selezione">
+                                <ClipboardCopy size={16} /> Copia
+                            </button>
+                            <button onClick={handleCut} className="p-1.5 text-blue-400 hover:bg-blue-900/40 rounded flex items-center gap-1 text-xs" title="Taglia selezione">
+                                <Scissors size={16} /> Taglia
+                            </button>
+                            <button onClick={handleBulkDelete} className="p-1.5 text-rose-400 hover:bg-rose-900/40 rounded flex items-center gap-1 text-xs" title="Elimina selezionati">
+                                <Trash2 size={16} /> Elimina
+                            </button>
+                        </>
+                    )}
+                    {clipboard.length > 0 && activeSectionId && (
+                        <button onClick={handlePaste} className="ml-2 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold flex items-center gap-1 shadow-lg shadow-emerald-900/20">
+                            <Clipboard size={14} /> Incolla qui
+                        </button>
+                    )}
+                </div>
+            </div>
+        )}
+
         {/* List Content Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950/30">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-950/30">
           {!activeList ? (
              <div className="text-center py-20 text-slate-500">Seleziona o crea un evento</div>
           ) : !activeSection || activeSection.components.length === 0 ? (
             <div className="text-center py-20 text-slate-600">
               <Box size={48} className="mx-auto mb-4 opacity-50" />
               <p>Questa sezione è vuota. Aggiungi materiale dalla colonna di destra.</p>
+              {clipboard.length > 0 && (
+                   <button onClick={handlePaste} className="mt-4 text-emerald-500 hover:text-emerald-400 text-sm font-medium flex items-center justify-center gap-2">
+                       <Clipboard size={16} /> Incolla {clipboard.length} elementi qui
+                   </button>
+              )}
             </div>
           ) : (
-            activeSection.components.map(comp => {
+            activeSection.components.map((comp, idx) => {
               const isNoteVisible = openNoteIds.has(comp.uniqueId) || !!comp.notes;
+              const isSelected = selectedIds.has(comp.uniqueId);
+              const isBeingReplaced = replacingComponentId === comp.uniqueId;
+              const isBeingDragged = dragItem.current?.sectionId === activeSection.id && dragItem.current?.index === idx;
+              
               return (
-              <div key={comp.uniqueId} className={`relative group p-4 rounded-lg border transition-all ${comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30' : 'bg-slate-800 border-slate-700'}`}>
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-3">
-                      {comp.type === 'kit' ? <PackageIcon size={20} className="text-purple-400" /> : <Box size={20} className="text-slate-400" />}
-                      <div>
-                          <div className="font-medium text-slate-200">
+              <div 
+                key={comp.uniqueId} 
+                draggable
+                onDragStart={(e) => handleDragStart(e, activeSection.id, idx, comp.uniqueId)}
+                onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => e.preventDefault()}
+                className={`relative group p-2 rounded-lg border transition-all 
+                ${isBeingReplaced
+                    ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500'
+                    : isBeingDragged
+                        ? 'opacity-40 border-dashed border-blue-500'
+                        : isSelected 
+                            ? 'bg-blue-900/20 border-blue-500/50' 
+                            : comp.type === 'kit' 
+                                ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' 
+                                : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}
+                onClick={() => toggleSelection(comp.uniqueId)}
+              >
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                      {/* Selection Checkbox */}
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); toggleSelection(comp.uniqueId); }}
+                        className={`text-slate-500 hover:text-white transition-colors shrink-0 ${isSelected ? 'text-blue-500' : ''}`}
+                      >
+                          {isSelected ? <CheckSquare size={18} className="text-blue-500" /> : <Square size={18} />}
+                      </button>
+
+                      {comp.type === 'kit' ? <PackageIcon size={18} className="text-purple-400 shrink-0" /> : <Box size={18} className="text-slate-400 shrink-0" />}
+                      <div className="truncate">
+                          <div className="font-medium text-slate-200 text-sm truncate">
                               {comp.name} 
-                              {comp.type === 'kit' && <span className="ml-2 text-xs bg-purple-900 text-purple-200 px-1 rounded">KIT</span>}
+                              {comp.type === 'kit' && <span className="ml-2 text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle">KIT</span>}
                           </div>
-                          <div className="text-xs text-slate-500">{comp.category}</div>
+                          <div className="text-[10px] text-slate-500 leading-tight">{comp.category}</div>
                       </div>
                   </div>
                   
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                       {/* Drag Handle */}
+                       <div className="p-1.5 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-300 mr-1" title="Trascina per spostare">
+                           <GripVertical size={16} />
+                       </div>
+
+                       {/* Replace Button */}
+                       <button
+                        onClick={() => handleStartReplace(comp.uniqueId)}
+                        className={`p-1.5 rounded transition-colors ${isBeingReplaced ? 'text-amber-500 bg-amber-900/30' : 'text-slate-500 hover:bg-slate-700 hover:text-white'}`}
+                        title="Sostituisci Oggetto"
+                      >
+                        <ArrowLeftRight size={14} />
+                      </button>
+
                       <button
                         onClick={() => toggleNoteInput(comp.uniqueId)}
                         className={`p-1.5 rounded transition-colors ${comp.notes ? 'text-yellow-400 hover:bg-yellow-900/20' : 'text-slate-500 hover:bg-slate-700 hover:text-white'}`}
                         title="Aggiungi/Modifica Nota"
                       >
-                        <StickyNote size={18} />
+                        <StickyNote size={14} />
                       </button>
                       <input 
                           ref={(el) => { qtyInputRefs.current[comp.uniqueId] = el }}
                           type="number" 
                           min="1"
-                          className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-center text-white focus:border-blue-500 outline-none"
+                          className="w-12 h-7 bg-slate-900 border border-slate-700 rounded px-1 text-center text-white text-sm focus:border-blue-500 outline-none"
                           value={comp.quantity}
                           onChange={(e) => updateComponentQty(activeSection.id, comp.uniqueId, Number(e.target.value))}
                       />
                       <button 
                           onClick={() => removeComponent(activeSection.id, comp.uniqueId)}
-                          className="text-slate-500 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="p-1.5 text-slate-500 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
-                          <Trash2 size={18} />
+                          <Trash2 size={14} />
                       </button>
                   </div>
                 </div>
 
                 {isNoteVisible && (
-                  <div className="mt-2 pl-8 pr-24">
+                  <div className="mt-1.5 pl-8 pr-16" onClick={(e) => e.stopPropagation()}>
                      <input 
                         type="text"
                         placeholder="Aggiungi una nota..."
-                        className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1.5 text-xs text-slate-300 focus:border-blue-500 outline-none placeholder-slate-600 transition-all focus:bg-slate-900"
+                        className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300 focus:border-blue-500 outline-none placeholder-slate-600 transition-all focus:bg-slate-900"
                         value={comp.notes || ''}
                         onChange={(e) => updateComponentNote(activeSection.id, comp.uniqueId, e.target.value)}
                      />
                   </div>
                 )}
 
-                {/* Kit Contents Visualization */}
-                {comp.type === 'kit' && comp.contents && (
-                    <div className="mt-3 ml-2 pl-4 border-l-2 border-slate-700 space-y-1">
+                {/* Contents Visualization (Kit Items OR Linked Accessories) */}
+                {comp.contents && comp.contents.length > 0 && (
+                    <div className="mt-2 ml-7 pl-3 border-l-2 border-slate-700 space-y-0.5">
                         {comp.contents.map((item, idx) => (
-                            <div key={idx} className="text-xs text-slate-400 flex justify-between w-full max-w-md">
+                            <div key={idx} className="text-[10px] text-slate-400 flex justify-between w-full max-w-md leading-tight">
                                 <span>{item.name}</span>
                                 <span className="text-slate-500">x {item.quantity * comp.quantity}</span>
                             </div>
@@ -688,7 +1041,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         {/* Footer Actions */}
         {activeList && (
-          <div className="p-4 border-t border-slate-700 bg-slate-800 flex flex-col md:flex-row gap-4 justify-between items-center">
+          <div className="p-4 border-t border-slate-700 bg-slate-800 flex flex-col md:flex-row gap-4 justify-between items-center z-10">
              <div className="w-full md:w-1/2">
                 <input 
                     placeholder="Note per il magazzino..." 
@@ -710,7 +1063,33 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       </div>
 
       {/* RIGHT: Quick Picker */}
-      <div className="w-full md:w-80 lg:w-96 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div className="w-full md:w-80 lg:w-96 flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative">
+        
+        {/* Replacement Banner overlay */}
+        {replacingComponentId && activeReplacementComponent && (
+            <div className="absolute inset-x-0 top-0 z-20 bg-amber-900/95 border-b border-amber-500/50 p-4 shadow-xl backdrop-blur-sm">
+                <div className="flex justify-between items-start mb-2">
+                     <h3 className="font-bold text-amber-100 flex items-center gap-2">
+                        <ArrowLeftRight size={18} />
+                        Modalità Sostituzione
+                     </h3>
+                     <button 
+                        onClick={() => setReplacingComponentId(null)}
+                        className="text-amber-300 hover:text-white"
+                     >
+                        <X size={20} />
+                     </button>
+                </div>
+                <p className="text-xs text-amber-200/80 mb-3">
+                    Stai sostituendo <span className="font-bold text-white">"{activeReplacementComponent.name}"</span>. 
+                    Seleziona un nuovo oggetto dalla lista qui sotto per effettuare lo scambio mantenendo quantità e note.
+                </p>
+                <div className="h-1 w-full bg-amber-900 rounded-full overflow-hidden">
+                    <div className="h-full bg-amber-500 animate-pulse w-2/3"></div>
+                </div>
+            </div>
+        )}
+
         <div className="p-4 bg-slate-800 border-b border-slate-700">
             <h3 className="font-bold text-white mb-3">Catalogo</h3>
             <div className="flex gap-2 mb-3 bg-slate-900 p-1 rounded-lg">
@@ -723,6 +1102,27 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     className={`flex-1 text-sm py-1.5 rounded-md text-center transition-all ${activeTab === 'kits' ? 'bg-purple-900/50 text-purple-200 shadow' : 'text-slate-500 hover:text-slate-300'}`}
                 >Kits</button>
             </div>
+            
+            {/* Category Filter */}
+            <div className="relative mb-3">
+               <div className="absolute left-3 top-2.5 pointer-events-none text-slate-500">
+                 <Filter size={16} />
+               </div>
+               <select
+                 value={selectedCategory}
+                 onChange={(e) => setSelectedCategory(e.target.value)}
+                 className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-8 py-2 rounded-lg text-sm focus:border-blue-500 outline-none appearance-none cursor-pointer"
+               >
+                 <option value="All">Tutte le Categorie</option>
+                 {Object.values(Category).map(cat => (
+                   <option key={cat} value={cat}>{cat}</option>
+                 ))}
+               </select>
+               <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                 <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+               </div>
+            </div>
+
             <div className="flex gap-2 relative">
                 <div className="relative flex-1">
                     <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
@@ -731,6 +1131,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none focus:border-blue-500"
                         value={pickerSearch}
                         onChange={e => setPickerSearch(e.target.value)}
+                        onClick={(e) => e.currentTarget.select()}
                     />
                 </div>
                 {activeTab === 'items' && (
@@ -745,37 +1146,53 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+        <div className={`flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar ${replacingComponentId ? 'pt-32' : ''}`}>
             {activeTab === 'items' ? (
                 inventory
-                .filter(i => i.name.toLowerCase().includes(pickerSearch.toLowerCase()) || i.category.toLowerCase().includes(pickerSearch.toLowerCase()))
+                .filter(i => {
+                  const matchesSearch = i.name.toLowerCase().includes(pickerSearch.toLowerCase()) || i.category.toLowerCase().includes(pickerSearch.toLowerCase());
+                  const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
+                  return matchesSearch && matchesCategory;
+                })
                 .map(item => (
                     <button 
                         key={item.id}
                         onClick={() => addToSection(item, 'item')}
-                        className="w-full text-left p-3 hover:bg-slate-800 rounded-lg group border border-transparent hover:border-slate-700 transition-all flex justify-between items-center"
+                        className={`w-full text-left p-3 rounded-lg group border transition-all flex justify-between items-center
+                            ${replacingComponentId 
+                                ? 'hover:bg-amber-900/20 border-transparent hover:border-amber-500/50' 
+                                : 'hover:bg-slate-800 border-transparent hover:border-slate-700'
+                            }`}
                     >
                         <div>
-                            <div className="text-sm text-slate-200">{item.name}</div>
+                            <div className={`text-sm ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>{item.name}</div>
                             <div className="text-xs text-slate-500">{item.category} • {item.weight}kg</div>
                         </div>
-                        <Plus size={16} className="text-slate-600 group-hover:text-blue-400" />
+                        {replacingComponentId ? <ArrowLeftRight size={16} className="text-amber-500" /> : <Plus size={16} className="text-slate-600 group-hover:text-blue-400" />}
                     </button>
                 ))
             ) : (
                 kits
-                .filter(k => k.name.toLowerCase().includes(pickerSearch.toLowerCase()))
+                .filter(k => {
+                  const matchesSearch = k.name.toLowerCase().includes(pickerSearch.toLowerCase());
+                  const matchesCategory = selectedCategory === 'All' || k.category === selectedCategory;
+                  return matchesSearch && matchesCategory;
+                })
                 .map(kit => (
                     <button 
                         key={kit.id}
                         onClick={() => addToSection(kit, 'kit')}
-                        className="w-full text-left p-3 hover:bg-purple-900/10 rounded-lg group border border-transparent hover:border-purple-900/30 transition-all flex justify-between items-center"
+                        className={`w-full text-left p-3 rounded-lg group border transition-all flex justify-between items-center
+                             ${replacingComponentId 
+                                ? 'hover:bg-amber-900/20 border-transparent hover:border-amber-500/50' 
+                                : 'hover:bg-purple-900/10 border-transparent hover:border-purple-900/30'
+                            }`}
                     >
                         <div>
-                            <div className="text-sm text-slate-200 font-medium">{kit.name}</div>
+                            <div className={`text-sm font-medium ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>{kit.name}</div>
                             <div className="text-xs text-slate-500">{kit.items.length} elementi</div>
                         </div>
-                        <PackageIcon size={16} className="text-purple-600 group-hover:text-purple-400" />
+                        {replacingComponentId ? <ArrowLeftRight size={16} className="text-amber-500" /> : <PackageIcon size={16} className="text-purple-600 group-hover:text-purple-400" />}
                     </button>
                 ))
             )}

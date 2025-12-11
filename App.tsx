@@ -60,7 +60,14 @@ export default function App() {
             setActiveListId={setActiveListId}
         />;
       case 'inventory':
-        return <InventoryView items={inventory} setItems={setInventory} />;
+        return <InventoryView 
+            items={inventory} 
+            setItems={setInventory} 
+            lists={packingLists}
+            setLists={setPackingLists}
+            kits={kits}
+            setKits={setKits}
+        />;
       case 'kits':
         return <KitsView kits={kits} setKits={setKits} inventory={inventory} setInventory={setInventory} />;
       case 'lists':
@@ -111,7 +118,7 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1">
-           <span className="font-mono opacity-50">v0.1.0</span>
+           <span className="font-mono opacity-50">v0.2.0</span>
            <span>© By Roberto Chiartano</span>
         </div>
       </aside>

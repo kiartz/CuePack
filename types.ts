@@ -15,6 +15,7 @@ export interface InventoryItem {
   weight?: number; // in kg
   description?: string;
   inStock: number;
+  accessories?: { itemId: string; quantity: number }[]; // Linked items (e.g., cables for a light)
 }
 
 export interface KitComponent {
@@ -25,6 +26,7 @@ export interface KitComponent {
 export interface Kit {
   id: string;
   name: string;
+  category: Category;
   description?: string;
   items: KitComponent[];
 }
@@ -37,7 +39,7 @@ export interface ListComponent {
   name: string;
   quantity: number;
   category: string; // Cached for sorting/display
-  contents?: { name: string; quantity: number; category: string }[]; // If it's a kit, snapshot of contents
+  contents?: { name: string; quantity: number; category: string }[]; // Snapshot of contents (Kit items OR Item accessories)
   notes?: string;
 }
 

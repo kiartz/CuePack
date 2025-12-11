@@ -153,23 +153,61 @@ export const HomeView: React.FC<HomeViewProps> = ({
         let importedItems = 0;
         let importedKits = 0;
 
+        // IMPORTAZIONE INVENTARIO CON MERGE
         if (data.inventory && Array.isArray(data.inventory)) {
-             // We append items. To avoid exact duplicates, we could check IDs, 
-             // but here we just assign new IDs to ensure uniqueness in the React state key map
-             // or keep existing if they are "templates". 
-             // Strategy: Append all, let user clean up if duplicate names. Safest for data loss prevention.
-             const newItems = data.inventory.map((i: any) => ({...i, id: crypto.randomUUID() }));
-             setInventory(prev => [...prev, ...newItems]);
-             importedItems = newItems.length;
+             setInventory(prev => {
+                // Creiamo una mappa degli oggetti attuali basata sul NOME normalizzato
+                const itemMap = new Map(prev.map(i => [i.name.trim().toLowerCase(), i]));
+                
+                data.inventory.forEach((importedItem: InventoryItem) => {
+                    const key = importedItem.name.trim().toLowerCase();
+                    const existing = itemMap.get(key);
+                    
+                    if (existing) {
+                        // MERGE: Aggiorniamo l'oggetto esistente con i dati importati.
+                        // IMPORTANTE: Manteniamo l'ID esistente per non rompere i collegamenti nelle liste attuali.
+                        // Assumiamo che il file importato sia "più aggiornato" come richiesto.
+                        itemMap.set(key, { ...importedItem, id: existing.id });
+                    } else {
+                        // CREATE: Nuovo oggetto
+                        // Se l'oggetto non esiste, lo aggiungiamo.
+                        itemMap.set(key, { ...importedItem, id: importedItem.id || crypto.randomUUID() });
+                    }
+                });
+                
+                // Ritorniamo l'array dei valori aggiornati
+                const newInventory = Array.from(itemMap.values());
+                importedItems = newInventory.length - prev.length; // Calcolo approssimativo dei nuovi
+                if (importedItems < 0) importedItems = 0; // Se merge, non aumentano i nuovi
+                return newInventory;
+             });
         }
 
+        // IMPORTAZIONE KIT CON MERGE
         if (data.kits && Array.isArray(data.kits)) {
-            const newKits = data.kits.map((k: any) => ({...k, id: crypto.randomUUID() }));
-            setKits(prev => [...prev, ...newKits]);
-            importedKits = newKits.length;
+            setKits(prev => {
+                const kitMap = new Map(prev.map(k => [k.name.trim().toLowerCase(), k]));
+
+                data.kits.forEach((importedKit: Kit) => {
+                    const key = importedKit.name.trim().toLowerCase();
+                    const existing = kitMap.get(key);
+
+                    if (existing) {
+                         // Merge Kit: Aggiorna definizioni ma mantieni ID
+                         kitMap.set(key, { ...importedKit, id: existing.id });
+                    } else {
+                         kitMap.set(key, { ...importedKit, id: importedKit.id || crypto.randomUUID() });
+                    }
+                });
+
+                const newKits = Array.from(kitMap.values());
+                importedKits = newKits.length - prev.length;
+                if (importedKits < 0) importedKits = 0;
+                return newKits;
+            });
         }
         
-        alert(`Importazione completata!\nAggiunti ${importedItems} articoli e ${importedKits} kit.`);
+        alert(`Importazione completata!\nCatalogo aggiornato (eventuali duplicati sono stati uniti).`);
 
         // Reset input
         if (catalogFileInputRef.current) catalogFileInputRef.current.value = '';
@@ -287,7 +325,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <h3 className="text-lg font-bold text-slate-200 mb-2">Importa Catalogo</h3>
                     <p className="text-sm text-slate-500 mb-6 flex-1">
                         Importa materiale e kit da un file. 
-                        <span className="block text-slate-400 text-xs mt-1">Nota: I dati verranno aggiunti a quelli esistenti.</span>
+                        <span className="block text-slate-400 text-xs mt-1">Nota: Gli oggetti con lo stesso nome verranno aggiornati.</span>
                     </p>
                     <input type="file" ref={catalogFileInputRef} onChange={handleCatalogFileChange} className="hidden" accept=".json" />
                     <button onClick={handleImportCatalogClick} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors">
