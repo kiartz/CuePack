@@ -1,44 +1,86 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layers, Package, ClipboardList, Menu, Home } from 'lucide-react';
 import { InventoryView } from './components/InventoryView';
 import { KitsView } from './components/KitsView';
 import { PackingListBuilder } from './components/PackingListBuilder';
 import { HomeView } from './components/HomeView';
+import { ChecklistView } from './components/ChecklistView'; // Now functions as the Sidebar Widget
 import { INITIAL_INVENTORY, INITIAL_KITS } from './constants';
 import { InventoryItem, Kit, PackingList } from './types';
 
 type View = 'home' | 'inventory' | 'kits' | 'lists';
 
+// Custom Hook for LocalStorage Persistence
+function useStickyState<T>(defaultValue: T, key: string): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stickyValue = window.localStorage.getItem(key);
+      return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
+    } catch (error) {
+      console.warn(`Error reading localStorage key “${key}”:`, error);
+      return defaultValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.warn(`Error setting localStorage key “${key}”:`, error);
+    }
+  }, [key, value]);
+
+  return [value, setValue];
+}
+
 export default function App() {
   const [currentView, setCurrentView] = useState<View>('home');
   
-  // Global State
-  const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_INVENTORY);
-  const [kits, setKits] = useState<Kit[]>(INITIAL_KITS);
+  // Global State with Persistence
+  const [inventory, setInventory] = useStickyState<InventoryItem[]>(INITIAL_INVENTORY, 'cuepack_inventory');
+  const [kits, setKits] = useStickyState<Kit[]>(INITIAL_KITS, 'cuepack_kits');
   
-  // State for multiple Packing Lists (Events)
-  const [packingLists, setPackingLists] = useState<PackingList[]>([
+  // State for multiple Packing Lists (Events) with Persistence
+  const [packingLists, setPackingLists] = useStickyState<PackingList[]>([
     {
       id: 'default-1',
-      eventName: 'Nuovo Evento', // Default name
+      eventName: 'Nuovo Evento',
       eventDate: '',
       location: '',
       creationDate: new Date().toISOString(),
-      notes: '',
       sections: [
         { id: '1', name: 'Audio', components: [] },
         { id: '2', name: 'Luci', components: [] },
         { id: '3', name: 'Video', components: [] },
         { id: '4', name: 'Regia', components: [] },
-      ]
+      ],
+      notes: ''
     }
-  ]);
+  ], 'cuepack_lists');
 
-  // Lifted state for the active list to persist selection when switching views
-  const [activeListId, setActiveListId] = useState<string>('default-1');
+  // Lifted state for the active list with Persistence
+  const [activeListId, setActiveListId] = useStickyState<string>('default-1', 'cuepack_active_list_id');
   
+  // --- CHECKLIST STATE ---
+  // Default to empty array [] so everything is disabled initially
+  const [checklistEnabledSectors, setChecklistEnabledSectors] = useStickyState<string[]>([], 'cuepack_checklist_sectors');
+  const [checklistCheckedItems, setChecklistCheckedItems] = useStickyState<string[]>([], 'cuepack_checklist_checked');
+
   // Mobile menu state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // --- ONE-TIME MERGE LOGIC ---
+  useEffect(() => {
+    const missingItems = INITIAL_INVENTORY.filter(
+      initItem => !inventory.some(savedItem => savedItem.id === initItem.id)
+    );
+
+    if (missingItems.length > 0) {
+      console.log("Merging new items from update:", missingItems.map(i => i.name));
+      setInventory(prev => [...prev, ...missingItems]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
   const navItems = [
     { id: 'home', label: 'Home', icon: Home },
@@ -89,8 +131,9 @@ export default function App() {
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       
       {/* Sidebar (Desktop) */}
-      <aside className="hidden md:flex w-64 flex-col bg-slate-900 border-r border-slate-800">
-        <div className="p-6 border-b border-slate-800">
+      <aside className="hidden md:flex w-72 flex-col bg-slate-900 border-r border-slate-800 shrink-0">
+        {/* Header */}
+        <div className="p-6 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3">
              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white">C</div>
              <h1 className="text-xl font-bold tracking-tight">CuePack</h1>
@@ -98,7 +141,8 @@ export default function App() {
           <p className="text-xs text-slate-500 mt-1">Rental Management</p>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
+        {/* Navigation Menu */}
+        <nav className="p-4 space-y-2 shrink-0">
           {navItems.map(item => {
              const Icon = item.icon;
              return (
@@ -117,9 +161,26 @@ export default function App() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1">
-           <span className="font-mono opacity-50">v0.2.0</span>
-           <span>© By Roberto Chiartano</span>
+        {/* CHECKLIST WIDGET (Scrollable Area) */}
+        <div className="flex-1 overflow-hidden flex flex-col border-t border-slate-800 bg-slate-950/30">
+             <div className="p-3 bg-slate-900/50 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
+                 <span>Checklist Carico</span>
+                 <span className="bg-slate-800 px-1.5 rounded text-slate-400">{checklistCheckedItems.length} OK</span>
+             </div>
+             <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+                 <ChecklistView 
+                    enabledSectors={checklistEnabledSectors}
+                    setEnabledSectors={setChecklistEnabledSectors}
+                    checkedItems={checklistCheckedItems}
+                    setCheckedItems={setChecklistCheckedItems}
+                 />
+             </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1 shrink-0 bg-slate-900">
+           <span>© Roberto Chiartano</span>
+           <span className="opacity-50">v0.3.0</span>
         </div>
       </aside>
 

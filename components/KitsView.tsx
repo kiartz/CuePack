@@ -32,7 +32,11 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
 
   const filteredKits = kits
     .filter(kit => {
-      const matchesSearch = kit.name.toLowerCase().includes(searchTerm.toLowerCase());
+      // Token-based search for Kits
+      const searchTokens = searchTerm.toLowerCase().split(' ').filter(t => t.trim() !== '');
+      const kitText = (kit.name + ' ' + (kit.description || '')).toLowerCase();
+      const matchesSearch = searchTokens.every(token => kitText.includes(token));
+      
       const matchesCategory = selectedCategory === 'All' || kit.category === selectedCategory;
       return matchesSearch && matchesCategory;
     })
@@ -154,7 +158,7 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
             <Search className="absolute left-3 top-2.5 text-slate-400" size={20} />
             <input 
               type="text"
-              placeholder="Cerca kit..."
+              placeholder="Cerca kit... (es. 'totem 2m')"
               className="w-full bg-slate-800 border border-slate-700 text-white pl-10 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -316,7 +320,7 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
               <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
               <input 
                 type="text"
-                placeholder="Cerca..."
+                placeholder="Cerca... (es. 'cavo 10')"
                 className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm focus:border-purple-500 outline-none"
                 value={itemSearch}
                 onChange={(e) => setItemSearch(e.target.value)}
@@ -324,7 +328,12 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
               {inventory
-                .filter(i => i.name.toLowerCase().includes(itemSearch.toLowerCase()))
+                .filter(i => {
+                   // Token-based search for Item Picker inside Kit
+                   const searchTokens = itemSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
+                   const itemText = (i.name + ' ' + (i.category || '')).toLowerCase();
+                   return searchTokens.every(token => itemText.includes(token));
+                })
                 .sort((a,b) => a.name.localeCompare(b.name))
                 .map(item => (
                 <button 

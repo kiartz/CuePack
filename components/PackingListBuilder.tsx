@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, Filter, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, Filter, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, Lightbulb } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -31,7 +31,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // Search/Picker State
   const [pickerSearch, setPickerSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'items' | 'kits'>('items');
+  const [activeTab, setActiveTab] = useState<'items' | 'kits' | 'suggestions'>('items');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   
   // Note Toggle State
@@ -77,6 +77,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // Derived State
   const activeList = lists.find(l => l.id === activeListId);
   const sections = activeList?.sections || [];
+  const activeSection = sections.find(s => s.id === activeSectionId);
+
+  // --- Map of Quantities currently in the List ---
+  // Used to show "x5" in the picker
+  const quantitiesInList = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!activeList) return map;
+
+    activeList.sections.forEach(section => {
+        section.components.forEach(comp => {
+            const current = map.get(comp.referenceId) || 0;
+            map.set(comp.referenceId, current + comp.quantity);
+        });
+    });
+    return map;
+  }, [activeList]);
 
   // --- SAFETY CHECK: Ensure activeListId is always valid ---
   useEffect(() => {
@@ -243,8 +259,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
 
   // --- Section Management ---
-
-  const activeSection = sections.find(s => s.id === activeSectionId);
 
   const openAddSectionModal = () => {
     setSectionModal({
@@ -601,9 +615,99 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     addToSection(newItem, 'item');
   };
 
+  // --- SUGGESTION LOGIC ---
+  const getSuggestedItems = () => {
+    if (!activeSection) return [];
+    
+    // 1. Analyze categories present in the current section
+    const categoriesPresent = new Set<string>();
+    activeSection.components.forEach(c => {
+        categoriesPresent.add(c.category);
+    });
+
+    // 2. Define suggestion rules
+    const suggestions = inventory.filter(item => {
+        const n = item.name.toLowerCase();
+        const c = item.category;
+
+        // A. Always suggest Consumables/Essentials
+        const isEssential = 
+            n.includes('nastro') || 
+            n.includes('gaffa') || 
+            n.includes('batterie') || 
+            n.includes('fascette') ||
+            n.includes('ciabatta') ||
+            n.includes('adattatore');
+        
+        if (isEssential) return true;
+
+        // B. Contextual suggestions
+        if (categoriesPresent.has(Category.AUDIO)) {
+            // Suggest Audio Cables & Stands
+            if (c === Category.CABLES && (n.includes('xlr') || n.includes('speakon') || n.includes('jack'))) return true;
+            if (c === Category.STRUCTURE && (n.includes('asta') || n.includes('stativo'))) return true;
+        }
+
+        if (categoriesPresent.has(Category.LIGHTS)) {
+            // Suggest DMX, Powercon, Clamps, Safety
+            if (c === Category.CABLES && (n.includes('dmx') || n.includes('powercon') || n.includes('trueone'))) return true;
+            if (c === Category.STRUCTURE && (n.includes('gancio') || n.includes('safety') || n.includes('aliscaf'))) return true;
+        }
+
+        if (categoriesPresent.has(Category.VIDEO)) {
+             // Suggest Video Cables
+             if (c === Category.CABLES && (n.includes('hdmi') || n.includes('bnc') || n.includes('ethercon') || n.includes('rete'))) return true;
+        }
+
+        return false;
+    });
+
+    // 3. Sort priorities (Essentials first)
+    return suggestions.sort((a, b) => {
+        const aEssential = a.name.toLowerCase().includes('nastro') || a.name.toLowerCase().includes('batterie');
+        const bEssential = b.name.toLowerCase().includes('nastro') || b.name.toLowerCase().includes('batterie');
+        if (aEssential && !bEssential) return -1;
+        if (!aEssential && bEssential) return 1;
+        return a.name.localeCompare(b.name);
+    });
+  };
+
+  const suggestedItems = activeTab === 'suggestions' ? getSuggestedItems() : [];
+
+
+  // --- Calculate Global Totals for Export ---
+  const calculateGlobalTotals = () => {
+    if (!activeList) return new Map<string, number>();
+
+    const totalsMap = new Map<string, number>();
+
+    activeList.sections.forEach(section => {
+      section.components.forEach(comp => {
+        // 1. Add the component itself (Kit Name or Item Name)
+        const currentCompTotal = totalsMap.get(comp.name) || 0;
+        totalsMap.set(comp.name, currentCompTotal + comp.quantity);
+
+        // 2. Add its contents (Kit items or Accessories)
+        if (comp.contents) {
+          comp.contents.forEach(sub => {
+            const qtyToAdd = sub.quantity * comp.quantity;
+            const currentSubTotal = totalsMap.get(sub.name) || 0;
+            totalsMap.set(sub.name, currentSubTotal + qtyToAdd);
+          });
+        }
+      });
+    });
+
+    return totalsMap;
+  };
+
   // --- Export ---
   const exportPDF = () => {
     if (!activeList) return;
+    
+    // Calculate global totals before generating PDF
+    const globalTotals = calculateGlobalTotals();
+
     const doc = new jsPDF();
     
     doc.setFontSize(22);
@@ -638,23 +742,30 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           nameContent += `\nNOTE: ${comp.notes}`;
         }
 
-        tableData.push([nameContent, comp.quantity, '']);
+        const totalQty = globalTotals.get(comp.name) || 0;
+        tableData.push([nameContent, comp.quantity, totalQty, '']);
         
         if (comp.contents && comp.contents.length > 0) {
           comp.contents.forEach(subItem => {
-            tableData.push([`  - ${subItem.name}`, subItem.quantity * comp.quantity, '']);
+            const subTotalQty = globalTotals.get(subItem.name) || 0;
+            tableData.push([`  - ${subItem.name}`, subItem.quantity * comp.quantity, subTotalQty, '']);
           });
         }
       });
 
       autoTable(doc, {
         startY: finalY,
-        head: [['Materiale', 'Qta', 'Check']],
+        head: [['Materiale', 'Qta', 'Totale', 'Check']],
         body: tableData,
         theme: 'grid',
-        headStyles: { fillColor: [40, 40, 40] },
+        headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0] },
         styles: { fontSize: 10, cellPadding: 2 },
-        columnStyles: { 0: { cellWidth: 130 }, 1: { cellWidth: 20, halign: 'center' } },
+        // Adjust column widths: Total column added
+        columnStyles: { 
+            0: { cellWidth: 110 }, 
+            1: { cellWidth: 20, halign: 'center' },
+            2: { cellWidth: 20, halign: 'center', fontStyle: 'bold' } 
+        },
         didDrawPage: (data) => {
             finalY = data.cursor?.y || 0;
             const pageSize = doc.internal.pageSize;
@@ -688,20 +799,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   const exportCSV = () => {
     if (!activeList) return;
+    
+    // Calculate global totals
+    const globalTotals = calculateGlobalTotals();
+
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Sezione,Tipo,Nome,Quantità,Note,Contenuto Kit/Accessori\n";
+    csvContent += "Sezione,Tipo,Nome,Quantità Sezione,Totale Globale,Note,Contenuto Kit/Accessori\n";
 
     activeList.sections.forEach(s => {
       s.components.forEach(c => {
         const note = c.notes ? c.notes.replace(/"/g, '""') : '';
         const typeLabel = c.type === 'kit' ? 'KIT' : 'Singolo';
+        const totalQty = globalTotals.get(c.name) || 0;
         
-        csvContent += `${s.name},${typeLabel},${c.name},${c.quantity},"${note}",""\n`;
+        csvContent += `${s.name},${typeLabel},${c.name},${c.quantity},${totalQty},"${note}",""\n`;
         
         if (c.contents && c.contents.length > 0) {
             c.contents.forEach(subItem => {
                 const subLabel = c.type === 'kit' ? 'Parte Kit' : 'Accessorio';
-                csvContent += `${s.name},${subLabel},${subItem.name},${subItem.quantity * c.quantity},"","Appartiene a: ${c.name}"\n`;
+                const subTotalQty = globalTotals.get(subItem.name) || 0;
+                csvContent += `${s.name},${subLabel},${subItem.name},${subItem.quantity * c.quantity},${subTotalQty},"","Appartiene a: ${c.name}"\n`;
             });
         }
       });
@@ -1101,9 +1218,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     onClick={() => setActiveTab('kits')}
                     className={`flex-1 text-sm py-1.5 rounded-md text-center transition-all ${activeTab === 'kits' ? 'bg-purple-900/50 text-purple-200 shadow' : 'text-slate-500 hover:text-slate-300'}`}
                 >Kits</button>
+                <button 
+                    onClick={() => setActiveTab('suggestions')}
+                    className={`flex items-center justify-center gap-1.5 flex-1 text-sm py-1.5 rounded-md text-center transition-all ${activeTab === 'suggestions' ? 'bg-amber-900/50 text-amber-200 shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                    title="Suggerimenti intelligenti basati su questa lista"
+                >
+                    <Lightbulb size={14} /> Suggerimenti
+                </button>
             </div>
             
             {/* Category Filter */}
+            {activeTab !== 'suggestions' && (
             <div className="relative mb-3">
                <div className="absolute left-3 top-2.5 pointer-events-none text-slate-500">
                  <Filter size={16} />
@@ -1122,12 +1247,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                  <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                </div>
             </div>
+            )}
 
+            {activeTab !== 'suggestions' && (
             <div className="flex gap-2 relative">
                 <div className="relative flex-1">
                     <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
                     <input 
-                        placeholder="Cerca..." 
+                        placeholder="Cerca... (es. 'cavo 10')"
                         className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none focus:border-blue-500"
                         value={pickerSearch}
                         onChange={e => setPickerSearch(e.target.value)}
@@ -1144,17 +1271,58 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     </button>
                 )}
             </div>
+            )}
+            
+            {activeTab === 'suggestions' && (
+                <div className="bg-amber-900/20 border border-amber-900/30 rounded p-2 text-xs text-amber-200/80 mb-2 flex gap-2">
+                    <Lightbulb size={16} className="shrink-0 mt-0.5" />
+                    <p>Suggerimenti basati sul contenuto attuale: Cavi, Adattatori e Consumabili che potresti aver dimenticato.</p>
+                </div>
+            )}
         </div>
         
         <div className={`flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar ${replacingComponentId ? 'pt-32' : ''}`}>
-            {activeTab === 'items' ? (
+            {activeTab === 'suggestions' ? (
+                 suggestedItems.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm p-4">
+                        Nessun suggerimento specifico trovato. Aggiungi materiale audio, luci o video alla lista per vedere i cavi e gli accessori consigliati.
+                    </div>
+                 ) : (
+                    suggestedItems.map(item => {
+                        const qtyInList = quantitiesInList.get(item.id) || 0;
+                        return (
+                        <button 
+                            key={item.id}
+                            onClick={() => addToSection(item, 'item')}
+                            className="w-full text-left p-3 rounded-lg group border border-transparent hover:bg-amber-900/10 hover:border-amber-900/30 transition-all flex justify-between items-center"
+                        >
+                            <div>
+                                <div className="text-sm text-slate-200 flex items-center gap-2">
+                                    {item.name}
+                                    {qtyInList > 0 && (
+                                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded">x{qtyInList}</span>
+                                    )}
+                                </div>
+                                <div className="text-xs text-slate-500">{item.category}</div>
+                            </div>
+                            <Plus size={16} className="text-amber-500/50 group-hover:text-amber-500" />
+                        </button>
+                    )})
+                 )
+            ) : activeTab === 'items' ? (
                 inventory
                 .filter(i => {
-                  const matchesSearch = i.name.toLowerCase().includes(pickerSearch.toLowerCase()) || i.category.toLowerCase().includes(pickerSearch.toLowerCase());
+                  // Token-based search logic
+                  const searchTokens = pickerSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
+                  const itemText = (i.name + ' ' + (i.category || '')).toLowerCase();
+                  const matchesSearch = searchTokens.every(token => itemText.includes(token));
+                  
                   const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
                   return matchesSearch && matchesCategory;
                 })
-                .map(item => (
+                .map(item => {
+                    const qtyInList = quantitiesInList.get(item.id) || 0;
+                    return (
                     <button 
                         key={item.id}
                         onClick={() => addToSection(item, 'item')}
@@ -1165,20 +1333,31 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             }`}
                     >
                         <div>
-                            <div className={`text-sm ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>{item.name}</div>
+                            <div className={`text-sm flex items-center gap-2 ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>
+                                {item.name}
+                                {qtyInList > 0 && (
+                                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded">x{qtyInList}</span>
+                                )}
+                            </div>
                             <div className="text-xs text-slate-500">{item.category} • {item.weight}kg</div>
                         </div>
                         {replacingComponentId ? <ArrowLeftRight size={16} className="text-amber-500" /> : <Plus size={16} className="text-slate-600 group-hover:text-blue-400" />}
                     </button>
-                ))
+                )})
             ) : (
                 kits
                 .filter(k => {
-                  const matchesSearch = k.name.toLowerCase().includes(pickerSearch.toLowerCase());
+                  // Token-based search logic for kits
+                  const searchTokens = pickerSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
+                  const kitText = (k.name + ' ' + (k.category || '')).toLowerCase();
+                  const matchesSearch = searchTokens.every(token => kitText.includes(token));
+                  
                   const matchesCategory = selectedCategory === 'All' || k.category === selectedCategory;
                   return matchesSearch && matchesCategory;
                 })
-                .map(kit => (
+                .map(kit => {
+                    const qtyInList = quantitiesInList.get(kit.id) || 0;
+                    return (
                     <button 
                         key={kit.id}
                         onClick={() => addToSection(kit, 'kit')}
@@ -1189,12 +1368,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             }`}
                     >
                         <div>
-                            <div className={`text-sm font-medium ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>{kit.name}</div>
+                            <div className={`text-sm font-medium flex items-center gap-2 ${replacingComponentId ? 'text-amber-100' : 'text-slate-200'}`}>
+                                {kit.name}
+                                {qtyInList > 0 && (
+                                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded">x{qtyInList}</span>
+                                )}
+                            </div>
                             <div className="text-xs text-slate-500">{kit.items.length} elementi</div>
                         </div>
                         {replacingComponentId ? <ArrowLeftRight size={16} className="text-amber-500" /> : <PackageIcon size={16} className="text-purple-600 group-hover:text-purple-400" />}
                     </button>
-                ))
+                )})
             )}
         </div>
       </div>

@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { Download, Upload, RefreshCw, LayoutDashboard, Database, Package, FileText, AlertCircle, Archive } from 'lucide-react';
+import { Download, Upload, RefreshCw, LayoutDashboard, Database, Package, FileText, AlertCircle, Archive, Trash2 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
+import { INITIAL_INVENTORY, INITIAL_KITS } from '../constants';
 
 interface HomeViewProps {
   inventory: InventoryItem[];
@@ -24,7 +25,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const listsFileInputRef = useRef<HTMLInputElement>(null);
   const catalogFileInputRef = useRef<HTMLInputElement>(null);
-  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetListsModalOpen, setIsResetListsModalOpen] = useState(false);
+  const [isFactoryResetModalOpen, setIsFactoryResetModalOpen] = useState(false);
 
   // --- Statistics ---
   const totalItems = inventory.length;
@@ -112,6 +114,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
     setLists([newList]);
     setActiveListId(newList.id);
+  };
+
+  const handleFactoryReset = () => {
+      // Wipes everything back to INITIAL constants
+      localStorage.clear();
+      setInventory(INITIAL_INVENTORY);
+      setKits(INITIAL_KITS);
+      handleResetLists(); // Reset lists to default
+      window.location.reload(); // Force reload to ensure clean state
   };
 
   // --- Catalog (Inventory & Kits) Actions ---
@@ -288,7 +299,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <p className="text-sm text-slate-500 mb-6 flex-1">
                         Cancella tutti gli eventi attivi.
                     </p>
-                    <button onClick={() => setIsResetModalOpen(true)} className="w-full py-2 bg-rose-900/20 border border-rose-900/50 hover:bg-rose-900/40 text-rose-400 rounded-lg font-medium transition-colors">
+                    <button onClick={() => setIsResetListsModalOpen(true)} className="w-full py-2 bg-rose-900/20 border border-rose-900/50 hover:bg-rose-900/40 text-rose-400 rounded-lg font-medium transition-colors">
                         Resetta Liste
                     </button>
                 </div>
@@ -335,20 +346,46 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
         </div>
 
-        <div className="bg-blue-900/10 border border-blue-900/30 rounded-lg p-4 flex items-start gap-3">
-             <AlertCircle className="text-blue-400 shrink-0 mt-0.5" size={20} />
-             <div className="text-sm text-blue-200">
-                <strong>Nota:</strong> Questa app funziona interamente nel browser. Se chiudi la pagina o ricarichi senza aver salvato, i dati torneranno ai valori predefiniti (a meno che tu non abbia implementato un salvataggio automatico). Usa le funzioni di esportazione regolarmente.
+        {/* Global Actions */}
+        <div className="bg-rose-900/10 border border-rose-900/30 rounded-xl p-6 flex items-center justify-between">
+             <div className="flex items-start gap-3">
+                 <AlertCircle className="text-rose-500 shrink-0 mt-1" size={24} />
+                 <div>
+                     <h3 className="font-bold text-rose-200">Factory Reset (Cancellazione Totale)</h3>
+                     <p className="text-sm text-rose-200/70">
+                        Cancella tutta la memoria locale (Liste, Inventario e Kit modificati). 
+                        L'app tornerà allo stato iniziale di installazione. 
+                        <span className="font-bold"> Usa questa opzione solo se riscontri problemi gravi o vuoi ripartire da zero.</span>
+                     </p>
+                 </div>
              </div>
+             <button 
+                onClick={() => setIsFactoryResetModalOpen(true)}
+                className="px-4 py-2 bg-rose-900/50 hover:bg-rose-900 text-rose-200 rounded-lg font-medium whitespace-nowrap border border-rose-700 transition-colors"
+             >
+                 <Trash2 size={16} className="inline mr-2" /> Reset Totale
+             </button>
+        </div>
+
+        <div className="text-center text-xs text-slate-600 pb-8">
+            CuePack Manager utilizza il LocalStorage del browser. I dati non vengono inviati a nessun server.
         </div>
       </div>
 
       <ConfirmationModal
-        isOpen={isResetModalOpen}
-        onClose={() => setIsResetModalOpen(false)}
+        isOpen={isResetListsModalOpen}
+        onClose={() => setIsResetListsModalOpen(false)}
         onConfirm={handleResetLists}
-        title="Reset Completo Liste"
-        message="Sei sicuro di voler cancellare TUTTE le liste eventi attive? Questa azione è irreversibile."
+        title="Reset Liste Eventi"
+        message="Sei sicuro di voler cancellare TUTTE le liste eventi attive? Questa azione non cancellerà l'inventario o i kit."
+      />
+
+      <ConfirmationModal
+        isOpen={isFactoryResetModalOpen}
+        onClose={() => setIsFactoryResetModalOpen(false)}
+        onConfirm={handleFactoryReset}
+        title="FACTORY RESET COMPLETO"
+        message="ATTENZIONE: Stai per cancellare TUTTI i dati salvati (Liste, Modifiche Inventario, Kit personalizzati). L'app verrà riavviata allo stato iniziale. Sei assolutamente sicuro?"
       />
     </div>
   );

@@ -204,10 +204,12 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                 {isAccessoryPickerOpen && accessorySearch && (
                     <div className="absolute top-full left-0 right-0 mt-1 max-h-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-y-auto z-30 custom-scrollbar">
                         {inventory
-                            .filter(i => 
-                                i.id !== initialData?.id && // Don't allow adding self
-                                i.name.toLowerCase().includes(accessorySearch.toLowerCase())
-                            )
+                            .filter(i => {
+                                const searchTokens = accessorySearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
+                                const itemText = i.name.toLowerCase();
+                                const matchesSearch = searchTokens.every(token => itemText.includes(token));
+                                return i.id !== initialData?.id && matchesSearch;
+                            })
                             .map(item => (
                                 <button
                                     key={item.id}
@@ -225,7 +227,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                                     <Plus size={14} className="text-blue-500" />
                                 </button>
                             ))}
-                         {inventory.filter(i => i.id !== initialData?.id && i.name.toLowerCase().includes(accessorySearch.toLowerCase())).length === 0 && (
+                         {inventory.filter(i => {
+                                const searchTokens = accessorySearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
+                                const itemText = i.name.toLowerCase();
+                                return i.id !== initialData?.id && searchTokens.every(token => itemText.includes(token));
+                            }).length === 0 && (
                              <div className="p-2 text-xs text-slate-500 text-center">Nessun oggetto trovato</div>
                          )}
                     </div>

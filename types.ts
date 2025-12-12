@@ -1,3 +1,4 @@
+
 export enum Category {
   AUDIO = 'Audio',
   LIGHTS = 'Luci',
@@ -5,6 +6,7 @@ export enum Category {
   STRUCTURE = 'Strutture',
   CABLES = 'Cablaggi',
   REGIA = 'Regia',
+  TOOLS = 'Attrezzi',
   OTHER = 'Altro'
 }
 
@@ -58,4 +60,17 @@ export interface PackingList {
   creationDate: string;
   sections: ListSection[];
   notes: string;
+}
+
+// --- CHECKLIST TYPES ---
+export interface ChecklistGroup {
+  title: string;
+  items: string[];
+}
+
+export interface ChecklistCategory {
+  id: string;
+  title: string;
+  subtitle: string;
+  groups: ChecklistGroup[];
 }
