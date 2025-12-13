@@ -41,7 +41,7 @@ export interface ListComponent {
   name: string;
   quantity: number;
   category: string; // Cached for sorting/display
-  contents?: { name: string; quantity: number; category: string }[]; // Snapshot of contents (Kit items OR Item accessories)
+  contents?: { itemId?: string; name: string; quantity: number; category: string }[]; // Snapshot of contents (Kit items OR Item accessories)
   notes?: string;
 }
 
@@ -60,6 +60,9 @@ export interface PackingList {
   creationDate: string;
   sections: ListSection[];
   notes: string;
+  // Checklist State Persistence
+  checklistEnabledSectors?: string[];
+  checklistCheckedItems?: string[];
 }
 
 // --- CHECKLIST TYPES ---

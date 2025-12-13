@@ -34,6 +34,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const [activeTab, setActiveTab] = useState<'items' | 'kits' | 'suggestions'>('items');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   
+  // LIST LOCAL SEARCH STATE
+  const [listSearch, setListSearch] = useState('');
+
   // Note Toggle State
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
   
@@ -94,6 +97,117 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return map;
   }, [activeList]);
 
+  // --- FILTERED PICKER ITEMS (With Optimized Scoring) ---
+  const filteredPickerItems = useMemo(() => {
+      const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
+      
+      return inventory
+        .map(item => {
+            const name = (item.name || '').toLowerCase();
+            const cat = (item.category || '').toLowerCase();
+            const desc = (item.description || '').toLowerCase();
+            const combined = `${name} ${cat} ${desc}`;
+
+            // Strict Filter
+            if (!searchTokens.every(token => combined.includes(token))) return { item, score: -1, nameMatches: 0 };
+            if (selectedCategory !== 'All' && item.category !== selectedCategory) return { item, score: -1, nameMatches: 0 };
+
+            // Score
+            let score = 0;
+            let nameMatches = 0;
+
+            if (searchTokens.length === 0) {
+                score = 1; 
+            } else {
+                searchTokens.forEach(token => {
+                    const inName = name.includes(token);
+                    if (inName) {
+                        nameMatches++;
+                        if (name === token) score += 1000;
+                        else if (name.startsWith(token)) score += 500;
+                        else if (name.includes(" " + token)) score += 200;
+                        else score += 100;
+                    }
+                    
+                    if (cat.includes(token)) score += 20;
+                    if (desc.includes(token)) score += 5;
+                });
+            }
+            return { item, score, nameMatches };
+        })
+        .filter(x => x.score > -1)
+        .sort((a, b) => {
+            // 1. Priority: Amount of search terms found in the NAME
+            if (b.nameMatches !== a.nameMatches) {
+                return b.nameMatches - a.nameMatches;
+            }
+            // 2. Priority: Score
+            if (b.score !== a.score) {
+                return b.score - a.score;
+            }
+            return (a.item.name || '').localeCompare(b.item.name || '');
+        })
+        .map(x => x.item);
+  }, [inventory, pickerSearch, selectedCategory]);
+
+  // --- FILTERED PICKER KITS (With Optimized Scoring) ---
+  const filteredPickerKits = useMemo(() => {
+      const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
+
+      return kits
+        .map(kit => {
+            const name = (kit.name || '').toLowerCase();
+            const cat = (kit.category || '').toLowerCase();
+            const desc = (kit.description || '').toLowerCase();
+            const combined = `${name} ${cat} ${desc}`;
+
+            if (!searchTokens.every(token => combined.includes(token))) return { kit, score: -1, nameMatches: 0 };
+            if (selectedCategory !== 'All' && kit.category !== selectedCategory) return { kit, score: -1, nameMatches: 0 };
+
+            let score = 0;
+            let nameMatches = 0;
+
+            if (searchTokens.length === 0) {
+                score = 1;
+            } else {
+                searchTokens.forEach(token => {
+                    const inName = name.includes(token);
+                    if (inName) {
+                        nameMatches++;
+                        if (name === token) score += 1000;
+                        else if (name.startsWith(token)) score += 500;
+                        else if (name.includes(" " + token)) score += 200;
+                        else score += 100;
+                    }
+                    if (cat.includes(token)) score += 20;
+                    if (desc.includes(token)) score += 5;
+                });
+            }
+            return { kit, score, nameMatches };
+        })
+        .filter(x => x.score > -1)
+        .sort((a, b) => {
+            if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
+            if (b.score !== a.score) return b.score - a.score;
+            return (a.kit.name || '').localeCompare(b.kit.name || '');
+        })
+        .map(x => x.kit);
+  }, [kits, pickerSearch, selectedCategory]);
+
+
+  // --- FILTERED LIST COMPONENTS (Local Search) ---
+  const filteredListComponents = useMemo(() => {
+    if (!activeSection) return [];
+    if (!listSearch.trim()) return activeSection.components;
+
+    const term = listSearch.toLowerCase();
+    return activeSection.components.filter(c => 
+      (c.name || '').toLowerCase().includes(term) || 
+      (c.notes || '').toLowerCase().includes(term) ||
+      c.contents?.some(sub => (sub.name || '').toLowerCase().includes(term))
+    );
+  }, [activeSection, listSearch]);
+
   // --- SAFETY CHECK: Ensure activeListId is always valid ---
   useEffect(() => {
     // If we have lists, but the active ID doesn't match any of them
@@ -106,27 +220,36 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     }
   }, [lists, activeListId, setActiveListId]);
   
-  // Set initial active section when switching lists or when sections change
+  // Set initial active section when switching lists, when sections change, OR when mounting
   useEffect(() => {
     if (activeList) {
        // If no section is selected OR the selected section no longer exists in this list
        const currentSectionExists = activeList.sections.find(s => s.id === activeSectionId);
+       
        if (!activeSectionId || !currentSectionExists) {
-          if (activeList.sections.length > 0) {
-            setActiveSectionId(activeList.sections[0].id);
+          // 1. Try to recover from localStorage
+          const savedSectionId = localStorage.getItem(`cuepack_last_section_${activeList.id}`);
+          const savedSectionExists = activeList.sections.find(s => s.id === savedSectionId);
+
+          if (savedSectionId && savedSectionExists) {
+              setActiveSectionId(savedSectionId);
+          } else if (activeList.sections.length > 0) {
+              // 2. Fallback to first section
+              setActiveSectionId(activeList.sections[0].id);
           } else {
-            setActiveSectionId('');
+              setActiveSectionId('');
           }
        }
     }
   }, [activeListId, activeList, activeSectionId]);
 
-  // Reset selection when switching lists
+  // Reset selection and SEARCH when switching lists/sections
   useEffect(() => {
       setSelectedIds(new Set());
       setClipboard([]);
       setReplacingComponentId(null);
-  }, [activeListId]);
+      setListSearch(''); // Clear search when switching context
+  }, [activeListId, activeSectionId]);
 
   // Effect to auto-focus newly added item's quantity
   useEffect(() => {
@@ -152,7 +275,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         { id: crypto.randomUUID(), name: 'Luci', components: [] },
         { id: crypto.randomUUID(), name: 'Video', components: [] },
         { id: crypto.randomUUID(), name: 'Regia', components: [] },
-      ]
+      ],
+      checklistEnabledSectors: [],
+      checklistCheckedItems: []
     };
     setLists([...lists, newList]);
     setActiveListId(newList.id);
@@ -285,6 +410,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           const newSection: ListSection = { id: newId, name: sectionModal.name.trim(), components: [] };
           updateActiveList({ sections: [...sections, newSection] });
           setActiveSectionId(newId);
+          // SAVE TO LS
+          localStorage.setItem(`cuepack_last_section_${activeList.id}`, newId);
       } else {
           // Rename
            const newSections = sections.map(s => s.id === sectionModal.sectionId ? { ...s, name: sectionModal.name.trim() } : s);
@@ -317,6 +444,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         const kitContents = k.items.map(ki => {
           const invItem = inventory.find(i => i.id === ki.itemId);
           return {
+            itemId: invItem?.id, // Important: Save itemId to track updates!
             name: invItem?.name || 'Unknown',
             quantity: ki.quantity,
             category: invItem?.category || 'Altro'
@@ -333,11 +461,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       } else {
         const i = item as InventoryItem;
         
-        let itemAccessories: { name: string; quantity: number; category: string }[] | undefined = undefined;
+        let itemAccessories: { itemId?: string; name: string; quantity: number; category: string }[] | undefined = undefined;
         if (i.accessories && i.accessories.length > 0) {
             itemAccessories = i.accessories.map(acc => {
                 const accItem = inventory.find(inv => inv.id === acc.itemId);
                 return {
+                    itemId: acc.itemId, // Important: Save itemId to track updates!
                     name: accItem?.name || 'Accessorio Sconosciuto',
                     quantity: acc.quantity,
                     category: accItem?.category || 'Altro'
@@ -606,13 +735,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setReplacingComponentId(uniqueId);
   };
 
-  const handleCreateNewItem = (itemData: Omit<InventoryItem, 'id'>) => {
-    const newItem: InventoryItem = {
-      ...itemData,
-      id: crypto.randomUUID(),
-    };
+  // Updated to accept the full item
+  const handleCreateNewItem = (newItem: InventoryItem) => {
     setInventory(prev => [...prev, newItem]);
     addToSection(newItem, 'item');
+  };
+  
+  // Updated to accept the full item
+  const handleCreateAccessory = (newItem: InventoryItem) => {
+     setInventory(prev => [...prev, newItem]);
   };
 
   // --- SUGGESTION LOGIC ---
@@ -635,7 +766,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             n.includes('nastro') || 
             n.includes('gaffa') || 
             n.includes('batterie') || 
-            n.includes('fascette') ||
+            n.includes('fascette') || 
             n.includes('ciabatta') ||
             n.includes('adattatore');
         
@@ -794,7 +925,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         doc.text(activeList.notes, 14, finalY + 5);
     }
 
-    doc.save(`Lista_${(activeList.eventName || 'evento').replace(/\s/g, '_')}.pdf`);
+    // Generate Filename: Name_YYYY-MM-DD_HH-mm
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    
+    // Sanitize event name
+    const safeName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
+    const fileName = `${safeName}_${year}-${month}-${day}_${hours}-${minutes}.pdf`;
+
+    doc.save(fileName);
   };
 
   const exportCSV = () => {
@@ -827,7 +970,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `lista_${activeList.eventName || 'evento'}.csv`);
+    
+    // Generate Filename: Name_YYYY-MM-DD_HH-mm
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+
+    const safeName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
+    const fileName = `${safeName}_${year}-${month}-${day}_${hours}-${minutes}.csv`;
+
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -901,14 +1056,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         {/* Header Inputs for Active List */}
         {activeList && (
-          <div className="p-6 bg-slate-800 border-b border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-3 bg-slate-800 border-b border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="relative">
                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <span className="text-slate-500 font-bold text-xs">EV</span>
                </div>
                <input 
                 placeholder="Nome Evento" 
-                className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500"
+                className="w-full bg-slate-900 border border-slate-700 pl-10 py-1.5 px-2 text-sm rounded text-white outline-none focus:border-emerald-500"
                 value={activeList.eventName} 
                 onChange={e => updateActiveList({ eventName: e.target.value })}
               />
@@ -919,7 +1074,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                </div>
                <input 
                 placeholder="Location" 
-                className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500"
+                className="w-full bg-slate-900 border border-slate-700 pl-10 py-1.5 px-2 text-sm rounded text-white outline-none focus:border-emerald-500"
                 value={activeList.location} 
                 onChange={e => updateActiveList({ location: e.target.value })}
               />
@@ -930,7 +1085,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                </div>
                <input 
                 type="date"
-                className="w-full bg-slate-900 border border-slate-700 pl-10 p-2 rounded text-white outline-none focus:border-emerald-500"
+                className="w-full bg-slate-900 border border-slate-700 pl-10 py-1.5 px-2 text-sm rounded text-white outline-none focus:border-emerald-500"
                 value={activeList.eventDate} 
                 onChange={e => updateActiveList({ eventDate: e.target.value })}
               />
@@ -944,7 +1099,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           {sections.map(s => (
             <button
               key={s.id}
-              onClick={() => setActiveSectionId(s.id)}
+              onClick={() => {
+                  setActiveSectionId(s.id);
+                  // SAVE ACTIVE SECTION FOR THIS LIST
+                  localStorage.setItem(`cuepack_last_section_${activeList.id}`, s.id);
+              }}
               className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2 group
                 ${activeSectionId === s.id 
                   ? 'bg-slate-700 text-white border-t border-x border-slate-600' 
@@ -1028,6 +1187,30 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             </div>
         )}
 
+        {/* List Search Bar (Local Search) */}
+        {activeSection && activeSection.components.length > 0 && (
+            <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center gap-2">
+                <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                    <input 
+                        type="text"
+                        placeholder={`Cerca in ${activeSection.name}...`}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-8 py-1 text-sm text-white focus:border-blue-500 outline-none"
+                        value={listSearch}
+                        onChange={(e) => setListSearch(e.target.value)}
+                    />
+                    {listSearch && (
+                        <button 
+                            onClick={() => setListSearch('')}
+                            className="absolute right-2 top-2 text-slate-500 hover:text-white"
+                        >
+                            <X size={14} />
+                        </button>
+                    )}
+                </div>
+            </div>
+        )}
+
         {/* List Content Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-950/30">
           {!activeList ? (
@@ -1043,7 +1226,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               )}
             </div>
           ) : (
-            activeSection.components.map((comp, idx) => {
+            filteredListComponents.map((comp, idx) => {
               const isNoteVisible = openNoteIds.has(comp.uniqueId) || !!comp.notes;
               const isSelected = selectedIds.has(comp.uniqueId);
               const isBeingReplaced = replacingComponentId === comp.uniqueId;
@@ -1052,7 +1235,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               return (
               <div 
                 key={comp.uniqueId} 
-                draggable
+                draggable={!listSearch} // Disable dragging while filtering to avoid index mismatches
                 onDragStart={(e) => handleDragStart(e, activeSection.id, idx, comp.uniqueId)}
                 onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)}
                 onDragEnd={handleDragEnd}
@@ -1067,14 +1250,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             : comp.type === 'kit' 
                                 ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' 
                                 : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}
-                onClick={() => toggleSelection(comp.uniqueId)}
+                // Removed onClick={...} to disable row-wide selection
               >
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2 overflow-hidden">
                       {/* Selection Checkbox */}
                       <button 
                         onClick={(e) => { e.stopPropagation(); toggleSelection(comp.uniqueId); }}
-                        className={`text-slate-500 hover:text-white transition-colors shrink-0 ${isSelected ? 'text-blue-500' : ''}`}
+                        className={`text-slate-500 hover:text-white transition-colors shrink-0 p-1 -ml-1 mr-2 cursor-pointer ${isSelected ? 'text-blue-500' : ''}`}
+                        title="Seleziona"
                       >
                           {isSelected ? <CheckSquare size={18} className="text-blue-500" /> : <Square size={18} />}
                       </button>
@@ -1085,15 +1269,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                               {comp.name} 
                               {comp.type === 'kit' && <span className="ml-2 text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle">KIT</span>}
                           </div>
-                          <div className="text-[10px] text-slate-500 leading-tight">{comp.category}</div>
+                          <div className="text-xs text-slate-500 leading-tight">{comp.category}</div>
                       </div>
                   </div>
                   
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                       {/* Drag Handle */}
+                       {/* Drag Handle - Only show if not filtering */}
+                       {!listSearch && (
                        <div className="p-1.5 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-300 mr-1" title="Trascina per spostare">
                            <GripVertical size={16} />
                        </div>
+                       )}
 
                        {/* Replace Button */}
                        <button
@@ -1310,16 +1496,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     )})
                  )
             ) : activeTab === 'items' ? (
-                inventory
-                .filter(i => {
-                  // Token-based search logic
-                  const searchTokens = pickerSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
-                  const itemText = (i.name + ' ' + (i.category || '')).toLowerCase();
-                  const matchesSearch = searchTokens.every(token => itemText.includes(token));
-                  
-                  const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
-                  return matchesSearch && matchesCategory;
-                })
+                filteredPickerItems
                 .map(item => {
                     const qtyInList = quantitiesInList.get(item.id) || 0;
                     return (
@@ -1345,16 +1522,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     </button>
                 )})
             ) : (
-                kits
-                .filter(k => {
-                  // Token-based search logic for kits
-                  const searchTokens = pickerSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
-                  const kitText = (k.name + ' ' + (k.category || '')).toLowerCase();
-                  const matchesSearch = searchTokens.every(token => kitText.includes(token));
-                  
-                  const matchesCategory = selectedCategory === 'All' || k.category === selectedCategory;
-                  return matchesSearch && matchesCategory;
-                })
+                filteredPickerKits
                 .map(kit => {
                     const qtyInList = quantitiesInList.get(kit.id) || 0;
                     return (
@@ -1387,6 +1555,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         onClose={() => setIsNewItemModalOpen(false)}
         onSave={handleCreateNewItem}
         title="Nuovo Materiale Rapido"
+        inventory={inventory}
+        onCreateAccessory={handleCreateAccessory}
       />
       
       <ConfirmationModal

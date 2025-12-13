@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X } from 'lucide-react';
 import { InventoryItem, Category, PackingList, Kit } from '../types';
 import { ItemFormModal } from './ItemFormModal';
@@ -27,20 +27,76 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
   // Deletion State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
 
-  const filteredItems = items
-    .filter(item => {
-      // Split search term into individual words (tokens)
-      const searchTokens = searchTerm.toLowerCase().split(' ').filter(token => token.trim() !== '');
-      
-      const itemText = (item.name + ' ' + (item.description || '')).toLowerCase();
-      
-      // Check if ALL tokens are present in the item name or description
-      const matchesSearch = searchTokens.every(token => itemText.includes(token));
-      
-      const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const filteredItems = useMemo(() => {
+    // Safety check if items is somehow undefined/null
+    if (!items || !Array.isArray(items)) return [];
+
+    const searchTokens = (searchTerm || '').toLowerCase().split(' ').filter(token => token.trim() !== '');
+
+    const results = items
+      .map(item => {
+        // Safe access to properties
+        const name = (item.name || '').toLowerCase();
+        const cat = (item.category || '').toLowerCase();
+        const desc = (item.description || '').toLowerCase();
+        
+        // 1. Filter: Check if ALL tokens are present somewhere (Strict Filter)
+        const combinedText = `${name} ${cat} ${desc}`;
+        const isMatch = searchTokens.every(token => combinedText.includes(token));
+        
+        if (!isMatch) return { item, score: -1, nameMatches: 0 }; 
+
+        // 2. Score Calculation
+        let score = 0;
+        let nameMatches = 0;
+
+        if (searchTokens.length === 0) {
+            score = 1; 
+        } else {
+            searchTokens.forEach(token => {
+                const inName = name.includes(token);
+                
+                if (inName) {
+                    nameMatches++; // Count how many distinct search words appear in the name
+                    
+                    if (name === token) score += 1000; // Exact match
+                    else if (name.startsWith(token)) score += 500; // Starts with
+                    else if (name.includes(" " + token)) score += 200; // Word boundary
+                    else score += 100; // Contains
+                }
+                
+                if (cat.includes(token)) score += 10;
+                if (desc.includes(token)) score += 1;
+            });
+        }
+
+        // Category Filter check
+        const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+        if (!matchesCategory) return { item, score: -1, nameMatches: 0 };
+
+        return { item, score, nameMatches };
+      })
+      .filter(result => result.score > -1)
+      .sort((a, b) => {
+          // 1. Priority: Number of search tokens found in NAME (The user is likely searching by name)
+          if (b.nameMatches !== a.nameMatches) {
+              return b.nameMatches - a.nameMatches;
+          }
+          // 2. Priority: Calculated Relevance Score
+          if (b.score !== a.score) {
+              return b.score - a.score;
+          }
+          // 3. Fallback: Alphabetical
+          return (a.item.name || '').localeCompare(b.item.name || '');
+      })
+      .map(result => result.item);
+
+      // SAFETY: Remove duplicate IDs if they exist in state to prevent React key collision ghosts
+      return results.filter((item, index, self) =>
+        index === self.findIndex((t) => t.id === item.id)
+      );
+
+  }, [items, searchTerm, selectedCategory]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -67,18 +123,42 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
             sections: list.sections.map(section => ({
                 ...section,
                 components: section.components.map(comp => {
+                    let updatedComp = { ...comp };
+
+                    // A. Update Top-level Item
                     if (comp.type === 'item' && comp.referenceId === itemId) {
-                         return { 
-                             ...comp, 
-                             name: newData.name || comp.name, 
-                             category: newData.category || comp.category,
+                        updatedComp = { 
+                             ...updatedComp, 
+                             name: newData.name || updatedComp.name, 
+                             category: newData.category || updatedComp.category,
                         };
                     }
-                    return comp;
+
+                    // B. Update Nested Contents (Kit Items OR Accessories)
+                    if (updatedComp.contents) {
+                        const newContents = updatedComp.contents.map(subItem => {
+                             // Match by itemId (if present - new structure) or by name fallback (old structure, less reliable)
+                             if (subItem.itemId === itemId) {
+                                  return {
+                                      ...subItem,
+                                      name: newData.name || subItem.name,
+                                      category: newData.category || subItem.category
+                                  };
+                             }
+                             return subItem;
+                        });
+                        updatedComp.contents = newContents;
+                    }
+                    
+                    return updatedComp;
                 })
             }))
         })));
      }
+  };
+  
+  const handleCreateAccessory = (newItem: InventoryItem) => {
+     setItems(prev => [...prev, newItem]);
   };
 
   // --- MODAL SAVE ---
@@ -131,6 +211,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
              const resolvedContents = newAccessories.map(acc => {
                 const accItem = items.find(i => i.id === acc.itemId);
                 return {
+                    itemId: acc.itemId,
                     name: accItem?.name || 'Accessorio',
                     quantity: acc.quantity,
                     category: accItem?.category || 'Altro'
@@ -149,8 +230,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
                     })
                 }))
             })));
-            // Update Kits logic... (omitted for brevity, handled in previous implementation, 
-            // but effectively we only need basic sync for inline edits)
         }
     }
 
@@ -287,7 +366,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
                   >
                     {/* NAME COLUMN */}
                     <td className="p-4" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'name'); }}>
-                      {editingCell?.itemId === item.id && editingCell.field === 'name' ? (
+                      {editingCell?.itemId === item.id && editingCell?.field === 'name' ? (
                           <input 
                             ref={editInputRef as React.RefObject<HTMLInputElement>}
                             type="text"
@@ -307,7 +386,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
                             )}
                         </div>
                       )}
-                      {(!editingCell || editingCell.itemId !== item.id || editingCell.field !== 'name') && (
+                      {(!editingCell || editingCell.itemId !== item.id || editingCell?.field !== 'name') && (
                           <div className="text-sm text-slate-500 truncate max-w-xs cursor-text" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'description'); }}>
                               {item.description}
                           </div>
@@ -316,7 +395,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
 
                     {/* CATEGORY COLUMN */}
                     <td className="p-4" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'category'); }}>
-                      {editingCell?.itemId === item.id && editingCell.field === 'category' ? (
+                      {editingCell?.itemId === item.id && editingCell?.field === 'category' ? (
                           <select 
                             ref={editInputRef as React.RefObject<HTMLSelectElement>}
                             className="bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none text-sm"
@@ -344,7 +423,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
 
                     {/* WEIGHT COLUMN */}
                     <td className="p-4 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'weight'); }}>
-                        {editingCell?.itemId === item.id && editingCell.field === 'weight' ? (
+                        {editingCell?.itemId === item.id && editingCell?.field === 'weight' ? (
                              <input 
                                 ref={editInputRef as React.RefObject<HTMLInputElement>}
                                 type="number"
@@ -362,7 +441,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
 
                     {/* STOCK COLUMN */}
                     <td className="p-4 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'inStock'); }}>
-                       {editingCell?.itemId === item.id && editingCell.field === 'inStock' ? (
+                       {editingCell?.itemId === item.id && editingCell?.field === 'inStock' ? (
                              <input 
                                 ref={editInputRef as React.RefObject<HTMLInputElement>}
                                 type="number"
@@ -401,6 +480,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, setItems, l
         onSave={handleSave}
         initialData={editingItem}
         inventory={items} // Pass full inventory for accessories selection
+        onCreateAccessory={handleCreateAccessory}
         title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"}
       />
       

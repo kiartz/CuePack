@@ -161,64 +161,91 @@ export const HomeView: React.FC<HomeViewProps> = ({
         const content = e.target?.result as string;
         const data = JSON.parse(content);
 
-        let importedItems = 0;
-        let importedKits = 0;
+        let importedItemsCount = 0;
+        let importedKitsCount = 0;
 
-        // IMPORTAZIONE INVENTARIO CON MERGE
+        // --- IMPORTAZIONE INVENTARIO (Safe Merge) ---
         if (data.inventory && Array.isArray(data.inventory)) {
              setInventory(prev => {
-                // Creiamo una mappa degli oggetti attuali basata sul NOME normalizzato
-                const itemMap = new Map(prev.map(i => [i.name.trim().toLowerCase(), i]));
-                
-                data.inventory.forEach((importedItem: InventoryItem) => {
-                    const key = importedItem.name.trim().toLowerCase();
-                    const existing = itemMap.get(key);
-                    
-                    if (existing) {
-                        // MERGE: Aggiorniamo l'oggetto esistente con i dati importati.
-                        // IMPORTANTE: Manteniamo l'ID esistente per non rompere i collegamenti nelle liste attuali.
-                        // Assumiamo che il file importato sia "più aggiornato" come richiesto.
-                        itemMap.set(key, { ...importedItem, id: existing.id });
-                    } else {
-                        // CREATE: Nuovo oggetto
-                        // Se l'oggetto non esiste, lo aggiungiamo.
-                        itemMap.set(key, { ...importedItem, id: importedItem.id || crypto.randomUUID() });
+                // 1. Mappa esistente per Nome normalizzato
+                const nameMap = new Map<string, InventoryItem>();
+                const usedIds = new Set<string>();
+
+                // Carichiamo lo stato attuale
+                prev.forEach(item => {
+                    if (item.name) {
+                        nameMap.set(item.name.trim().toLowerCase(), item);
+                    }
+                    if (item.id) {
+                        usedIds.add(item.id);
                     }
                 });
                 
-                // Ritorniamo l'array dei valori aggiornati
-                const newInventory = Array.from(itemMap.values());
-                importedItems = newInventory.length - prev.length; // Calcolo approssimativo dei nuovi
-                if (importedItems < 0) importedItems = 0; // Se merge, non aumentano i nuovi
-                return newInventory;
+                // 2. Processiamo l'importazione
+                data.inventory.forEach((importedItem: InventoryItem) => {
+                    if (!importedItem.name) return; // Skip invalid items
+
+                    const key = importedItem.name.trim().toLowerCase();
+                    const existing = nameMap.get(key);
+                    
+                    if (existing) {
+                        // MERGE: Aggiorniamo i dati ma MANTENIAMO L'ID ESISTENTE
+                        // Questo previene collisioni e mantiene i link nelle liste
+                        nameMap.set(key, { ...importedItem, id: existing.id });
+                    } else {
+                        // CREATE: Nuovo oggetto
+                        let newId = importedItem.id;
+                        
+                        // CRITICAL: Se l'ID importato esiste già (collisione ID tra item diversi) o non c'è
+                        if (!newId || usedIds.has(newId)) {
+                            newId = crypto.randomUUID();
+                        }
+                        
+                        usedIds.add(newId);
+                        nameMap.set(key, { ...importedItem, id: newId });
+                        importedItemsCount++;
+                    }
+                });
+                
+                return Array.from(nameMap.values());
              });
         }
 
-        // IMPORTAZIONE KIT CON MERGE
+        // --- IMPORTAZIONE KIT (Safe Merge) ---
         if (data.kits && Array.isArray(data.kits)) {
             setKits(prev => {
-                const kitMap = new Map(prev.map(k => [k.name.trim().toLowerCase(), k]));
+                const kitMap = new Map<string, Kit>();
+                const usedKitIds = new Set<string>();
+
+                prev.forEach(k => {
+                    if (k.name) kitMap.set(k.name.trim().toLowerCase(), k);
+                    if (k.id) usedKitIds.add(k.id);
+                });
 
                 data.kits.forEach((importedKit: Kit) => {
+                    if (!importedKit.name) return;
+
                     const key = importedKit.name.trim().toLowerCase();
                     const existing = kitMap.get(key);
 
                     if (existing) {
-                         // Merge Kit: Aggiorna definizioni ma mantieni ID
                          kitMap.set(key, { ...importedKit, id: existing.id });
                     } else {
-                         kitMap.set(key, { ...importedKit, id: importedKit.id || crypto.randomUUID() });
+                         let newId = importedKit.id;
+                         if (!newId || usedKitIds.has(newId)) {
+                             newId = crypto.randomUUID();
+                         }
+                         usedKitIds.add(newId);
+                         kitMap.set(key, { ...importedKit, id: newId });
+                         importedKitsCount++;
                     }
                 });
 
-                const newKits = Array.from(kitMap.values());
-                importedKits = newKits.length - prev.length;
-                if (importedKits < 0) importedKits = 0;
-                return newKits;
+                return Array.from(kitMap.values());
             });
         }
         
-        alert(`Importazione completata!\nCatalogo aggiornato (eventuali duplicati sono stati uniti).`);
+        alert(`Importazione completata!\nInventario e Kit aggiornati con successo.`);
 
         // Reset input
         if (catalogFileInputRef.current) catalogFileInputRef.current.value = '';

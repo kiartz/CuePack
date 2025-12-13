@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Layers, Package, ClipboardList, Menu, Home } from 'lucide-react';
 import { InventoryView } from './components/InventoryView';
 import { KitsView } from './components/KitsView';
@@ -54,20 +54,51 @@ export default function App() {
         { id: '3', name: 'Video', components: [] },
         { id: '4', name: 'Regia', components: [] },
       ],
-      notes: ''
+      notes: '',
+      checklistEnabledSectors: [],
+      checklistCheckedItems: []
     }
   ], 'cuepack_lists');
 
   // Lifted state for the active list with Persistence
   const [activeListId, setActiveListId] = useStickyState<string>('default-1', 'cuepack_active_list_id');
   
-  // --- CHECKLIST STATE ---
-  // Default to empty array [] so everything is disabled initially
-  const [checklistEnabledSectors, setChecklistEnabledSectors] = useStickyState<string[]>([], 'cuepack_checklist_sectors');
-  const [checklistCheckedItems, setChecklistCheckedItems] = useStickyState<string[]>([], 'cuepack_checklist_checked');
+  // Derived active list
+  const activeList = useMemo(() => 
+    packingLists.find(l => l.id === activeListId), 
+  [packingLists, activeListId]);
 
   // Mobile menu state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // --- CHECKLIST STATE HANDLERS (Bound to Active List) ---
+  
+  const handleSetChecklistEnabledSectors: React.Dispatch<React.SetStateAction<string[]>> = (action) => {
+    if (!activeList) return;
+    
+    setPackingLists(prevLists => prevLists.map(list => {
+        if (list.id === activeListId) {
+            const current = list.checklistEnabledSectors || [];
+            const newValue = typeof action === 'function' ? action(current) : action;
+            return { ...list, checklistEnabledSectors: newValue };
+        }
+        return list;
+    }));
+  };
+
+  const handleSetChecklistCheckedItems: React.Dispatch<React.SetStateAction<string[]>> = (action) => {
+    if (!activeList) return;
+
+    setPackingLists(prevLists => prevLists.map(list => {
+        if (list.id === activeListId) {
+            const current = list.checklistCheckedItems || [];
+            const newValue = typeof action === 'function' ? action(current) : action;
+            return { ...list, checklistCheckedItems: newValue };
+        }
+        return list;
+    }));
+  };
+
 
   // --- ONE-TIME MERGE LOGIC ---
   useEffect(() => {
@@ -162,25 +193,34 @@ export default function App() {
         </nav>
 
         {/* CHECKLIST WIDGET (Scrollable Area) */}
-        <div className="flex-1 overflow-hidden flex flex-col border-t border-slate-800 bg-slate-950/30">
-             <div className="p-3 bg-slate-900/50 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
-                 <span>Checklist Carico</span>
-                 <span className="bg-slate-800 px-1.5 rounded text-slate-400">{checklistCheckedItems.length} OK</span>
-             </div>
-             <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
-                 <ChecklistView 
-                    enabledSectors={checklistEnabledSectors}
-                    setEnabledSectors={setChecklistEnabledSectors}
-                    checkedItems={checklistCheckedItems}
-                    setCheckedItems={setChecklistCheckedItems}
-                 />
-             </div>
-        </div>
+        {activeList && (
+            <div className="flex-1 overflow-hidden flex flex-col border-t border-slate-800 bg-slate-950/30">
+                <div className="p-3 bg-slate-900/50 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
+                    <span>Checklist: {activeList.eventName.substring(0, 12)}{activeList.eventName.length > 12 ? '...' : ''}</span>
+                    <span className="bg-slate-800 px-1.5 rounded text-slate-400">
+                        {activeList.checklistCheckedItems?.length || 0} OK
+                    </span>
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+                    <ChecklistView 
+                        enabledSectors={activeList.checklistEnabledSectors || []}
+                        setEnabledSectors={handleSetChecklistEnabledSectors}
+                        checkedItems={activeList.checklistCheckedItems || []}
+                        setCheckedItems={handleSetChecklistCheckedItems}
+                    />
+                </div>
+            </div>
+        )}
+        {!activeList && (
+            <div className="flex-1 border-t border-slate-800 bg-slate-950/30 flex items-center justify-center text-slate-500 text-xs p-4 text-center">
+                Seleziona un evento per vedere la Checklist
+            </div>
+        )}
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1 shrink-0 bg-slate-900">
            <span>© Roberto Chiartano</span>
-           <span className="opacity-50">v0.3.0</span>
+           <span className="opacity-50">v0.3.2</span>
         </div>
       </aside>
 

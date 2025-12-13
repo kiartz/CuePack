@@ -21,9 +21,9 @@ const COMMON_ACCESSORIES: InventoryItem[] = [
   { id: 'stg-acc-clamp', name: 'Morsetto Pedana (KDC/Clamp)', category: Category.STRUCTURE, weight: 0.5, inStock: 100, description: 'Blocco unione pedane' },
   { id: 'stg-acc-pin', name: 'Pipotto Giunzione Riser', category: Category.STRUCTURE, weight: 0.1, inStock: 200, description: 'Pin per unione riser' },
 
-  // Ledwall Links (Corti per cabinet)
-  { id: 'cbl-led-pwr-link', name: 'Link Corrente Led (0.5m)', category: Category.CABLES, weight: 0.2, inStock: 500, description: 'Cabinet to Cabinet' },
-  { id: 'cbl-led-data-link', name: 'Link Segnale Led (0.5m)', category: Category.CABLES, weight: 0.1, inStock: 500, description: 'Cabinet to Cabinet' },
+  // Ledwall Links (Legacy/Generici)
+  { id: 'cbl-led-pwr-link', name: 'Link Corrente Led Generico', category: Category.CABLES, weight: 0.2, inStock: 50, description: 'Cabinet to Cabinet' },
+  { id: 'cbl-led-data-link', name: 'Link Segnale Led Generico', category: Category.CABLES, weight: 0.1, inStock: 50, description: 'Cabinet to Cabinet' },
 ];
 
 // =============================================================================
@@ -138,7 +138,7 @@ const VIDEO_NETWORK: InventoryItem[] = [
   // --- ABSEN POLARIS PL2.5 ---
   { 
     id: 'vid-abs-pl25', name: 'Absen Polaris PL2.5', category: Category.VIDEO, weight: 8, inStock: 100,
-    accessories: [{ itemId: 'cbl-led-pwr-link', quantity: 1 }, { itemId: 'cbl-led-data-link', quantity: 1 }]
+    accessories: [{ itemId: 'cbl-link-true1-100', quantity: 1 }, { itemId: 'cbl-eth-100', quantity: 1 }]
   },
   { id: 'vid-abs-pl25-l', name: 'Absen PL2.5 Angolo SX', category: Category.VIDEO, weight: 8, inStock: 8 },
   { id: 'vid-abs-pl25-r', name: 'Absen PL2.5 Angolo DX', category: Category.VIDEO, weight: 8, inStock: 8 },
@@ -146,8 +146,8 @@ const VIDEO_NETWORK: InventoryItem[] = [
   { id: 'vid-abs-fly-50', name: 'Absen PL Flybar 50cm', category: Category.VIDEO, weight: 3, inStock: 10, accessories: [{ itemId: 'rig-steelflex-2', quantity: 1 }, { itemId: 'rig-shackle-black', quantity: 1 }] },
 
   // --- ABSEN D2V & YESTECH & INFILED ---
-  { id: 'vid-abs-d2v', name: 'Absen D2V Plus 2.9', category: Category.VIDEO, weight: 7.5, inStock: 60, accessories: [{ itemId: 'cbl-led-pwr-link', quantity: 1 }, { itemId: 'cbl-led-data-link', quantity: 1 }] },
-  { id: 'vid-inf-26', name: 'Infiled 2.6mm', category: Category.VIDEO, weight: 8, inStock: 120, accessories: [{ itemId: 'cbl-led-pwr-link', quantity: 1 }, { itemId: 'cbl-led-data-link', quantity: 1 }] },
+  { id: 'vid-abs-d2v', name: 'Absen D2V Plus 2.9', category: Category.VIDEO, weight: 7.5, inStock: 60, accessories: [{ itemId: 'cbl-link-true1-100', quantity: 1 }, { itemId: 'cbl-eth-100', quantity: 1 }] },
+  { id: 'vid-inf-26', name: 'Infiled 2.6mm', category: Category.VIDEO, weight: 8, inStock: 120, accessories: [{ itemId: 'cbl-link-pcon-050', quantity: 1 }, { itemId: 'cbl-eth-050', quantity: 1 }] },
   { id: 'vid-inf-fly', name: 'Infiled Flybar 50cm', category: Category.VIDEO, weight: 4, inStock: 20, accessories: [{ itemId: 'rig-steelflex-2', quantity: 1 }, { itemId: 'rig-shackle-black', quantity: 1 }] },
   { id: 'vid-yes-39', name: 'Yestech 3.9mm', category: Category.VIDEO, weight: 9, inStock: 80, accessories: [{ itemId: 'cbl-led-pwr-link', quantity: 1 }, { itemId: 'cbl-led-data-link', quantity: 1 }] },
   { id: 'vid-yes-fly', name: 'Yestech Flybar 50cm', category: Category.VIDEO, weight: 4, inStock: 10, accessories: [{ itemId: 'rig-steelflex-2', quantity: 1 }, { itemId: 'rig-shackle-black', quantity: 1 }] },
@@ -193,6 +193,12 @@ const PIXEL_LED: InventoryItem[] = [
 // 6. ADATTATORI E CAVI SPECIFICI
 // =============================================================================
 const SPECIFIC_CABLES: InventoryItem[] = [
+  // --- KIT LEDWALL CABLES ---
+  { id: 'cbl-link-true1-100', name: 'Link True1 1mt', category: Category.CABLES, weight: 0.3, inStock: 100 },
+  { id: 'cbl-eth-100', name: 'Cavo Ethercon Nero 1mt', category: Category.CABLES, weight: 0.1, inStock: 100 },
+  { id: 'cbl-link-pcon-050', name: 'Link Powercon 0.5mt', category: Category.CABLES, weight: 0.2, inStock: 100 },
+  { id: 'cbl-eth-050', name: 'Cavo Ethercon Nero 0.5mt', category: Category.CABLES, weight: 0.1, inStock: 100 },
+
   // --- Adattatori Alimentazione Standard ---
   { id: 'ad-tr1-schuko', name: 'Alim. Schuko M - True1', category: Category.CABLES, weight: 0.3, inStock: 100 },
   { id: 'ad-pcon-schuko', name: 'Alim. Schuko M - Powercon Blu', category: Category.CABLES, weight: 0.3, inStock: 50 },
@@ -505,8 +511,8 @@ export const INITIAL_KITS: Kit[] = [
     id: 'k-vid-abs-6', name: 'Baule Absen PL2.5 (6pz)', category: Category.VIDEO,
     items: [
       { itemId: 'vid-abs-pl25', quantity: 6 },
-      { itemId: 'cbl-led-pwr-link', quantity: 6 },
-      { itemId: 'cbl-led-data-link', quantity: 6 }
+      { itemId: 'cbl-link-true1-100', quantity: 6 },
+      { itemId: 'cbl-eth-100', quantity: 6 }
     ]
   },
   {
@@ -514,16 +520,16 @@ export const INITIAL_KITS: Kit[] = [
     items: [
       { itemId: 'vid-abs-pl25-l', quantity: 3 },
       { itemId: 'vid-abs-pl25-r', quantity: 3 },
-      { itemId: 'cbl-led-pwr-link', quantity: 6 },
-      { itemId: 'cbl-led-data-link', quantity: 6 }
+      { itemId: 'cbl-link-true1-100', quantity: 6 },
+      { itemId: 'cbl-eth-100', quantity: 6 }
     ]
   },
   {
     id: 'k-vid-inf-10', name: 'Baule Infiled 2.6 (10pz)', category: Category.VIDEO,
     items: [
       { itemId: 'vid-inf-26', quantity: 10 },
-      { itemId: 'cbl-led-pwr-link', quantity: 10 },
-      { itemId: 'cbl-led-data-link', quantity: 10 }
+      { itemId: 'cbl-link-pcon-050', quantity: 10 },
+      { itemId: 'cbl-eth-050', quantity: 10 }
     ]
   },
   {

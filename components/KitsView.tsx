@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, Search, Edit2, Trash2, Copy, Package, X, Filter } from 'lucide-react';
 import { InventoryItem, Kit, KitComponent, Category } from '../types';
 import { Modal } from './Modal';
@@ -30,17 +30,48 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
   const qtyInputRefs = useRef<{ [itemId: string]: HTMLInputElement | null }>({});
   const [lastAddedItemId, setLastAddedItemId] = useState<string | null>(null);
 
-  const filteredKits = kits
-    .filter(kit => {
-      // Token-based search for Kits
-      const searchTokens = searchTerm.toLowerCase().split(' ').filter(t => t.trim() !== '');
-      const kitText = (kit.name + ' ' + (kit.description || '')).toLowerCase();
-      const matchesSearch = searchTokens.every(token => kitText.includes(token));
+  const filteredKits = useMemo(() => {
+      const searchTokens = (searchTerm || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
       
-      const matchesCategory = selectedCategory === 'All' || kit.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+      return kits
+        .map(kit => {
+            const name = (kit.name || '').toLowerCase();
+            const cat = (kit.category || '').toLowerCase();
+            const desc = (kit.description || '').toLowerCase();
+            const combined = `${name} ${cat} ${desc}`;
+
+            if (!searchTokens.every(token => combined.includes(token))) return { kit, score: -1, nameMatches: 0 };
+            if (selectedCategory !== 'All' && kit.category !== selectedCategory) return { kit, score: -1, nameMatches: 0 };
+
+            let score = 0;
+            let nameMatches = 0;
+
+            if (searchTokens.length === 0) {
+                score = 1;
+            } else {
+                searchTokens.forEach(token => {
+                    const inName = name.includes(token);
+                    if (inName) {
+                        nameMatches++;
+                        if (name === token) score += 1000;
+                        else if (name.startsWith(token)) score += 500;
+                        else if (name.includes(" " + token)) score += 200;
+                        else score += 100;
+                    }
+                    if (cat.includes(token)) score += 20;
+                    if (desc.includes(token)) score += 5;
+                });
+            }
+            return { kit, score, nameMatches };
+        })
+        .filter(x => x.score > -1)
+        .sort((a, b) => {
+            if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
+            if (b.score !== a.score) return b.score - a.score;
+            return (a.kit.name || '').localeCompare(b.kit.name || '');
+        })
+        .map(x => x.kit);
+  }, [kits, searchTerm, selectedCategory]);
 
   // Effect to focus and select the quantity input when a new item is added
   useEffect(() => {
@@ -137,15 +168,57 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
 
   const getInventoryName = (id: string) => inventory.find(i => i.id === id)?.name || 'Unknown Item';
 
-  const handleCreateNewItem = (itemData: Omit<InventoryItem, 'id'>) => {
-    const newItem: InventoryItem = {
-      ...itemData,
-      id: crypto.randomUUID(),
-    };
+  const handleCreateNewItem = (newItem: InventoryItem) => {
     setInventory(prev => [...prev, newItem]);
     // Auto add to kit and focus
     addItemToKit(newItem);
   };
+  
+  const handleCreateAccessory = (newItem: InventoryItem) => {
+     setInventory(prev => [...prev, newItem]);
+  };
+
+  const filteredPickerItems = useMemo(() => {
+      const searchTokens = (itemSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
+      
+      return inventory
+        .map(item => {
+            const name = (item.name || '').toLowerCase();
+            const cat = (item.category || '').toLowerCase();
+            const desc = (item.description || '').toLowerCase();
+            const combined = `${name} ${cat} ${desc}`;
+
+            if (!searchTokens.every(token => combined.includes(token))) return { item, score: -1, nameMatches: 0 };
+
+            let score = 0;
+            let nameMatches = 0;
+
+            if (searchTokens.length === 0) {
+                score = 1;
+            } else {
+                searchTokens.forEach(token => {
+                    const inName = name.includes(token);
+                    if (inName) {
+                        nameMatches++;
+                        if (name === token) score += 1000;
+                        else if (name.startsWith(token)) score += 500;
+                        else if (name.includes(" " + token)) score += 200;
+                        else score += 100;
+                    }
+                    if (cat.includes(token)) score += 20;
+                    if (desc.includes(token)) score += 5;
+                });
+            }
+            return { item, score, nameMatches };
+        })
+        .filter(x => x.score > -1)
+        .sort((a, b) => {
+            if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
+            if (b.score !== a.score) return b.score - a.score;
+            return (a.item.name || '').localeCompare(b.item.name || '');
+        })
+        .map(x => x.item);
+  }, [inventory, itemSearch]);
 
   return (
     <div className="h-full flex flex-col p-6 space-y-4">
@@ -327,14 +400,7 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
               />
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
-              {inventory
-                .filter(i => {
-                   // Token-based search for Item Picker inside Kit
-                   const searchTokens = itemSearch.toLowerCase().split(' ').filter(t => t.trim() !== '');
-                   const itemText = (i.name + ' ' + (i.category || '')).toLowerCase();
-                   return searchTokens.every(token => itemText.includes(token));
-                })
-                .sort((a,b) => a.name.localeCompare(b.name))
+              {filteredPickerItems
                 .map(item => (
                 <button 
                   key={item.id}
@@ -359,6 +425,8 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, setKits, inventory, se
         onClose={() => setIsNewItemModalOpen(false)}
         onSave={handleCreateNewItem}
         title="Nuovo Materiale"
+        inventory={inventory}
+        onCreateAccessory={handleCreateAccessory}
       />
       
       <ConfirmationModal
