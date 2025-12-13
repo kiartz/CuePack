@@ -78,12 +78,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const [lastAddedComponentId, setLastAddedComponentId] = useState<string | null>(null);
 
   // Derived State
-  const activeList = lists.find(l => l.id === activeListId);
+  const activeList = useMemo(() => lists.find(l => l.id === activeListId), [lists, activeListId]);
   const sections = activeList?.sections || [];
   const activeSection = sections.find(s => s.id === activeSectionId);
 
   // --- Map of Quantities currently in the List ---
-  // Used to show "x5" in the picker
   const quantitiesInList = useMemo(() => {
     const map = new Map<string, number>();
     if (!activeList) return map;
@@ -208,19 +207,23 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     );
   }, [activeSection, listSearch]);
 
-  // --- SAFETY CHECK: Ensure activeListId is always valid ---
+  // --- SAFETY CHECK: Ensure activeListId is valid ---
   useEffect(() => {
-    // If we have lists, but the active ID doesn't match any of them
-    if (lists.length > 0 && !lists.find(l => l.id === activeListId)) {
-      // Automatically switch to the first available list
-      setActiveListId(lists[0].id);
+    // We only reset if we have lists BUT no active list is found.
+    // We check specifically if activeListId is not empty to avoid overwriting a pending selection
+    if (lists.length > 0) {
+        const found = lists.find(l => l.id === activeListId);
+        if (!found) {
+            // Fallback to the last list (usually the one just added) or first
+             console.warn("Active List ID not found in lists. Switching to last available list.");
+             setActiveListId(lists[lists.length - 1].id);
+        }
     } else if (lists.length === 0 && activeListId !== '') {
-      // If no lists exist, clear the ID
-      setActiveListId('');
+        setActiveListId('');
     }
   }, [lists, activeListId, setActiveListId]);
   
-  // Set initial active section when switching lists, when sections change, OR when mounting
+  // Set initial active section when switching lists or when mounting
   useEffect(() => {
     if (activeList) {
        // If no section is selected OR the selected section no longer exists in this list
@@ -240,8 +243,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               setActiveSectionId('');
           }
        }
+    } else {
+        setActiveSectionId('');
     }
-  }, [activeListId, activeList, activeSectionId]);
+  }, [activeListId, activeList, activeSectionId]); // Removed 'sections' dep to avoid loops, activeList handles it
 
   // Reset selection and SEARCH when switching lists/sections
   useEffect(() => {
@@ -290,10 +295,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     const newLists = lists.filter(l => l.id !== activeListId);
     
     // Determine what the next ID should be BEFORE updating state
-    // This prevents a "flash" of undefined state
     let nextId = '';
     if (newLists.length > 0) {
-      nextId = newLists[0].id;
+      // Switch to the previous one in the list, or the first one
+      nextId = newLists[newLists.length - 1].id;
     }
 
     setLists(newLists);
@@ -1025,7 +1030,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                  <select 
                    value={activeListId} 
                    onChange={(e) => setActiveListId(e.target.value)}
-                   className="bg-slate-900 border border-slate-700 text-white text-sm rounded p-1 pr-8 outline-none focus:border-emerald-500 cursor-pointer"
+                   className="bg-slate-900 border border-slate-700 text-white text-sm rounded p-1 pr-8 outline-none focus:border-emerald-500 cursor-pointer max-w-[200px] truncate"
                  >
                    {lists.map(l => (
                      <option key={l.id} value={l.id}>

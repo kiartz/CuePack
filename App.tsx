@@ -220,7 +220,7 @@ export default function App() {
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center flex flex-col gap-1 shrink-0 bg-slate-900">
            <span>© Roberto Chiartano</span>
-           <span className="opacity-50">v0.3.2</span>
+           <span className="opacity-50">v0.3.3</span>
         </div>
       </aside>
 

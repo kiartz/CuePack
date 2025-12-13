@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Download, Upload, RefreshCw, LayoutDashboard, Database, Package, FileText, AlertCircle, Archive, Trash2 } from 'lucide-react';
-import { InventoryItem, Kit, PackingList } from '../types';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import { INITIAL_INVENTORY, INITIAL_KITS } from '../constants';
 
@@ -44,7 +44,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `cuepack_events_${new Date().toISOString().slice(0, 10)}.json`;
+    
+    // Generate Filename: cuepack_events_YYYY-MM-DD_HH-mm.json
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    
+    link.download = `cuepack_events_${year}-${month}-${day}_${hours}-${minutes}.json`;
+    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -52,7 +62,71 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   const handleImportListsClick = () => {
-    listsFileInputRef.current?.click();
+    // Reset value to ensure onChange fires even if the same file is selected again
+    if (listsFileInputRef.current) {
+        listsFileInputRef.current.value = '';
+        listsFileInputRef.current.click();
+    }
+  };
+
+  // --- DEEP SANITIZER FUNCTION ---
+  const sanitizeImportedLists = (rawData: any[]): PackingList[] => {
+      if (!Array.isArray(rawData)) return [];
+
+      return rawData.map((list: any) => {
+          // 1. Generate NEW List ID to ensure no conflicts with existing data
+          const listId = crypto.randomUUID();
+          
+          // 2. Sanitize Sections
+          const rawSections = Array.isArray(list.sections) ? list.sections : [];
+          const sanitizedSections: ListSection[] = rawSections.map((section: any) => {
+              // Ensure Section ID is a string. If it's "1" (legacy), keep it "1" but ensure string type.
+              // If missing, generate UUID.
+              const sectionId = section.id ? String(section.id) : crypto.randomUUID();
+              
+              // 3. Sanitize Components
+              const rawComponents = Array.isArray(section.components) ? section.components : [];
+              const sanitizedComponents: ListComponent[] = rawComponents.map((comp: any) => ({
+                  uniqueId: comp.uniqueId || crypto.randomUUID(), // Force ID if missing
+                  type: comp.type === 'kit' ? 'kit' : 'item',
+                  referenceId: comp.referenceId || 'unknown',
+                  name: comp.name || 'Oggetto Sconosciuto',
+                  quantity: Number(comp.quantity) || 1,
+                  category: comp.category || 'Altro',
+                  notes: comp.notes || '',
+                  // Fix: Ensure contents is always an array
+                  contents: Array.isArray(comp.contents) ? comp.contents : []
+              }));
+
+              return {
+                  id: sectionId,
+                  name: section.name || 'Sezione',
+                  components: sanitizedComponents
+              };
+          });
+
+          // Ensure at least default sections if empty (migrating very old data)
+          if (sanitizedSections.length === 0) {
+              sanitizedSections.push(
+                  { id: crypto.randomUUID(), name: 'Audio', components: [] },
+                  { id: crypto.randomUUID(), name: 'Luci', components: [] },
+                  { id: crypto.randomUUID(), name: 'Video', components: [] },
+                  { id: crypto.randomUUID(), name: 'Regia', components: [] }
+              );
+          }
+
+          return {
+              id: listId,
+              eventName: list.eventName || list.name || 'Evento Importato',
+              eventDate: list.eventDate || '',
+              location: list.location || '',
+              creationDate: list.creationDate || new Date().toISOString(),
+              notes: list.notes || '',
+              sections: sanitizedSections,
+              checklistEnabledSectors: Array.isArray(list.checklistEnabledSectors) ? list.checklistEnabledSectors : [],
+              checklistCheckedItems: Array.isArray(list.checklistCheckedItems) ? list.checklistCheckedItems : []
+          };
+      });
   };
 
   const handleListsFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,34 +137,63 @@ export const HomeView: React.FC<HomeViewProps> = ({
     reader.onload = (e) => {
       try {
         const content = e.target?.result as string;
-        const importedLists = JSON.parse(content);
-
-        // Basic validation check
-        if (!Array.isArray(importedLists)) {
-            alert("Il file non sembra contenere una lista valida.");
+        
+        // Basic JSON Parse
+        let parsedData;
+        try {
+            parsedData = JSON.parse(content);
+        } catch (jsonError) {
+            alert("Errore di formato: Il file non è un JSON valido.");
             return;
         }
 
-        // Add imports to current lists (Generate new IDs to avoid conflicts)
-        const sanitizedLists = importedLists.map((l: any) => ({
-            ...l,
-            id: crypto.randomUUID(),
-            eventName: `${l.eventName} (Importato)`,
-            creationDate: new Date().toISOString()
-        }));
-
-        setLists(prev => [...prev, ...sanitizedLists]);
-        // Switch to the first imported list
-        if (sanitizedLists.length > 0) {
-            setActiveListId(sanitizedLists[0].id);
+        // 1. Check if user uploaded a Catalog file by mistake
+        if (parsedData.type === 'cuepack_catalog') {
+             alert("⚠️ Hai caricato un file CATALOGO (Inventario) nell'importazione EVENTI.\n\nUsa il pulsante 'Importa Catalogo' nella sezione viola sottostante per questo file.");
+             return;
         }
+
+        let listsToImport: any[] = [];
+
+        // 2. Handle Array of Lists (Bulk Export or Legacy)
+        if (Array.isArray(parsedData)) {
+            listsToImport = parsedData;
+        } 
+        // 3. Handle Single List Object
+        else if (parsedData.sections || parsedData.eventName || parsedData.name) {
+            listsToImport = [parsedData];
+        } else {
+            console.error("Invalid Structure:", parsedData);
+            alert("Il file non sembra contenere dati evento validi. Struttura non riconosciuta.");
+            return;
+        }
+
+        // 4. SANITIZE DATA (Critical for old versions)
+        const sanitizedLists = sanitizeImportedLists(listsToImport);
+
+        if (sanitizedLists.length === 0) {
+            alert("Nessun evento valido trovato nel file.");
+            return;
+        }
+
+        // 5. APPEND Logic
+        setLists(prev => [...prev, ...sanitizedLists]);
         
-        // Reset input
-        if (listsFileInputRef.current) listsFileInputRef.current.value = '';
+        // 6. Intelligent Active List Selection
+        // Find the list with the most components (likely the one the user wants, not the empty default)
+        const bestList = sanitizedLists.reduce((prev, current) => {
+            const prevCount = prev.sections.reduce((acc, s) => acc + s.components.length, 0);
+            const currentCount = current.sections.reduce((acc, s) => acc + s.components.length, 0);
+            return currentCount > prevCount ? current : prev;
+        }, sanitizedLists[0]);
+
+        setActiveListId(bestList.id);
+        
+        alert(`${sanitizedLists.length} Eventi importati con successo!\n\nL'evento "${bestList.eventName}" è stato attivato.`);
         
       } catch (error) {
         console.error("Import error:", error);
-        alert("Errore durante la lettura del file. Verifica che sia un JSON valido.");
+        alert("Errore imprevisto durante l'importazione: " + (error as any).message);
       }
     };
     reader.readAsText(file);
@@ -110,7 +213,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
         { id: crypto.randomUUID(), name: 'Luci', components: [] },
         { id: crypto.randomUUID(), name: 'Video', components: [] },
         { id: crypto.randomUUID(), name: 'Regia', components: [] },
-      ]
+      ],
+      checklistEnabledSectors: [],
+      checklistCheckedItems: []
     };
     setLists([newList]);
     setActiveListId(newList.id);
@@ -140,7 +245,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `cuepack_catalog_${new Date().toISOString().slice(0, 10)}.json`;
+    
+    // Generate Filename: cuepack_catalog_YYYY-MM-DD_HH-mm.json
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+
+    link.download = `cuepack_catalog_${year}-${month}-${day}_${hours}-${minutes}.json`;
+    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -148,7 +263,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   const handleImportCatalogClick = () => {
-      catalogFileInputRef.current?.click();
+      if (catalogFileInputRef.current) {
+          catalogFileInputRef.current.value = '';
+          catalogFileInputRef.current.click();
+      }
   };
 
   const handleCatalogFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -167,11 +285,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
         // --- IMPORTAZIONE INVENTARIO (Safe Merge) ---
         if (data.inventory && Array.isArray(data.inventory)) {
              setInventory(prev => {
-                // 1. Mappa esistente per Nome normalizzato
                 const nameMap = new Map<string, InventoryItem>();
                 const usedIds = new Set<string>();
 
-                // Carichiamo lo stato attuale
                 prev.forEach(item => {
                     if (item.name) {
                         nameMap.set(item.name.trim().toLowerCase(), item);
@@ -181,32 +297,24 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     }
                 });
                 
-                // 2. Processiamo l'importazione
                 data.inventory.forEach((importedItem: InventoryItem) => {
-                    if (!importedItem.name) return; // Skip invalid items
+                    if (!importedItem.name) return;
 
                     const key = importedItem.name.trim().toLowerCase();
                     const existing = nameMap.get(key);
                     
                     if (existing) {
-                        // MERGE: Aggiorniamo i dati ma MANTENIAMO L'ID ESISTENTE
-                        // Questo previene collisioni e mantiene i link nelle liste
                         nameMap.set(key, { ...importedItem, id: existing.id });
                     } else {
-                        // CREATE: Nuovo oggetto
                         let newId = importedItem.id;
-                        
-                        // CRITICAL: Se l'ID importato esiste già (collisione ID tra item diversi) o non c'è
                         if (!newId || usedIds.has(newId)) {
                             newId = crypto.randomUUID();
                         }
-                        
                         usedIds.add(newId);
                         nameMap.set(key, { ...importedItem, id: newId });
                         importedItemsCount++;
                     }
                 });
-                
                 return Array.from(nameMap.values());
              });
         }
@@ -240,15 +348,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                          importedKitsCount++;
                     }
                 });
-
                 return Array.from(kitMap.values());
             });
         }
         
         alert(`Importazione completata!\nInventario e Kit aggiornati con successo.`);
-
-        // Reset input
-        if (catalogFileInputRef.current) catalogFileInputRef.current.value = '';
         
       } catch (error) {
         console.error("Import error:", error);
