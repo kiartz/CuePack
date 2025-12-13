@@ -740,8 +740,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setReplacingComponentId(uniqueId);
   };
 
-  // Updated to accept the full item
-  const handleCreateNewItem = (newItem: InventoryItem) => {
+  // FIX: Generate a valid ID for new items created via quick-add modal
+  const handleCreateNewItem = (itemData: Omit<InventoryItem, 'id'>) => {
+    const newItem: InventoryItem = {
+      ...itemData,
+      id: crypto.randomUUID()
+    };
     setInventory(prev => [...prev, newItem]);
     addToSection(newItem, 'item');
   };

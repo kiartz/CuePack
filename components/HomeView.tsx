@@ -45,7 +45,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const link = document.createElement('a');
     link.href = url;
     
-    // Generate Filename: cuepack_events_YYYY-MM-DD_HH-mm.json
+    // Generate Filename: CuePack_Evento_YYYY-MM-DD_HH-mm.json
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -53,7 +53,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     
-    link.download = `cuepack_events_${year}-${month}-${day}_${hours}-${minutes}.json`;
+    link.download = `CuePack_Evento_${year}-${month}-${day}_${hours}-${minutes}.json`;
     
     document.body.appendChild(link);
     link.click();
@@ -246,7 +246,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const link = document.createElement('a');
     link.href = url;
     
-    // Generate Filename: cuepack_catalog_YYYY-MM-DD_HH-mm.json
+    // Generate Filename: CuePack_Catalogo_YYYY-MM-DD_HH-mm.json
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -254,7 +254,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
 
-    link.download = `cuepack_catalog_${year}-${month}-${day}_${hours}-${minutes}.json`;
+    link.download = `CuePack_Catalogo_${year}-${month}-${day}_${hours}-${minutes}.json`;
     
     document.body.appendChild(link);
     link.click();
