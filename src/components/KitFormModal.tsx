@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus, Search, X, Lightbulb } from 'lucide-react';
 import { InventoryItem, Kit, Category } from '../types';
 import { Modal } from './Modal';
 import { ItemFormModal } from './ItemFormModal';
@@ -22,14 +22,19 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   const qtyInputRefs = useRef<{ [itemId: string]: HTMLInputElement | null }>({});
   const [lastAddedItemId, setLastAddedItemId] = useState<string | null>(null);
+  
+  // Reminder State
+  const [reminderInput, setReminderInput] = useState('');
+  const [isRemindersOpen, setIsRemindersOpen] = useState(false);
 
   useEffect(() => {
     if (initialData) {
-      setFormData({ ...initialData, items: initialData.items || [] });
+      setFormData({ ...initialData, items: initialData.items || [], reminders: initialData.reminders || [] });
     } else {
-      setFormData({ name: '', description: '', items: [], category: Category.OTHER });
+      setFormData({ name: '', description: '', items: [], reminders: [], category: Category.OTHER });
     }
     setItemSearch('');
+    setReminderInput('');
   }, [initialData, isOpen]);
 
   useEffect(() => {
@@ -47,9 +52,22 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
       ...formData as Kit,
       id: initialData?.id || crypto.randomUUID(),
       category: formData.category || Category.OTHER,
-      items: cleanItems
+      items: cleanItems,
+      reminders: formData.reminders || []
     };
     onSave(newKit);
+  };
+
+  const addReminder = () => {
+    if (!reminderInput.trim()) return;
+    setFormData({ ...formData, reminders: [...(formData.reminders || []), reminderInput.trim()] });
+    setReminderInput('');
+  };
+
+  const removeReminder = (index: number) => {
+    const newReminders = [...(formData.reminders || [])];
+    newReminders.splice(index, 1);
+    setFormData({ ...formData, reminders: newReminders });
   };
 
   const addItemToKit = (invItem: InventoryItem) => {
@@ -86,9 +104,10 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="xl">
-      <div className="flex flex-col lg:flex-row gap-6 h-[70vh]">
-        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-          <div className="space-y-4">
+      <div className="flex flex-col lg:flex-row gap-6 h-[60vh]">
+        {/* LEFT COLUMN (Form + Content) */}
+        <div className="flex-1 flex flex-col gap-4 min-h-0">
+          <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
                 <label className="block text-sm text-slate-400 mb-1">Nome Kit</label>
@@ -101,25 +120,31 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
                 </select>
               </div>
             </div>
+            
             <textarea className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white outline-none h-16 resize-none" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Descrizione kit..." />
-          </div>
-          <div className="flex-1 bg-slate-950 rounded-lg border border-slate-800 p-4 overflow-hidden flex flex-col">
-            <h4 className="text-sm font-semibold text-purple-400 mb-2 uppercase tracking-wider">Contenuto Kit</h4>
-            <div className="overflow-y-auto flex-1 space-y-2 pr-2 custom-scrollbar">
-              {formData.items?.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800">
-                  <span className="text-slate-300 text-sm truncate flex-1 mr-2">{getInventoryName(item.itemId)}</span>
-                  <div className="flex items-center gap-3">
-                    {/* Fixed: Wrapped assignment in braces to return void instead of the element */}
-                    <input ref={el => { qtyInputRefs.current[item.itemId] = el; }} type="number" className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center text-white text-sm outline-none" value={item.quantity} onChange={e => updateItemQty(item.itemId, Number(e.target.value))} />
-                    <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500"><X size={16} /></button>
+            
+            {/* KIT CONTENT SECTION (Now part of the scrollable column) */}
+            <div className="bg-slate-950 rounded-lg border border-slate-800 p-4 flex flex-col">
+              <h4 className="text-sm font-semibold text-purple-400 mb-2 uppercase tracking-wider">Contenuto Kit</h4>
+              <div className="space-y-2">
+                {formData.items?.length === 0 && <p className="text-sm text-slate-500 text-center py-4">Il kit è vuoto. Aggiungi materiale dalla destra.</p>}
+                {formData.items?.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800">
+                    <span className="text-slate-300 text-sm truncate flex-1 mr-2">{getInventoryName(item.itemId)}</span>
+                    <div className="flex items-center gap-3">
+                      {/* Fixed: Wrapped assignment in braces to return void instead of the element */}
+                      <input ref={el => { qtyInputRefs.current[item.itemId] = el; }} type="number" className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center text-white text-sm outline-none" value={item.quantity} onChange={e => updateItemQty(item.itemId, Number(e.target.value))} />
+                      <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500"><X size={16} /></button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>
-        <div className="w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700">
+
+        {/* RIGHT COLUMN (Picker) */}
+        <div className="w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700 h-full">
           <div className="flex justify-between items-center mb-3">
             <h4 className="font-semibold text-white text-sm">Aggiungi Materiale</h4>
             <button onClick={() => setIsNewItemModalOpen(true)} className="p-1.5 bg-slate-700 rounded text-slate-200"><Plus size={14} /></button>
@@ -138,11 +163,60 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
           </div>
         </div>
       </div>
-      <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-slate-800">
-        <button onClick={onClose} className="px-4 py-2 text-slate-400">Annulla</button>
-        <button onClick={handleSave} className="px-6 py-2 bg-purple-600 text-white rounded-lg">Salva Kit</button>
+      <div className="flex justify-between items-center mt-6 pt-4 border-t border-slate-800">
+        <button 
+            onClick={() => setIsRemindersOpen(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${formData.reminders && formData.reminders.length > 0 ? 'bg-yellow-900/20 text-yellow-400 border border-yellow-900/30 shadow-lg shadow-yellow-900/20' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-yellow-400'}`}
+        >
+            <Lightbulb size={18} className={formData.reminders && formData.reminders.length > 0 ? 'fill-current' : ''} />
+            <span className="text-sm font-bold uppercase tracking-wider">Promemoria Kit {formData.reminders && formData.reminders.length > 0 ? `(${formData.reminders.length})` : ''}</span>
+        </button>
+        <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-slate-400">Annulla</button>
+            <button onClick={handleSave} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-bold">Salva Kit</button>
+        </div>
       </div>
       <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={async (d) => { const ni = { ...d, id: crypto.randomUUID(), accessories: d.accessories || [] }; await addOrUpdateItem(COLL_INVENTORY, ni); addItemToKit(ni); }} title="Nuovo Materiale" inventory={inventory} />
+    
+      {/* REMINDERS MODAL */}
+      <Modal isOpen={isRemindersOpen} onClose={() => setIsRemindersOpen(false)} title="Promemoria Kit" size="md">
+            <div className="space-y-4">
+                <p className="text-sm text-slate-400">Aggiungi note importanti che verranno mostrate quando userai questo kit.</p>
+                <div className="flex gap-2">
+                    <input 
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:border-yellow-500 outline-none"
+                        placeholder="Es. Controllare le batterie..."
+                        value={reminderInput}
+                        onChange={e => setReminderInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && addReminder()}
+                        autoFocus
+                    />
+                    <button onClick={addReminder} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded flex items-center gap-2">
+                        <Plus size={18}/> Aggiungi
+                    </button>
+                </div>
+                <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar bg-slate-900 p-2 rounded border border-slate-800">
+                    {formData.reminders?.map((rem, idx) => (
+                        <div key={idx} className="flex justify-between items-center bg-slate-800 p-3 rounded border border-slate-700">
+                            <div className="flex items-center gap-3">
+                                <Lightbulb size={16} className="text-yellow-500 shrink-0" />
+                                <span className="text-sm text-slate-200">{rem}</span>
+                            </div>
+                            <button onClick={() => removeReminder(idx)} className="text-slate-500 hover:text-rose-500 transition-colors"><X size={18}/></button>
+                        </div>
+                    ))}
+                    {(!formData.reminders || formData.reminders.length === 0) && (
+                        <div className="text-center py-8 text-slate-500 flex flex-col items-center gap-2">
+                            <Lightbulb size={32} className="opacity-20" />
+                            <span>Nessun promemoria attivo</span>
+                        </div>
+                    )}
+                </div>
+                <div className="flex justify-end pt-2">
+                    <button onClick={() => setIsRemindersOpen(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded">Chiudi</button>
+                </div>
+            </div>
+      </Modal>
     </Modal>
   );
 };

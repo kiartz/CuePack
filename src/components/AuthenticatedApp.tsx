@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Layers, Package, ClipboardList, Menu, Home, Loader2, WifiOff, LogOut } from 'lucide-react';
+import { Layers, Package, ClipboardList, Menu, Home, Loader2, WifiOff, LogOut, Truck } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { PackingListBuilder } from './PackingListBuilder';
 import { HomeView } from './HomeView';
 import { ChecklistView } from './ChecklistView';
 import { ChecklistManager } from './ChecklistManager';
+import { PrepMaterialView } from './PrepMaterialView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
 import { InventoryItem, Kit, PackingList, ChecklistCategory } from '../types';
 import { db, auth, COLL_INVENTORY, COLL_KITS, COLL_LISTS, COLL_CHECKLIST_CONFIG, batchWriteItems } from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
-type View = 'home' | 'inventory' | 'kits' | 'lists' | 'checklist-manager';
+type View = 'home' | 'inventory' | 'kits' | 'lists' | 'checklist-manager' | 'prep-material';
 
 export default function AuthenticatedApp() {
   const [currentView, setCurrentView] = useState<View>('home');
@@ -35,7 +36,7 @@ export default function AuthenticatedApp() {
   // Mobile menu state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // --- FIRESTORE SUBSCRIPTIONS ---
+  // --- FIRESTORE SUBSCRIPTIONS --- 
   useEffect(() => {
     setLoading(true);
 
@@ -115,6 +116,7 @@ export default function AuthenticatedApp() {
     { id: 'inventory', label: 'Inventario', icon: Layers },
     { id: 'kits', label: 'Kit Materiale', icon: Package },
     { id: 'lists', label: 'Crea Liste', icon: ClipboardList },
+    { id: 'prep-material', label: 'Magazzino', icon: Truck },
   ];
 
   const handleLogout = () => {
@@ -169,6 +171,8 @@ export default function AuthenticatedApp() {
           activeListId={activeListId}
           setActiveListId={setActiveListId}
         />;
+      case 'prep-material':
+        return <PrepMaterialView lists={packingLists} />;
       case 'checklist-manager':
         return <ChecklistManager 
           checklist={masterChecklist}
@@ -240,7 +244,7 @@ export default function AuthenticatedApp() {
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex justify-between items-center">
            <div className="flex flex-col gap-1">
               <span>© R. Chiartano</span>
-              <span className="opacity-50">v0.4.2 (Secured)</span>
+              <span className="opacity-50">v0.4.5 (Secured)</span>
            </div>
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors" title="Esci">
              <LogOut size={16} />

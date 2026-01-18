@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone } from '../types';
+import { Plus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle } from 'lucide-react';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
+import { RemindersModal } from './RemindersModal';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
@@ -24,7 +25,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   lists, 
   activeListId, 
   setActiveListId 
-}) => { // --- STATE ---
+}) => { // --- HELPERS ---
+  const createDefaultSections = (): ListSection[] => [
+    { id: crypto.randomUUID(), name: 'Audio', components: [] },
+    { id: crypto.randomUUID(), name: 'Luci', components: [] },
+    { id: crypto.randomUUID(), name: 'Video', components: [] },
+    { id: crypto.randomUUID(), name: 'Strutture', components: [] },
+    { id: crypto.randomUUID(), name: 'Elettrico', components: [] },
+    { id: crypto.randomUUID(), name: 'Regia', components: [] },
+    { id: crypto.randomUUID(), name: 'Attrezzi', components: [] },
+  ];
+
+  // --- STATE ---
   const [viewMode, setViewMode] = useState<'list' | 'edit'>('list');
   const [listFilter, setListFilter] = useState('');
   
@@ -40,12 +52,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // LIST LOCAL SEARCH STATE
   const [listSearch, setListSearch] = useState('');
 
+  // REMINDERS STATE
+  const [activeRemindersListId, setActiveRemindersListId] = useState<string | null>(null);
+  const [activeKitRemindersId, setActiveKitRemindersId] = useState<string | null>(null);
+
   // Note Toggle State
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
   
   // Deletion States
   const [isDeleteListModalOpen, setIsDeleteListModalOpen] = useState(false);
   const [listToDeleteInfo, setListToDeleteInfo] = useState<{id: string, name: string} | null>(null);
+  const [listToDuplicate, setListToDuplicate] = useState<PackingList | null>(null);
   const [sectionToDelete, setSectionToDelete] = useState<string | null>(null);
   const [zoneToDelete, setZoneToDelete] = useState<string | null>(null);
 
@@ -70,6 +87,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     name: ''
   });
 
+  const [zoneNoteModal, setZoneNoteModal] = useState({
+    isOpen: false,
+    zoneId: '',
+    note: ''
+  });
+
+  const handleZoneNoteSave = () => {
+      if (!activeList || !zoneNoteModal.zoneId) return;
+      const newZones = activeList.zones!.map(z => z.id === zoneNoteModal.zoneId ? { ...z, notes: zoneNoteModal.note } : z);
+      updateActiveList({ zones: newZones });
+      setZoneNoteModal(prev => ({ ...prev, isOpen: false }));
+  };
+
+
   // DRAG AND DROP STATE
   const dragItem = useRef<{ zoneId: string, sectionId: string, index: number, uniqueId: string } | null>(null);
   const dragOverItem = useRef<{ zoneId: string, sectionId: string, index: number } | null>(null);
@@ -79,8 +110,35 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const qtyInputRefs = useRef<{ [uniqueId: string]: HTMLInputElement | null }>({});
   const [lastAddedComponentId, setLastAddedComponentId] = useState<string | null>(null);
 
-  // Picker Hover State
+  // Picker Hover State & Logic
   const [isPickerHovered, setIsPickerHovered] = useState(false);
+  const pickerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isMouseOverPicker = useRef(false);
+
+  const handlePickerEnter = (isMouse = false) => {
+    if (isMouse) isMouseOverPicker.current = true;
+    if (pickerTimeoutRef.current) {
+      clearTimeout(pickerTimeoutRef.current);
+      pickerTimeoutRef.current = null;
+    }
+    setIsPickerHovered(true);
+  };
+
+  const handlePickerLeave = (isMouse = false) => {
+    if (isMouse) {
+        isMouseOverPicker.current = false;
+        // If input is focused, don't close even if mouse leaves
+        if (pickerInputRef.current === document.activeElement) return;
+    }
+    
+    // If this is a blur event (not mouse leave) and mouse is still over, don't close
+    if (!isMouse && isMouseOverPicker.current) return;
+
+    if (pickerTimeoutRef.current) clearTimeout(pickerTimeoutRef.current);
+    pickerTimeoutRef.current = setTimeout(() => {
+      setIsPickerHovered(false);
+    }, 600); // 600ms delay
+  };
 
   // --- DERIVED STATE & MIGRATION ON THE FLY ---
   const activeList = useMemo(() => {
@@ -91,12 +149,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     if (!rawList.zones || rawList.zones.length === 0) {
         const defaultSections = rawList.sections && rawList.sections.length > 0 
             ? rawList.sections 
-            : [
-                { id: crypto.randomUUID(), name: 'Audio', components: [] },
-                { id: crypto.randomUUID(), name: 'Luci', components: [] },
-                { id: crypto.randomUUID(), name: 'Video', components: [] },
-                { id: crypto.randomUUID(), name: 'Regia', components: [] },
-            ];
+            : createDefaultSections();
             
         return {
             ...rawList,
@@ -351,28 +404,51 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
 
   // --- List CRUD ---
-  const handleCreateList = async () => {
-    const newList: PackingList = {
-      id: crypto.randomUUID(),
-      eventName: 'Nuovo Evento',
-      eventDate: '',
-      location: '',
-      creationDate: new Date().toISOString(),
-      notes: '',
-      zones: [{
-          id: crypto.randomUUID(),
-          name: 'Zona Principale',
-          sections: [
-            { id: crypto.randomUUID(), name: 'Audio', components: [] },
-            { id: crypto.randomUUID(), name: 'Luci', components: [] },
-            { id: crypto.randomUUID(), name: 'Video', components: [] },
-            { id: crypto.randomUUID(), name: 'Regia', components: [] },
-          ]
-      }]
-    };
-    await addOrUpdateItem(COLL_LISTS, newList);
-    setActiveListId(newList.id);
+  // Event Modal State
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [eventFormData, setEventFormData] = useState<Partial<PackingList>>({});
+
+  const openEventModal = (list?: PackingList, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      if (list) {
+          setEventFormData({...list});
+      } else {
+          setEventFormData({
+              eventName: '',
+              location: '',
+              eventDate: '',
+              setupDate: '',
+              creationDate: new Date().toISOString(),
+              zones: [{
+                  id: crypto.randomUUID(),
+                  name: 'Zona Principale',
+                  sections: createDefaultSections()
+              }]
+          });
+      }
+      setIsEventModalOpen(true);
   };
+
+  const handleSaveEvent = async () => {
+      if (!eventFormData.eventName) return;
+      
+      const listToSave = {
+          ...eventFormData,
+          id: eventFormData.id || crypto.randomUUID(),
+          creationDate: eventFormData.creationDate || new Date().toISOString()
+      } as PackingList;
+
+      await addOrUpdateItem(COLL_LISTS, listToSave);
+      setIsEventModalOpen(false);
+      
+      // If new list, switch to it
+      if (!eventFormData.id) {
+           setActiveListId(listToSave.id);
+           setViewMode('edit');
+      }
+  };
+
+  const handleCreateList = () => openEventModal();
 
   const confirmDeleteList = async () => {
     const idToDelete = listToDeleteInfo ? listToDeleteInfo.id : activeListId;
@@ -386,15 +462,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setIsDeleteListModalOpen(false);
   };
 
-  const handleDuplicateList = async (list: PackingList, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const confirmDuplicateList = async () => {
+    if (!listToDuplicate) return;
+    
     // Handles legacy structure during duplication too
-    const sourceZones = list.zones && list.zones.length > 0 ? list.zones : [{ id: 'def', name: 'Zona Principale', sections: list.sections || [] }];
+    const sourceZones = listToDuplicate.zones && listToDuplicate.zones.length > 0 ? listToDuplicate.zones : [{ id: 'def', name: 'Zona Principale', sections: listToDuplicate.sections || [] }];
     
     const newList: PackingList = {
-      ...list,
+      ...listToDuplicate,
       id: crypto.randomUUID(),
-      eventName: `${list.eventName} (Copia)`,
+      eventName: `${listToDuplicate.eventName} (Copia)`,
       creationDate: new Date().toISOString(),
       zones: sourceZones.map(z => ({
           ...z,
@@ -408,6 +485,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     };
     if (newList.sections) delete newList.sections; // Cleanup legacy
     await addOrUpdateItem(COLL_LISTS, newList);
+    setListToDuplicate(null);
+  };
+
+  const handleDuplicateList = (list: PackingList, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setListToDuplicate(list);
   };
 
   // --- Multi-Selection & Clipboard ---
@@ -485,10 +568,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               const newZone: ListZone = { 
                   id: newId, 
                   name: mgmtModal.name.trim(), 
-                  sections: [
-                    { id: crypto.randomUUID(), name: 'Audio', components: [] },
-                    { id: crypto.randomUUID(), name: 'Luci', components: [] }
-                  ] 
+                  sections: createDefaultSections() 
               };
               const newZones = [...(activeList.zones || []), newZone];
               updateActiveList({ zones: newZones });
@@ -652,6 +732,136 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     await addOrUpdateItem(COLL_INVENTORY, itemWithId);
   };
 
+  // --- REMINDERS LOGIC ---
+  const remindersList = useMemo(() => {
+    return lists.find(l => l.id === activeRemindersListId);
+  }, [lists, activeRemindersListId]);
+
+  const handleUpdateReminders = async (newReminders: Reminder[]) => {
+    if (!remindersList) return;
+    await addOrUpdateItem(COLL_LISTS, { ...remindersList, reminders: newReminders });
+  };
+  
+  // --- VERSIONING & COMPLETION ---
+  const handleCompleteList = async () => {
+      if (!activeList || !activeList.zones) return;
+      
+      let newVersion = '1.0';
+      if (activeList.version) {
+          const parts = activeList.version.split('.');
+          const major = parseInt(parts[0]);
+          const minor = parseInt(parts[1]);
+          // Increment by 0.1
+          newVersion = `${major}.${minor + 1}`;
+      }
+
+      // 1. Calculate Deleted Items
+      const previousSnapshot = activeList.snapshot || [];
+      const currentZones = activeList.zones;
+      const newDeletedItems = [...(activeList.deletedItems || [])];
+
+      previousSnapshot.forEach(prevZone => {
+          prevZone.sections.forEach(prevSection => {
+              prevSection.components.forEach(prevComp => {
+                  // Find this specific component (by uniqueId) in current zones
+                  let found = false;
+                  currentZones.forEach(currZone => {
+                      currZone.sections.forEach(currSection => {
+                          if (currSection.components.some(c => c.uniqueId === prevComp.uniqueId)) {
+                              found = true;
+                          }
+                      });
+                  });
+
+                  if (!found) {
+                      // It was deleted! Add to deletedItems if not already there
+                      if (!newDeletedItems.some(d => d.originalComponent.uniqueId === prevComp.uniqueId)) {
+                          newDeletedItems.push({
+                              originalComponent: prevComp,
+                              zoneName: prevZone.name,
+                              sectionName: prevSection.name,
+                              deletedAt: new Date().toISOString()
+                          });
+                      }
+                  }
+              });
+          });
+      });
+
+      // 2. Identify Changes & Update current components
+      const updatedZones = currentZones.map(zone => ({
+          ...zone,
+          sections: zone.sections.map(section => ({
+              ...section,
+              components: section.components.map(comp => {
+                  // Find previous version of this component
+                  let prevComp: ListComponent | undefined;
+                  previousSnapshot.forEach(pz => {
+                      pz.sections.forEach(ps => {
+                          const match = ps.components.find(c => c.uniqueId === comp.uniqueId);
+                          if (match) prevComp = match;
+                      });
+                  });
+
+                  if (prevComp) {
+                      // Compare relevant fields (Quantity, Notes, etc.)
+                      if (prevComp.quantity !== comp.quantity) {
+                          // Reset contents checkboxes if quantity changed
+                          const resetContents = comp.contents?.map(content => ({
+                              ...content,
+                              warehouseState: {
+                                  ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                                  inDistinta: false,
+                                  loaded: false
+                              }
+                          }));
+
+                          return {
+                              ...comp,
+                              contents: resetContents,
+                              warehouseState: {
+                                  ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                                  // Reset checks if quantity changed
+                                  inDistinta: false,
+                                  loaded: false,
+                                  changeLog: {
+                                      previousQuantity: prevComp.quantity,
+                                      changedAt: new Date().toISOString()
+                                  }
+                              }
+                          };
+                      }
+                  } else if (activeList.version) {
+                      // New Item added after version 1.0
+                      return {
+                          ...comp,
+                          warehouseState: {
+                              ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                              inDistinta: false,
+                              loaded: false,
+                              changeLog: {
+                                  previousQuantity: 0,
+                                  changedAt: new Date().toISOString()
+                              }
+                          }
+                      };
+                  }
+                  return comp;
+              })
+          }))
+      }));
+
+      // 3. Save everything
+      await updateActiveList({
+          version: newVersion,
+          snapshot: updatedZones, // Snapshot is the state NOW
+          zones: updatedZones,    // Zones updated with changeLogs
+          deletedItems: newDeletedItems
+      });
+      
+      alert(`Lista completata! Versione aggiornata a ${newVersion}`);
+  };
+
 
   // --- EXPORT ---
   const calculateZoneTotals = (zone: ListZone) => {
@@ -670,26 +880,52 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     
     // Helper to print header on every page
     const printHeader = (zoneName: string, pageNumber: number) => {
-        doc.setFontSize(8);
-        doc.setTextColor(100);
-        // Left: Event Info
-        doc.text(`${activeList.eventName.toUpperCase()}  |  ${activeList.eventDate}`, 14, 10);
+        const pageWidth = doc.internal.pageSize.getWidth();
         
-        // Right: Page Number (Global)
-        const pageSize = doc.internal.pageSize;
-        const pageWidth = pageSize.width ? pageSize.width : pageSize.getWidth();
-        doc.text(`Pagina ${pageNumber}`, pageWidth - 14, 10, { align: 'right' });
-
-        // Line 2: Zone Info (Smaller now)
-        doc.setFontSize(10);
-        doc.setTextColor(0);
+        // Line 1: Event Name (Big & Bold)
+        doc.setFontSize(16);
         doc.setFont("helvetica", "bold");
-        doc.text(`ZONA: ${zoneName.toUpperCase()}`, 14, 16);
+        doc.setTextColor(0);
+        const eventName = activeList.eventName.toUpperCase();
+        doc.text(eventName, 14, 12);
+
+        // Version Info
+        const versionText = activeList.version ? `v${activeList.version}` : 'LISTA NON PRONTA';
+        const titleWidth = doc.getTextWidth(eventName);
+        doc.setFontSize(10);
+        if (!activeList.version) doc.setTextColor(220, 0, 0);
+        else doc.setTextColor(100);
+        doc.text(versionText, 14 + titleWidth + 3, 12);
+        
+        // Top Right: Date & Page
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100);
+        doc.text(`${activeList.eventDate}  |  Pagina ${pageNumber}`, pageWidth - 14, 12, { align: 'right' });
+
+        // Line 2: Zone Info (Smaller than event name, Bold)
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0);
+        doc.text(`ZONA: ${zoneName.toUpperCase()}`, 14, 20);
     };
 
     activeList.zones.forEach((zone, index) => {
         if (index > 0) doc.addPage(); // Explicit new page for new zone
         
+        let currentY = 25;
+        if (zone.notes) {
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "italic");
+            doc.setTextColor(50);
+            
+            // Handle multiline text
+            const splitNotes = doc.splitTextToSize(`NOTE: ${zone.notes}`, 180);
+            doc.text(splitNotes, 14, currentY);
+            
+            currentY += (splitNotes.length * 5) + 5;
+        }
+
         // Calculate totals just for this zone
         const zoneTotals = calculateZoneTotals(zone);
 
@@ -721,7 +957,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     const subZoneTotal = zoneTotals.get(sub.name) || 0;
                     tableBody.push([{ 
                         content: `  - ${sub.name}`, 
-                        styles: { fontSize: 9, textColor: [80, 80, 80] } 
+                        styles: { fontSize: 10, textColor: [80, 80, 80] } 
                     }, sub.quantity * comp.quantity, subZoneTotal, '']);
                 });
             });
@@ -731,11 +967,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         autoTable(doc, {
             head: [['Materiale', 'Qta', 'Totale Zona', 'Check']],
             body: tableBody,
-            startY: 25, 
+            startY: currentY, 
             margin: { top: 25 }, // Critical: reserves space for header on ALL pages
             theme: 'grid',
             headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
-            styles: { fontSize: 10, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
+            styles: { fontSize: 11, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
             columnStyles: { 
                 0: { cellWidth: 'auto' }, 
                 1: { cellWidth: 20, halign: 'center' }, 
@@ -775,41 +1011,198 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     
     const doc = new jsPDF();
     
-    const printHeader = (title: string, pageNumber: number) => {
-        doc.setFontSize(8);
-        doc.setTextColor(100);
-        doc.text(`${activeList.eventName.toUpperCase()}  |  RECAP TOTALI MATERIALE`, 14, 10);
+    const printHeader = (zoneName: string, pageNumber: number) => {
         const pageWidth = doc.internal.pageSize.getWidth();
-        doc.text(`Pagina ${pageNumber}`, pageWidth - 14, 10, { align: 'right' });
-        doc.setFontSize(10);
-        doc.setTextColor(0);
+        
+        // Line 1: Event Name (Big & Bold)
+        doc.setFontSize(16);
         doc.setFont("helvetica", "bold");
-        doc.text(title.toUpperCase(), 14, 16);
+        doc.setTextColor(0);
+        const eventName = activeList.eventName.toUpperCase();
+        doc.text(eventName, 14, 12);
+
+        // Version Info
+        const versionText = activeList.version ? `v${activeList.version}` : 'LISTA NON PRONTA';
+        const titleWidth = doc.getTextWidth(eventName);
+        doc.setFontSize(10);
+        if (!activeList.version) doc.setTextColor(220, 0, 0);
+        else doc.setTextColor(100);
+        doc.text(versionText, 14 + titleWidth + 3, 12);
+        
+        // Top Right: Page
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100);
+        doc.text(`Pagina ${pageNumber}`, pageWidth - 14, 12, { align: 'right' });
+
+        // Line 2: Recap Materiale (Bold, smaller than title)
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(80);
+        doc.text("RECAP TOTALI MATERIALE", 14, 18);
+
+        // Line 3: Zone (Smaller than event name, Bold)
+        doc.setFontSize(13);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0);
+        doc.text(`ZONA: ${zoneName.toUpperCase()}`, 14, 26);
     };
 
     activeList.zones.forEach((zone, index) => {
         if (index > 0) doc.addPage();
         
-        const zoneTotals = calculateZoneTotals(zone);
-        const sortedTotals = Array.from(zoneTotals.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        // --- HYBRID NESTED LOGIC ---
         
-        const tableBody = sortedTotals.map(([name, qty]) => [name, qty, '']);
+        // Map for Section A: Kit & Assembled Machines (Parent -> Children)
+        // Key: Item Name -> Value: { totalQty: number, children: Map<childName, { qty: number, prepNote: string }> }
+        const complexItemsMap = new Map<string, { totalQty: number, children: Map<string, { qty: number, prepNote: string }> }>();
+
+        // Map for Section B: Bulk/Loose Items
+        // Key: Item Name -> Value: number (Quantity)
+        const simpleItemsMap = new Map<string, number>();
+
+        zone.sections.forEach(section => {
+            section.components.forEach(comp => {
+                const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
+
+                if (isComplex) {
+                    // --- SECTION A AGGREGATION ---
+                    const displayName = comp.type === 'kit' ? `KIT-${comp.name}` : comp.name;
+                    
+                    if (!complexItemsMap.has(displayName)) {
+                        complexItemsMap.set(displayName, { totalQty: 0, children: new Map() });
+                    }
+                    const parent = complexItemsMap.get(displayName)!;
+                    parent.totalQty += comp.quantity;
+
+                    // Aggregate Children
+                    comp.contents?.forEach(sub => {
+                        if (!parent.children.has(sub.name)) {
+                            parent.children.set(sub.name, { qty: 0, prepNote: sub.prepNote || '' });
+                        }
+                        const child = parent.children.get(sub.name)!;
+                        child.qty += (sub.quantity * comp.quantity);
+                        // Update note if present (last one wins or we could concat, simple overwrite for now)
+                        if (sub.prepNote) child.prepNote = sub.prepNote;
+                    });
+
+                } else {
+                    // --- SECTION B AGGREGATION ---
+                    const currentQty = simpleItemsMap.get(comp.name) || 0;
+                    simpleItemsMap.set(comp.name, currentQty + comp.quantity);
+                }
+            });
+        });
+
+        const tableBody: any[] = [];
+
+        // --- RENDER SECTION A: KITS & ASSEMBLED ---
+        const sortedComplex = Array.from(complexItemsMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        
+        if (sortedComplex.length > 0) {
+            tableBody.push([{ 
+                content: 'KIT & MACCHINE (Assemblati)', 
+                colSpan: 3,
+                styles: { fontStyle: 'bold', fillColor: [220, 220, 240], textColor: [0, 0, 50], halign: 'left', fontSize: 10 } 
+            }]);
+
+            sortedComplex.forEach(([name, data]) => {
+                // Check if Parent exists in Loose items
+                let parentLabel = name;
+                const isParentInLoose = simpleItemsMap.has(name);
+                
+                // Parent Row
+                tableBody.push([{ 
+                    content: parentLabel, 
+                    styles: { 
+                        fontStyle: 'bold', // Keeping structural bold for Parent
+                        textColor: [0, 0, 0] 
+                    },
+                    _warning: isParentInLoose
+                }, data.totalQty, '']);
+
+                // Children Rows (Indented)
+                const sortedChildren = Array.from(data.children.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+                sortedChildren.forEach(([childName, childData]) => {
+                    let childLabel = `  - ${childName}`;
+                    const isChildInLoose = simpleItemsMap.has(childName);
+                    
+                    // Add Prep Note column logic
+                    if (childData.prepNote) {
+                        childLabel += ` [${childData.prepNote.toUpperCase()}]`;
+                    }
+                    
+                    tableBody.push([{ 
+                        content: childLabel, 
+                        styles: { 
+                            fontSize: 10, 
+                            textColor: [80, 80, 80],
+                            fontStyle: 'normal'
+                        },
+                        _warning: isChildInLoose
+                    }, childData.qty, '']);
+                });
+            });
+        }
+
+        // --- RENDER SECTION B: BULK / LOOSE ---
+        const sortedSimple = Array.from(simpleItemsMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+        if (sortedSimple.length > 0) {
+            // Spacer row if needed
+            if (sortedComplex.length > 0) {
+                tableBody.push([{ content: '', colSpan: 3, styles: { cellPadding: 1, fillColor: [255, 255, 255] } }]); 
+            }
+
+            tableBody.push([{ 
+                content: 'MATERIALE SFUSO (Totali Unificati)', 
+                colSpan: 3,
+                styles: { fontStyle: 'bold', fillColor: [230, 230, 230], textColor: [50, 50, 50], halign: 'left', fontSize: 10 } 
+            }]);
+
+            sortedSimple.forEach(([name, qty]) => {
+                tableBody.push([name, qty, '']);
+            });
+        }
 
         autoTable(doc, {
-            head: [['Materiale (Consolidato)', 'Quantità Totale Zona', 'Check']],
+            head: [['Materiale', 'Qta', 'Check']],
             body: tableBody,
-            startY: 25,
-            margin: { top: 25 },
+            startY: 32,
+            margin: { top: 32 },
             theme: 'grid',
             headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
-            styles: { fontSize: 10, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
+            styles: { fontSize: 11, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
             columnStyles: { 
                 0: { cellWidth: 'auto' }, 
                 1: { cellWidth: 40, halign: 'center', fontStyle: 'bold' },
                 2: { cellWidth: 20 }
             },
             didDrawPage: (data) => {
-                printHeader(`TOTALI ZONA: ${zone.name}`, doc.internal.getCurrentPageInfo().pageNumber);
+                printHeader(zone.name, doc.internal.getCurrentPageInfo().pageNumber);
+            },
+            didDrawCell: (data) => {
+                if (data.column.index === 0 && data.cell.raw && (data.cell.raw as any)._warning) {
+                    const doc = data.doc;
+                    const originalFont = doc.getFont().fontName; // Save font
+                    const originalStyle = doc.getFont().fontStyle; 
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(9); 
+                    doc.setTextColor(0, 0, 0);
+                    
+                    const warning = "!!!ALTRI IN SFUSI!!!";
+                    const textWidth = doc.getTextWidth(warning);
+                    
+                    // Align right in the cell with padding
+                    const xPos = data.cell.x + data.cell.width - textWidth - 2; 
+                    const yPos = data.cell.y + (data.cell.height / 2) + 1; // Vertically centered approx
+
+                    doc.text(warning, xPos, yPos);
+                    
+                    // Restore might not be strictly needed if autotable resets, but good practice
+                    doc.setFont(originalFont, originalStyle);
+                }
             }
         });
     });
@@ -879,31 +1272,161 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           </div>
           <button onClick={() => { handleCreateList(); setViewMode('edit'); }} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"><Plus size={16} /> Nuovo Evento</button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto">
+        <div className="flex flex-col gap-2 overflow-y-auto">
             {filteredLists.map(list => {
-              // Safe access for display
               const z = list.zones || (list.sections ? [{sections: list.sections}] : []);
               const totalItems = z.reduce((acc: number, zone: any) => acc + (zone.sections?.reduce((sAcc:number, s:any) => sAcc + s.components.length, 0)||0), 0);
               return (
-                <div key={list.id} onClick={() => handleListSelect(list.id)} className="bg-slate-800 border border-slate-700 rounded-lg p-4 hover:border-slate-600 transition-colors cursor-pointer group relative">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-lg text-white group-hover:text-emerald-400 transition-colors truncate pr-16">{list.eventName}</h3>
-                    <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleDuplicateList(list, e)} className="p-1.5 bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white rounded transition-colors"> <ClipboardCopy size={14} /> </button>
-                        <button onClick={(e) => { e.stopPropagation(); setListToDeleteInfo({ id: list.id, name: list.eventName }); }} className="p-1.5 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white rounded transition-colors"> <Trash2 size={14} /> </button>
-                    </div>
-                    <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded shrink-0">{totalItems} elementi</span>
+                <div key={list.id} onClick={() => handleListSelect(list.id)} className="bg-slate-800 border border-slate-700 rounded-lg p-3 hover:border-slate-600 transition-colors cursor-pointer group relative flex flex-col md:flex-row items-center gap-4">
+                  
+                  {/* Event Main Info */}
+                  <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded bg-emerald-900/20 flex items-center justify-center text-emerald-500 shrink-0 font-bold">
+                            {list.eventName.substring(0, 1).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                             <div className="flex items-center gap-2">
+                                <h3 className="font-bold text-base text-white group-hover:text-emerald-400 transition-colors truncate">{list.eventName}</h3>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setActiveRemindersListId(list.id); }}
+                                  className={`p-1 rounded-full hover:bg-slate-700 transition-colors ${list.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-600 hover:text-slate-300'}`}
+                                  title="Note & Promemoria"
+                                >
+                                  <Lightbulb size={16} className={list.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
+                                </button>
+                                {list.version && <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono">v{list.version}</span>}
+                             </div>
+                             <div className="flex items-center gap-4 text-xs text-slate-400 mt-0.5">
+                                <div className="flex items-center gap-1"><MapPin size={12} /> <span className="truncate max-w-[150px]">{list.location || 'Nessuna location'}</span></div>
+                                <div className="flex items-center gap-1"><Calendar size={12} /> <span>{list.eventDate ? new Date(list.eventDate).toLocaleDateString() : 'Nessuna data'}</span></div>
+                             </div>
+                        </div>
+                      </div>
                   </div>
-                  <div className="space-y-2 text-sm text-slate-400">
-                    <div className="flex items-center gap-2"><MapPin size={14} /><span>{list.location || '-'}</span></div>
-                    <div className="flex items-center gap-2"><Calendar size={14} /><span>{list.eventDate || '-'}</span></div>
+
+                  {/* Stats & Metadata */}
+                  <div className="hidden sm:flex items-center gap-6 text-sm text-slate-500">
+                      <div className="flex flex-col items-end">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">Elementi</span>
+                          <span className="text-slate-300 font-medium">{totalItems}</span>
+                      </div>
+                      <div className="flex flex-col items-end w-24">
+                           <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">Creato il</span>
+                           <span className="text-xs">{new Date(list.creationDate || Date.now()).toLocaleDateString()}</span>
+                      </div>
                   </div>
-                  <div className="mt-4 text-xs text-slate-600">Clicca per modificare</div>
+
+                  {/* Actions */}
+                  <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0 border-l border-slate-700 pl-4 ml-2">
+                        <button onClick={(e) => handleDuplicateList(list, e)} className="p-2 bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white rounded transition-colors" title="Duplica Evento"> <ClipboardCopy size={16} /> </button>
+                        <button onClick={(e) => openEventModal(list, e)} className="p-2 bg-slate-700 hover:bg-emerald-600 text-slate-300 hover:text-white rounded transition-colors" title="Modifica Dettagli"> <Edit2 size={16} /> </button>
+                        <button onClick={(e) => { e.stopPropagation(); setListToDeleteInfo({ id: list.id, name: list.eventName }); }} className="p-2 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white rounded transition-colors" title="Elimina Evento"> <Trash2 size={16} /> </button>
+                  </div>
                 </div>
             )})
             }
         </div>
         <ConfirmationModal isOpen={!!listToDeleteInfo} onClose={() => setListToDeleteInfo(null)} onConfirm={confirmDeleteList} title="Elimina Evento" message={`Eliminare "${listToDeleteInfo?.name}"?`} />
+        
+        <ConfirmationModal 
+            isOpen={!!listToDuplicate} 
+            onClose={() => setListToDuplicate(null)} 
+            onConfirm={confirmDuplicateList} 
+            title="Duplica Evento" 
+            message={`Vuoi creare una copia di "${listToDuplicate?.eventName}"? Verranno copiati tutti i materiali e le zone.`} 
+        />
+        
+        {/* Event Details Modal (Rendered here too so it opens from list view) */}
+        <Modal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} title={eventFormData.id ? "Modifica Evento" : "Nuovo Evento"} size="lg">
+          <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="col-span-full">
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Nome Evento</label>
+                      <input 
+                          type="text" 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-emerald-500 outline-none"
+                          placeholder="Es. Concerto Estivo 2024"
+                          value={eventFormData.eventName || ''}
+                          onChange={e => setEventFormData(prev => ({ ...prev, eventName: e.target.value }))}
+                      />
+                  </div>
+                  <div className="col-span-full">
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Location / Luogo</label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-2.5 text-slate-500" size={18} />
+                        <input 
+                            type="text" 
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                            placeholder="Es. Teatro Comunale, Roma"
+                            value={eventFormData.location || ''}
+                            onChange={e => setEventFormData(prev => ({ ...prev, location: e.target.value }))}
+                        />
+                      </div>
+                  </div>
+                  
+                  <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Data Inizio Allestimento</label>
+                      <div className="relative">
+                          <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
+                          <DatePicker 
+                              portalId="root"
+                              selected={eventFormData.setupDate ? new Date(eventFormData.setupDate) : null} 
+                              onChange={(date) => setEventFormData(prev => ({ ...prev, setupDate: date ? date.toISOString() : '' }))} 
+                              dateFormat="dd/MM/yyyy"
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                              placeholderText="Seleziona data..."
+                          />
+                      </div>
+                  </div>
+
+                  <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Data Inizio Evento</label>
+                      <div className="relative">
+                          <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
+                          <DatePicker 
+                              portalId="root"
+                              selected={eventFormData.eventDate ? new Date(eventFormData.eventDate) : null} 
+                              onChange={(date) => setEventFormData(prev => ({ ...prev, eventDate: date ? date.toISOString() : '' }))} 
+                              dateFormat="dd/MM/yyyy"
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                              placeholderText="Seleziona data..."
+                          />
+                      </div>
+                  </div>
+
+                  <div>
+                       <label className="block text-sm font-medium text-slate-500 mb-1">Data Creazione Lista</label>
+                       <DatePicker 
+                          portalId="root"
+                          selected={eventFormData.creationDate ? new Date(eventFormData.creationDate) : new Date()} 
+                          onChange={(date) => setEventFormData(prev => ({ ...prev, creationDate: date ? date.toISOString() : '' }))} 
+                          dateFormat="dd/MM/yyyy"
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-slate-400 text-sm focus:border-slate-600 outline-none"
+                       />
+                  </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-800 pt-4 mt-2">
+                  <button onClick={() => setIsEventModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Annulla</button>
+                  <button 
+                    onClick={handleSaveEvent} 
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium shadow-lg shadow-emerald-900/20 transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!eventFormData.eventName}
+                  >
+                    Salva Evento
+                  </button>
+              </div>
+          </div>
+        </Modal>
+
+        <RemindersModal 
+            isOpen={!!activeRemindersListId}
+            onClose={() => setActiveRemindersListId(null)}
+            reminders={remindersList?.reminders || []}
+            onUpdate={handleUpdateReminders}
+            title={remindersList?.eventName || 'Note Evento'}
+        />
       </div>
     );
   }
@@ -914,27 +1437,47 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
         
         {/* TOP HEADER */}
-        <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="p-2 bg-slate-950 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            <button onClick={handleBackToList} className="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg transition-colors"><ArrowLeftRight size={16} className="rotate-180" /></button>
+            <button 
+              onClick={handleBackToList} 
+              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg transition-all border border-slate-700 hover:border-slate-500 group shadow-lg"
+              title="Torna alla lista eventi"
+            >
+              <List size={18} className="text-emerald-500 group-hover:text-emerald-400" />
+              <span className="text-xs font-bold uppercase tracking-wider">Eventi</span>
+            </button>
             <div className="flex flex-col flex-1">
-               <span className="text-xs text-slate-500 uppercase font-bold tracking-wider">Modifica Evento</span>
-               <div className="flex items-center gap-2"><span className="text-white font-medium">{activeList?.eventName}</span></div>
+               <div className="flex items-center gap-2">
+                   <span className="text-white font-bold text-lg">{activeList?.eventName}</span>
+                   <button 
+                      onClick={() => activeList && setActiveRemindersListId(activeList.id)}
+                      className={`p-1 rounded-full hover:bg-slate-800 transition-colors ${activeList?.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-600 hover:text-slate-300'}`}
+                      title="Note & Promemoria"
+                   >
+                      <Lightbulb size={16} className={activeList?.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
+                   </button>
+                   <button onClick={() => openEventModal(activeList)} className="text-slate-500 hover:text-emerald-500"><Edit2 size={14} /></button>
+                   {activeList?.version && <span className="text-xs bg-slate-800 text-emerald-400 px-2 py-0.5 rounded font-bold border border-emerald-900/50">v{activeList.version}</span>}
+               </div>
+               <div className="flex gap-3 text-xs text-slate-500">
+                   <span>{activeList?.location}</span>
+                   <span>•</span>
+                   <span>{activeList?.eventDate ? new Date(activeList.eventDate).toLocaleDateString() : 'Nessuna data'}</span>
+               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={handleCreateList} className="flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-medium transition-colors"><Plus size={16} /> Nuovo</button>
+          
+          <div className="flex items-center gap-2">
+              <button 
+                  onClick={handleCompleteList}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm shadow-lg shadow-blue-900/20 transition-all hover:scale-105 active:scale-95"
+              >
+                  <CheckCircle size={18} />
+                  Lista Completata
+              </button>
           </div>
         </div>
-
-        {activeList && (
-          <div className="p-3 bg-slate-800 border-b border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-4">
-             {/* List Details Inputs */}
-             <input placeholder="Nome Evento" className="bg-slate-900 border border-slate-700 rounded p-1.5 text-sm text-white" value={activeList.eventName} onChange={e => updateActiveList({ eventName: e.target.value })} />
-             <input placeholder="Location" className="bg-slate-900 border border-slate-700 rounded p-1.5 text-sm text-white" value={activeList.location} onChange={e => updateActiveList({ location: e.target.value })} />
-             <DatePicker selected={activeList.eventDate ? new Date(activeList.eventDate) : null} onChange={(date) => updateActiveList({ eventDate: date ? date.toISOString().split('T')[0] : '' })} dateFormat="dd/MM/yyyy" className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-sm text-white" />
-          </div>
-        )}
 
         {/* --- ZONE TABS --- */}
         {activeList && zones.length > 0 && (
@@ -949,12 +1492,21 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         {activeZoneId === z.id && (
                             <div className="flex items-center gap-1 ml-2 opacity-50 hover:opacity-100">
                                 <Edit2 size={12} onClick={(e) => { e.stopPropagation(); openMgmtModal('zone', 'rename', z.id, z.name); }} className="hover:text-emerald-400" />
+                                <StickyNote size={12} onClick={(e) => { e.stopPropagation(); setZoneNoteModal({ isOpen: true, zoneId: z.id, note: z.notes || '' }); }} className="hover:text-yellow-400" />
                                 {zones.length > 1 && <Trash2 size={12} className="hover:text-rose-500" onClick={(e) => { e.stopPropagation(); setZoneToDelete(z.id); }} />}
                             </div>
                         )}
                     </div>
                 ))}
                 <button onClick={() => openMgmtModal('zone', 'create')} className="ml-2 p-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"><Plus size={16} /></button>
+            </div>
+        )}
+
+        {/* --- ZONE NOTE --- */}
+        {activeZone && activeZone.notes && (
+            <div className="bg-yellow-900/10 border-b border-slate-800 px-4 py-2 text-sm text-yellow-200/80 italic flex items-start gap-2">
+                <StickyNote size={14} className="mt-1 shrink-0 text-yellow-500" />
+                {activeZone.notes}
             </div>
         )}
 
@@ -987,8 +1539,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 <div className="flex gap-2 w-full items-center">
                     <div 
                         className="relative flex-1 min-w-[200px]"
-                        onMouseEnter={() => setIsPickerHovered(true)}
-                        onMouseLeave={() => setIsPickerHovered(false)}
+                        onMouseEnter={() => handlePickerEnter(true)}
+                        onMouseLeave={() => handlePickerLeave(true)}
                     >
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
                         <input 
@@ -997,7 +1549,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             className="w-full bg-slate-950 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none focus:border-emerald-500"
                             value={pickerSearch}
                             onChange={e => setPickerSearch(e.target.value)}
-                            onFocus={() => setIsPickerHovered(true)} 
+                            onFocus={() => handlePickerEnter(false)}
+                            onBlur={() => handlePickerLeave(false)}
                         />
                         {/* PICKER DROPDOWN */}
                         {pickerSearch && isPickerHovered && (
@@ -1122,6 +1675,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                       ? !inventory.some(i => i.id === comp.referenceId)
                       : !kits.some(k => k.id === comp.referenceId);
 
+                  // Retrieve Kit Reminders if applicable
+                  const originalKit = comp.type === 'kit' ? kits.find(k => k.id === comp.referenceId) : null;
+                  const hasKitReminders = originalKit?.reminders && originalKit.reminders.length > 0;
+
                   console.log(`Checking item ${comp.name} (Ref: ${comp.referenceId}): isMissing=${isMissing}`);
 
                   return (
@@ -1146,7 +1703,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                           </button>
                                       )}
                                       <div className="min-w-0">
-                                          <div className="font-medium text-slate-200 text-sm truncate">{comp.name} {comp.type === 'kit' && <span className="ml-2 text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle">KIT</span>}</div>
+                                          <div className="font-medium text-slate-200 text-sm truncate flex items-center gap-2">
+                                              {comp.name} 
+                                              {comp.type === 'kit' && <span className="text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle">KIT</span>}
+                                              {hasKitReminders && (
+                                                  <button 
+                                                    onClick={(e) => { e.stopPropagation(); setActiveKitRemindersId(activeKitRemindersId === comp.uniqueId ? null : comp.uniqueId); }}
+                                                    className={`p-0.5 rounded-full ${activeKitRemindersId === comp.uniqueId ? 'bg-yellow-500 text-black' : 'text-yellow-500 hover:bg-yellow-900/30'} transition-colors`}
+                                                    title="Ci sono cose da ricordare per questo kit!"
+                                                  >
+                                                      <Lightbulb size={12} className={activeKitRemindersId === comp.uniqueId ? "fill-current" : ""} />
+                                                  </button>
+                                              )}
+                                          </div>
                                           <div className="text-xs text-slate-500">{comp.category}</div>
                                       </div>
                                   </div>
@@ -1184,6 +1753,24 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                    <button onClick={() => removeComponent(comp.uniqueId)} className="p-1.5 text-slate-500 hover:text-rose-500 opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button>
                               </div>
                           </div>
+                          
+                          {/* KIT REMINDERS PANEL */}
+                          {activeKitRemindersId === comp.uniqueId && hasKitReminders && (
+                              <div className="mt-2 mx-2 bg-yellow-900/20 border border-yellow-700/30 rounded p-3 animate-in slide-in-from-top-2 fade-in duration-200">
+                                  <div className="text-[10px] font-bold text-yellow-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                      <Lightbulb size={12} className="fill-current"/> Cose da ricordare per questo Kit:
+                                  </div>
+                                  <ul className="space-y-1">
+                                      {originalKit?.reminders?.map((rem, ridx) => (
+                                          <li key={ridx} className="text-xs text-yellow-100 flex items-start gap-2">
+                                              <span className="mt-1 w-1 h-1 rounded-full bg-yellow-500 shrink-0"/>
+                                              {rem}
+                                          </li>
+                                      ))}
+                                  </ul>
+                              </div>
+                          )}
+
                           {(openNoteIds.has(comp.uniqueId) || comp.notes) && (
                               <div className="mt-1.5 pl-8 pr-16">
                                   <input type="text" placeholder="Aggiungi una nota..." className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300" value={comp.notes||''} onChange={(e) => updateComponentNote(comp.uniqueId, e.target.value)} />
@@ -1230,8 +1817,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         {/* FOOTER */}
         {activeList && (
-          <div className="p-4 border-t border-slate-700 bg-slate-800 flex flex-col md:flex-row gap-4 justify-between items-center z-10">
-             <div className="w-full md:w-1/2"><input placeholder="Note per il magazzino..." className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white" value={activeList.notes} onChange={e => updateActiveList({ notes: e.target.value })} /></div>
+          <div className="p-4 border-t border-slate-700 bg-slate-800 flex flex-col md:flex-row gap-4 justify-end items-center z-10">
              <div className="flex gap-2">
                  <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-medium"><FileDown size={16} /> CSV</button>
                  <button onClick={exportTotalsPDF} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg shadow-blue-900/20 font-medium"><FileDown size={16} /> PDF TOTALI</button>
@@ -1248,12 +1834,119 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             <div className="flex justify-end gap-2"><button onClick={() => setMgmtModal(p => ({...p, isOpen:false}))} className="px-4 py-2 text-slate-400">Annulla</button><button onClick={handleMgmtModalSave} className="px-6 py-2 bg-blue-600 text-white rounded">Salva</button></div>
          </div>
       </Modal>
+
+      <Modal isOpen={zoneNoteModal.isOpen} onClose={() => setZoneNoteModal(p => ({...p, isOpen:false}))} title="Nota Zona">
+         <div className="space-y-4">
+            <textarea 
+                className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white h-32" 
+                value={zoneNoteModal.note} 
+                onChange={e => setZoneNoteModal(p => ({...p, note: e.target.value}))} 
+                autoFocus 
+                placeholder="Inserisci una nota per questa zona..."
+            />
+            <div className="flex justify-end gap-2">
+                <button onClick={() => setZoneNoteModal(p => ({...p, isOpen:false}))} className="px-4 py-2 text-slate-400">Annulla</button>
+                <button onClick={handleZoneNoteSave} className="px-6 py-2 bg-blue-600 text-white rounded">Salva</button>
+            </div>
+         </div>
+      </Modal>
+
+      <RemindersModal 
+        isOpen={!!activeRemindersListId}
+        onClose={() => setActiveRemindersListId(null)}
+        reminders={remindersList?.reminders || []}
+        onUpdate={handleUpdateReminders}
+        title={remindersList?.eventName || 'Note Evento'}
+      />
       
       <ConfirmationModal isOpen={!!sectionToDelete} onClose={() => setSectionToDelete(null)} onConfirm={confirmRemoveSection} title="Elimina Sezione" message="Confermi l'eliminazione della sezione?" />
       <ConfirmationModal isOpen={!!zoneToDelete} onClose={() => setZoneToDelete(null)} onConfirm={confirmRemoveZone} title="Elimina Zona" message="Confermi l'eliminazione della ZONA e di tutto il suo contenuto?" />
       
       <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={handleCreateNewItem} title="Nuovo Materiale" inventory={inventory} onCreateAccessory={handleCreateInventoryItemOnly} initialName={pickerSearch} />
       
+      {/* Event Details Modal */}
+      <Modal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} title={eventFormData.id ? "Modifica Evento" : "Nuovo Evento"} size="lg">
+          <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="col-span-full">
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Nome Evento</label>
+                      <input 
+                          type="text" 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-emerald-500 outline-none"
+                          placeholder="Es. Concerto Estivo 2024"
+                          value={eventFormData.eventName || ''}
+                          onChange={e => setEventFormData(prev => ({ ...prev, eventName: e.target.value }))}
+                      />
+                  </div>
+                  <div className="col-span-full">
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Location / Luogo</label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-2.5 text-slate-500" size={18} />
+                        <input 
+                            type="text" 
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                            placeholder="Es. Teatro Comunale, Roma"
+                            value={eventFormData.location || ''}
+                            onChange={e => setEventFormData(prev => ({ ...prev, location: e.target.value }))}
+                        />
+                      </div>
+                  </div>
+                  
+                  <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Data Inizio Allestimento</label>
+                      <div className="relative">
+                          <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
+                          <DatePicker 
+                              portalId="root"
+                              selected={eventFormData.setupDate ? new Date(eventFormData.setupDate) : null} 
+                              onChange={(date) => setEventFormData(prev => ({ ...prev, setupDate: date ? date.toISOString() : '' }))} 
+                              dateFormat="dd/MM/yyyy"
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                              placeholderText="Seleziona data..."
+                          />
+                      </div>
+                  </div>
+
+                  <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1">Data Inizio Evento</label>
+                      <div className="relative">
+                          <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
+                          <DatePicker 
+                              portalId="root"
+                              selected={eventFormData.eventDate ? new Date(eventFormData.eventDate) : null} 
+                              onChange={(date) => setEventFormData(prev => ({ ...prev, eventDate: date ? date.toISOString() : '' }))} 
+                              dateFormat="dd/MM/yyyy"
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
+                              placeholderText="Seleziona data..."
+                          />
+                      </div>
+                  </div>
+
+                  <div>
+                       <label className="block text-sm font-medium text-slate-500 mb-1">Data Creazione Lista</label>
+                       <DatePicker 
+                          portalId="root"
+                          selected={eventFormData.creationDate ? new Date(eventFormData.creationDate) : new Date()} 
+                          onChange={(date) => setEventFormData(prev => ({ ...prev, creationDate: date ? date.toISOString() : '' }))} 
+                          dateFormat="dd/MM/yyyy"
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-slate-400 text-sm focus:border-slate-600 outline-none"
+                       />
+                  </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-800 pt-4 mt-2">
+                  <button onClick={() => setIsEventModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Annulla</button>
+                  <button 
+                    onClick={handleSaveEvent} 
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium shadow-lg shadow-emerald-900/20 transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!eventFormData.eventName}
+                  >
+                    Salva Evento
+                  </button>
+              </div>
+          </div>
+      </Modal>
+
       {/* Paste Confirm */}
       <Modal isOpen={showPasteConfirm} onClose={() => setShowPasteConfirm(false)} title="Incolla di nuovo">
         <div className="space-y-4"><p className="text-slate-300">Vuoi incollare di nuovo?</p><div className="flex justify-end gap-2"><button onClick={() => setShowPasteConfirm(false)} className="px-4 py-2 text-slate-400">Annulla</button><button onClick={() => { performPaste(); setShowPasteConfirm(false); }} className="bg-emerald-600 text-white px-4 py-2 rounded">Si</button></div></div>

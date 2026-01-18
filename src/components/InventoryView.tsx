@@ -217,11 +217,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
     const item = items.find(i => i.id === itemId);
     if (item) {
         const updatedItem = { ...item, [field]: editValue };
-        await addOrUpdateItem(COLL_INVENTORY, updatedItem);
+        // Sanitize: remove undefined values which Firestore hates
+        const sanitizedItem = JSON.parse(JSON.stringify(updatedItem));
+        await addOrUpdateItem(COLL_INVENTORY, sanitizedItem);
         // Only propagate if name or category changed, as these are cached in lists.
         // Also if technically accessories were editable inline (not currently), we'd propagate.
         if (field === 'name' || field === 'category') {
-            await propagateUpdates(updatedItem);
+            await propagateUpdates(sanitizedItem);
         }
     }
     setEditingCell(null);

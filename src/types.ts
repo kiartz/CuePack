@@ -18,7 +18,7 @@ export interface InventoryItem {
   powerConsumption?: number; // in Watt (0 for non-electrical items)
   description?: string;
   inStock: number;
-  accessories?: { itemId: string; quantity: number }[]; // Linked items (e.g., cables for a light)
+  accessories?: { itemId: string; quantity: number; prepNote?: string }[]; // Linked items (e.g., cables for a light)
 }
 
 export interface KitComponent {
@@ -32,6 +32,20 @@ export interface Kit {
   category: Category;
   description?: string;
   items: KitComponent[];
+  reminders?: string[];
+}
+
+export interface WarehouseState {
+  inDistinta: boolean;
+  loaded: boolean;
+  returned: boolean;
+  isBroken: boolean;
+  warehouseNote: string;
+  brokenNote?: string;
+  changeLog?: {
+    previousQuantity: number;
+    changedAt: string; // ISO date
+  };
 }
 
 // For the Packing List Builder
@@ -42,8 +56,9 @@ export interface ListComponent {
   name: string;
   quantity: number;
   category: string; // Cached for sorting/display
-  contents?: { itemId?: string; name: string; quantity: number; category: string }[]; // Snapshot of contents (Kit items OR Item accessories)
+  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string }[]; // Snapshot of contents (Kit items OR Item accessories)
   notes?: string;
+  warehouseState?: WarehouseState;
 }
 
 export interface ListSection {
@@ -56,6 +71,7 @@ export interface ListZone {
   id: string;
   name: string;
   sections: ListSection[];
+  notes?: string;
 }
 
 export interface PackingList {
@@ -63,6 +79,7 @@ export interface PackingList {
   // 'name' removed in favor of eventName to avoid ambiguity
   eventName: string;
   eventDate: string;
+  setupDate?: string;
   location: string;
   creationDate: string;
   zones?: ListZone[]; // New structure
@@ -71,6 +88,23 @@ export interface PackingList {
   // Checklist State Persistence
   checklistEnabledSectors?: string[];
   checklistCheckedItems?: string[];
+  reminders?: Reminder[];
+  // Versioning
+  version?: string; // "1.0", "1.1", etc.
+  snapshot?: ListZone[]; // Snapshot of zones when version was last bumped
+  deletedItems?: { // Items removed since last snapshot
+    originalComponent: ListComponent;
+    zoneName: string;
+    sectionName: string;
+    deletedAt: string;
+  }[];
+}
+
+export interface Reminder {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+  createdAt: string;
 }
 
 // --- CHECKLIST TYPES ---

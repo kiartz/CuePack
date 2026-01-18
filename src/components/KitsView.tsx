@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, Copy, Package, X, Filter } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Plus, Search, Edit2, Trash2, Copy, Package, Filter } from 'lucide-react';
 import { InventoryItem, Kit, Category } from '../types';
-import { Modal } from './Modal';
-import { ItemFormModal } from './ItemFormModal';
+import { KitFormModal } from './KitFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
-import { addOrUpdateItem, deleteItem, COLL_KITS, COLL_INVENTORY } from '../firebase';
+import { addOrUpdateItem, deleteItem, COLL_KITS } from '../firebase';
 
 interface KitsViewProps {
   kits: Kit[];
@@ -16,18 +15,9 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingKit, setEditingKit] = useState<Kit | null>(null);
-  const [formData, setFormData] = useState<Partial<Kit>>({ items: [] });
-  const [itemSearch, setItemSearch] = useState('');
   
   // Deletion State
   const [kitToDelete, setKitToDelete] = useState<string | null>(null);
-  
-  // State for creating new item on the fly
-  const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-
-  // Refs for auto-focusing quantity inputs
-  const qtyInputRefs = useRef<{ [itemId: string]: HTMLInputElement | null }>({});
-  const [lastAddedItemId, setLastAddedItemId] = useState<string | null>(null);
 
   const filteredKits = useMemo(() => {
       const searchTokens = (searchTerm || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
@@ -72,40 +62,13 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
         .map(x => x.kit);
   }, [kits, searchTerm, selectedCategory]);
 
-  useEffect(() => {
-    if (lastAddedItemId && qtyInputRefs.current[lastAddedItemId]) {
-      qtyInputRefs.current[lastAddedItemId]?.focus();
-      qtyInputRefs.current[lastAddedItemId]?.select();
-      setLastAddedItemId(null);
-    }
-  }, [formData.items, lastAddedItemId]);
-
   const handleOpenModal = (kit?: Kit) => {
-    if (kit) {
-      setEditingKit(kit);
-      setFormData({ ...kit });
-    } else {
-      setEditingKit(null);
-      setFormData({ name: '', description: '', items: [], category: Category.OTHER });
-    }
+    setEditingKit(kit || null);
     setIsModalOpen(true);
   };
 
-  const handleSave = async () => {
-    if (!formData.name) return;
-
-    let newKit: Kit;
-    if (editingKit) {
-       newKit = { ...formData, id: editingKit.id } as Kit;
-    } else {
-       newKit = {
-        ...formData as Kit,
-        category: formData.category || Category.OTHER, 
-        id: crypto.randomUUID(),
-      };
-    }
-    
-    await addOrUpdateItem(COLL_KITS, newKit);
+  const handleSave = async (kit: Kit) => {
+    await addOrUpdateItem(COLL_KITS, kit);
     setIsModalOpen(false);
   };
 
@@ -121,102 +84,7 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
     await addOrUpdateItem(COLL_KITS, newKit);
   };
 
-  const addItemToKit = (invItem: InventoryItem) => {
-    const itemsToAdd: { itemId: string; quantity: number }[] = [
-      { itemId: invItem.id, quantity: 1 }
-    ];
-
-    if (invItem.accessories && invItem.accessories.length > 0) {
-      invItem.accessories.forEach(acc => {
-        itemsToAdd.push({ itemId: acc.itemId, quantity: acc.quantity });
-      });
-    }
-
-    let updatedItems = [...(formData.items || [])];
-
-    itemsToAdd.forEach(toAdd => {
-      const existingIndex = updatedItems.findIndex(i => i.itemId === toAdd.itemId);
-      
-      if (existingIndex >= 0) {
-        updatedItems[existingIndex] = {
-          ...updatedItems[existingIndex],
-          quantity: updatedItems[existingIndex].quantity + toAdd.quantity
-        };
-      } else {
-        updatedItems.push({ itemId: toAdd.itemId, quantity: toAdd.quantity });
-      }
-    });
-
-    setFormData({ ...formData, items: updatedItems });
-    setLastAddedItemId(invItem.id);
-  };
-
-  const removeItemFromKit = (itemId: string) => {
-    setFormData({ ...formData, items: formData.items?.filter(i => i.itemId !== itemId) });
-  };
-
-  const updateItemQty = (itemId: string, qty: number) => {
-    if (qty < 1) return;
-    setFormData({ ...formData, items: formData.items?.map(i => i.itemId === itemId ? { ...i, quantity: qty } : i) });
-  };
-
   const getInventoryName = (id: string) => inventory.find(i => i.id === id)?.name || 'Unknown Item';
-
-  const handleCreateNewItem = async (itemData: Omit<InventoryItem, 'id'>) => {
-    const newItem: InventoryItem = {
-      ...itemData,
-      id: crypto.randomUUID()
-    };
-    await addOrUpdateItem(COLL_INVENTORY, newItem);
-    // Auto add to kit and focus
-    addItemToKit(newItem);
-  };
-  
-  const handleCreateAccessory = async (newItem: InventoryItem) => {
-     await addOrUpdateItem(COLL_INVENTORY, newItem);
-  };
-
-  const filteredPickerItems = useMemo(() => {
-      const searchTokens = (itemSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
-      
-      return inventory
-        .map(item => {
-            const name = (item.name || '').toLowerCase();
-            const cat = (item.category || '').toLowerCase();
-            const desc = (item.description || '').toLowerCase();
-            const combined = `${name} ${cat} ${desc}`;
-
-            if (!searchTokens.every(token => combined.includes(token))) return { item, score: -1, nameMatches: 0 };
-
-            let score = 0;
-            let nameMatches = 0;
-
-            if (searchTokens.length === 0) {
-                score = 1;
-            } else {
-                searchTokens.forEach(token => {
-                    const inName = name.includes(token);
-                    if (inName) {
-                        nameMatches++;
-                        if (name === token) score += 1000;
-                        else if (name.startsWith(token)) score += 500;
-                        else if (name.includes(" " + token)) score += 200;
-                        else score += 100;
-                    }
-                    if (cat.includes(token)) score += 20;
-                    if (desc.includes(token)) score += 5;
-                });
-            }
-            return { item, score, nameMatches };
-        })
-        .filter(x => x.score > -1)
-        .sort((a, b) => {
-            if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
-            if (b.score !== a.score) return b.score - a.score;
-            return (a.item.name || '').localeCompare(b.item.name || '');
-        })
-        .map(x => x.item);
-  }, [inventory, itemSearch]);
 
   return (
     <div className="h-full flex flex-col p-6 space-y-4">
@@ -266,164 +134,64 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto pb-4 custom-scrollbar">
+      <div className="flex flex-col gap-2 overflow-y-auto pb-4 custom-scrollbar">
         {filteredKits.length === 0 ? (
-          <div className="col-span-full text-center py-10 text-slate-500">
+          <div className="text-center py-10 text-slate-500">
             Nessun kit trovato.
           </div>
         ) : (
           filteredKits.map(kit => (
-            <div key={kit.id} className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col gap-4 hover:border-slate-700 transition-all group">
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg">
-                    <Package size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-white leading-tight">{kit.name}</h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border uppercase tracking-wider
-                          ${kit.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
-                            kit.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
-                            kit.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
-                            kit.category === Category.STRUCTURE ? 'bg-slate-700/30 text-slate-400 border-slate-600/30' :
-                            'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}>
-                          {kit.category}
-                      </span>
-                      <span className="text-xs text-slate-500">• {kit.items.length} Elementi</span>
+            <div key={kit.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col md:flex-row gap-4 items-center hover:border-slate-700 transition-all group">
+                {/* Icon & Main Info */}
+                <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className="p-2 bg-purple-900/30 text-purple-400 rounded-lg shrink-0">
+                        <Package size={20} />
                     </div>
-                  </div>
+                    <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                             <h3 className="text-base font-bold text-white leading-tight truncate">{kit.name}</h3>
+                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border uppercase tracking-wider shrink-0
+                                  ${kit.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
+                                    kit.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
+                                    kit.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
+                                    kit.category === Category.STRUCTURE ? 'bg-slate-700/30 text-slate-400 border-slate-600/30' :
+                                    'bg-slate-800 text-slate-400 border-slate-700'
+                                  }`}>
+                                  {kit.category}
+                              </span>
+                        </div>
+                        <div className="text-xs text-slate-500 truncate mt-0.5">
+                             {kit.description || 'Nessuna descrizione.'}
+                        </div>
+                    </div>
                 </div>
-                <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => handleDuplicate(kit)} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><Copy size={16} /></button>
-                  <button onClick={() => handleOpenModal(kit)} className="p-2 text-blue-400 hover:text-blue-300 rounded-lg hover:bg-slate-800"><Edit2 size={16} /></button>
-                  <button onClick={() => setKitToDelete(kit.id)} className="p-2 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"><Trash2 size={16} /></button>
+
+                {/* Content Preview */}
+                <div className="hidden lg:flex flex-col w-1/3 min-w-0 px-4 border-l border-slate-800">
+                     <span className="text-[10px] uppercase text-slate-600 font-bold mb-1">Contenuto ({kit.items.length})</span>
+                     <div className="text-xs text-slate-500 truncate">
+                        {kit.items.slice(0, 5).map(i => getInventoryName(i.itemId)).join(', ')} {kit.items.length > 5 ? '...' : ''}
+                     </div>
                 </div>
-              </div>
-              <div className="bg-slate-950/50 rounded-lg p-3 text-sm text-slate-400 h-20 overflow-y-auto custom-scrollbar">
-                {kit.description || 'Nessuna descrizione.'}
-              </div>
-              <div className="text-xs text-slate-500 border-t border-slate-800 pt-3 truncate">
-                 Contiene: {kit.items.slice(0, 3).map(i => getInventoryName(i.itemId)).join(', ')} {kit.items.length > 3 ? '...' : ''}
-              </div>
+              
+                {/* Actions */}
+                <div className="flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => handleDuplicate(kit)} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" title="Duplica"><Copy size={16} /></button>
+                  <button onClick={() => handleOpenModal(kit)} className="p-2 text-blue-400 hover:text-blue-300 rounded-lg hover:bg-slate-800" title="Modifica"><Edit2 size={16} /></button>
+                  <button onClick={() => setKitToDelete(kit.id)} className="p-2 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800" title="Elimina"><Trash2 size={16} /></button>
+                </div>
             </div>
           ))
         )}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingKit ? "Modifica Kit" : "Nuovo Kit"} size="xl">
-        <div className="flex flex-col lg:flex-row gap-6 h-[70vh]">
-          {/* Left: Details & Selected Items */}
-          <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-            <div className="space-y-4">
-               <div className="grid grid-cols-3 gap-4">
-                 <div className="col-span-2">
-                    <label className="block text-sm text-slate-400 mb-1">Nome Kit</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-purple-500 outline-none"
-                      value={formData.name || ''}
-                      onChange={e => setFormData({...formData, name: e.target.value})}
-                      placeholder="Es. Kit Batteria"
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-sm text-slate-400 mb-1">Categoria</label>
-                    <select 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-purple-500 outline-none"
-                      value={formData.category || Category.OTHER}
-                      onChange={e => setFormData({...formData, category: e.target.value as Category})}
-                    >
-                      {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                 </div>
-               </div>
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Descrizione</label>
-                <textarea 
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-purple-500 outline-none h-16 resize-none"
-                  value={formData.description || ''}
-                  onChange={e => setFormData({...formData, description: e.target.value})}
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 bg-slate-950 rounded-lg border border-slate-800 p-4 overflow-hidden flex flex-col">
-              <h4 className="text-sm font-semibold text-purple-400 mb-2 uppercase tracking-wider">Contenuto Kit</h4>
-              <div className="overflow-y-auto flex-1 space-y-2 pr-2 custom-scrollbar">
-                {formData.items?.length === 0 && <p className="text-slate-600 text-center py-4">Nessun materiale aggiunto.</p>}
-                {formData.items?.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800">
-                    <span className="text-slate-300 text-sm truncate flex-1 mr-2">{getInventoryName(item.itemId)}</span>
-                    <div className="flex items-center gap-3">
-                      <input 
-                        ref={(el) => { qtyInputRefs.current[item.itemId] = el }}
-                        type="number" 
-                        className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center text-white text-sm focus:border-purple-500 outline-none"
-                        value={item.quantity}
-                        onChange={(e) => updateItemQty(item.itemId, Number(e.target.value))}
-                      />
-                      <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500 hover:text-rose-400">
-                        <X size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Right: Item Picker */}
-          <div className="w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-semibold text-white">Aggiungi Materiale</h4>
-              <button 
-                onClick={() => setIsNewItemModalOpen(true)}
-                className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
-                title="Crea nuovo materiale"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-            <div className="relative mb-3">
-              <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-              <input 
-                type="text"
-                placeholder="Cerca... (es. 'cavo 10')"
-                className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm focus:border-purple-500 outline-none"
-                value={itemSearch}
-                onChange={(e) => setItemSearch(e.target.value)}
-              />
-            </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
-              {filteredPickerItems
-                .map(item => (
-                <button 
-                  key={item.id}
-                  onClick={() => addItemToKit(item)}
-                  className="w-full text-left p-2 hover:bg-slate-700 rounded flex justify-between items-center group transition-colors"
-                >
-                  <span className="text-sm text-slate-300 truncate flex-1">{item.name}</span>
-                  <Plus size={16} className="text-slate-500 group-hover:text-purple-400 ml-2" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 mt-6 border-t border-slate-800 pt-4">
-          <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Annulla</button>
-          <button onClick={handleSave} className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium">Salva Kit</button>
-        </div>
-      </Modal>
-
-      <ItemFormModal
-        isOpen={isNewItemModalOpen}
-        onClose={() => setIsNewItemModalOpen(false)}
-        onSave={handleCreateNewItem}
-        title="Nuovo Materiale"
+      <KitFormModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSave={handleSave}
+        initialData={editingKit}
         inventory={inventory}
-        onCreateAccessory={handleCreateAccessory}
+        title={editingKit ? "Modifica Kit" : "Nuovo Kit"}
       />
       
       <ConfirmationModal
