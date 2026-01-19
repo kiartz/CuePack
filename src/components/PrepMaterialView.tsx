@@ -1215,6 +1215,21 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                   <AlertTriangle size={18} className={data.hasIssue ? 'fill-current' : ''} />
                                               </button>
                                           </div>
+
+                                          {/* Parent Checkboxes (Only if NOT a Kit - e.g. Machine with accessories) */}
+                                          {!isActuallyKit && (
+                                              <div className="flex gap-4">
+                                                  {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
+                                                      handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty })
+                                                  )}
+                                                  {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
+                                                      handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty })
+                                                  )}
+                                                  {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
+                                                      handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty })
+                                                  )}
+                                              </div>
+                                          )}
                                       </div>
                                       <div className="divide-y divide-slate-800">
                                           {Array.from((data.children as Map<string, any>).entries()).map(([childName, childData]) => {

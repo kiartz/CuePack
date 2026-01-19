@@ -244,7 +244,7 @@ export default function AuthenticatedApp() {
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex justify-between items-center">
            <div className="flex flex-col gap-1">
               <span>© R. Chiartano</span>
-              <span className="opacity-50">v0.4.6 (Secured)</span>
+              <span className="opacity-50">v0.4.7 (Secured)</span>
            </div>
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors" title="Esci">
              <LogOut size={16} />
