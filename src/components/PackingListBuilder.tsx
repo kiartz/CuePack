@@ -110,6 +110,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const qtyInputRefs = useRef<{ [uniqueId: string]: HTMLInputElement | null }>({});
   const [lastAddedComponentId, setLastAddedComponentId] = useState<string | null>(null);
 
+  // HIGHLIGHT & WARNING STATE
+  const [highlightedItemName, setHighlightedItemName] = useState<string | null>(null);
+
   // Picker Hover State & Logic
   const [isPickerHovered, setIsPickerHovered] = useState(false);
   const pickerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -167,6 +170,40 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const activeZone = zones.find(z => z.id === activeZoneId);
   const sections = activeZone?.sections || [];
   const activeSection = sections.find(s => s.id === activeSectionId);
+
+  // --- HIGHLIGHT & WARNING LOGIC (Placed here to access activeZone) ---
+  const activeZoneStats = useMemo(() => {
+    if (!activeZone) return null;
+    const loose = new Set<string>();
+    const inKits = new Map<string, Set<string>>(); // ItemName -> Set of KitNames containing it
+
+    activeZone.sections.forEach(sec => {
+        sec.components.forEach(comp => {
+            if (comp.type === 'item') {
+                loose.add(comp.name);
+            } else if (comp.type === 'kit' && comp.contents) {
+                comp.contents.forEach(sub => {
+                    if (!inKits.has(sub.name)) inKits.set(sub.name, new Set());
+                    inKits.get(sub.name)!.add(comp.name);
+                });
+            }
+        });
+    });
+    return { loose, inKits };
+  }, [activeZone]);
+
+  const getItemWarning = (itemName: string, currentKitName: string) => {
+    if (!activeZoneStats) return null;
+    const inLoose = activeZoneStats.loose.has(itemName);
+    const parentKits = activeZoneStats.inKits.get(itemName);
+    // It is in "other" kits if the set has more than 1 parent, OR if it has 1 parent but it's not the current one (edge case)
+    const inOtherKits = parentKits && (parentKits.size > 1 || (parentKits.size === 1 && !parentKits.has(currentKitName)));
+
+    if (inOtherKits && inLoose) return "!!!ALTRI IN KIT E SFUSI!!!";
+    if (inOtherKits) return "!!!ALTRI IN KIT!!!";
+    if (inLoose) return "!!!ALTRI IN SFUSI!!!";
+    return null;
+  };
 
   // --- Map of Quantities currently in the List (Global) ---
   const quantitiesInList = useMemo(() => {
@@ -373,6 +410,95 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setLastAddedComponentId(null);
     }
   }, [sections, lastAddedComponentId]);
+
+  // --- AUTO-SYNC KITS & ACCESSORIES ---
+  useEffect(() => {
+      if (!activeList || activeList.version || !activeList.zones) return;
+
+      let hasChanges = false;
+      const updatedZones = activeList.zones.map(zone => ({
+          ...zone,
+          sections: zone.sections.map(section => ({
+              ...section,
+              components: section.components.map(comp => {
+                  if (comp.type === 'kit') {
+                      const master = kits.find(k => k.id === comp.referenceId);
+                      if (master) {
+                          // 1. Check Name
+                          const nameChanged = comp.name !== master.name;
+
+                          // 2. Check Contents (Quantity and Item ID)
+                          const masterItems = master.items.sort((a, b) => a.itemId.localeCompare(b.itemId));
+                          const currentItems = (comp.contents || [])
+                              .map(c => ({ itemId: c.itemId, quantity: c.quantity }))
+                              .filter(c => c.itemId) // Ensure we have ID
+                              .sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
+
+                          const contentsChanged = JSON.stringify(masterItems) !== JSON.stringify(currentItems);
+
+                          if (nameChanged || contentsChanged) {
+                              hasChanges = true;
+                              console.log(`[Sync] Updating Kit: ${comp.name} -> ${master.name} (Contents Changed: ${contentsChanged})`);
+                              
+                              // Re-generate contents from master to get fresh names and categories
+                              const newContents = master.items.map(ki => {
+                                  const inv = inventory.find(i => i.id === ki.itemId);
+                                  return { 
+                                      itemId: ki.itemId, 
+                                      name: inv?.name || '?', 
+                                      quantity: ki.quantity, 
+                                      category: inv?.category || 'Altro' 
+                                  };
+                              });
+
+                              return { ...comp, name: master.name, contents: newContents };
+                          }
+                      }
+                  } else {
+                      // Logic for items with accessories
+                      const master = inventory.find(i => i.id === comp.referenceId);
+                      if (master) {
+                          const nameChanged = comp.name !== master.name;
+                          
+                          const masterAcc = (master.accessories || [])
+                              .map(a => ({ itemId: a.itemId, quantity: a.quantity, prepNote: a.prepNote || '' }))
+                              .sort((a, b) => a.itemId.localeCompare(b.itemId));
+                          
+                          const currentAcc = (comp.contents || [])
+                              .map(c => ({ itemId: c.itemId, quantity: c.quantity, prepNote: c.prepNote || '' }))
+                              .filter(c => c.itemId)
+                              .sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
+
+                          const contentsChanged = JSON.stringify(masterAcc) !== JSON.stringify(currentAcc);
+
+                          if (nameChanged || contentsChanged) {
+                              hasChanges = true;
+                              console.log(`[Sync] Updating Item: ${comp.name} -> ${master.name} (Accessories Changed: ${contentsChanged})`);
+
+                              const newContents = (master.accessories || []).map(acc => {
+                                  const inv = inventory.find(i => i.id === acc.itemId);
+                                  return {
+                                      itemId: acc.itemId,
+                                      name: inv?.name || '?',
+                                      quantity: acc.quantity,
+                                      category: inv?.category || 'Altro',
+                                      prepNote: acc.prepNote
+                                  };
+                              });
+
+                              return { ...comp, name: master.name, contents: newContents };
+                          }
+                      }
+                  }
+                  return comp;
+              })
+          }))
+      }));
+
+      if (hasChanges) {
+          updateActiveList({ zones: updatedZones });
+      }
+  }, [activeListId, kits, inventory, activeList]); // Trigger when any relevant data changes
 
   // --- FIRESTORE WRAPPER ---
   const updateActiveList = async (updates: Partial<PackingList>) => {
@@ -1094,6 +1220,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             });
         });
 
+        // --- MAP ITEMS TO PARENTS (To detect duplicates across kits/accessories) ---
+        // Key: Child Item Name -> Value: Set of Parent Names containing it
+        const itemKitParents = new Map<string, Set<string>>();
+        const itemAccessoryParents = new Map<string, Set<string>>();
+        
+        complexItemsMap.forEach((data, parentName) => {
+            const isKit = parentName.startsWith('KIT-');
+            data.children.forEach((_, childName) => {
+                const mapToUse = isKit ? itemKitParents : itemAccessoryParents;
+                if (!mapToUse.has(childName)) {
+                    mapToUse.set(childName, new Set());
+                }
+                mapToUse.get(childName)!.add(parentName);
+            });
+        });
+
         const tableBody: any[] = [];
 
         // --- RENDER SECTION A: KITS & ASSEMBLED ---
@@ -1106,19 +1248,21 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 styles: { fontStyle: 'bold', fillColor: [220, 220, 240], textColor: [0, 0, 50], halign: 'left', fontSize: 10 } 
             }]);
 
-            sortedComplex.forEach(([name, data]) => {
+            sortedComplex.forEach(([displayName, data]) => {
                 // Check if Parent exists in Loose items
-                let parentLabel = name;
-                const isParentInLoose = simpleItemsMap.has(name);
+                // Note: displayName includes "KIT-" prefix for kits, but loose map uses raw name.
+                // We need to strip prefix for check if it's a kit, or use name if it's a machine.
+                const rawName = displayName.startsWith('KIT-') ? displayName.replace('KIT-', '') : displayName;
+                const isParentInLoose = simpleItemsMap.has(rawName);
                 
                 // Parent Row
                 tableBody.push([{ 
-                    content: parentLabel, 
+                    content: displayName, 
                     styles: { 
                         fontStyle: 'bold', // Keeping structural bold for Parent
                         textColor: [0, 0, 0] 
                     },
-                    _warning: isParentInLoose
+                    _warning: isParentInLoose ? "!!!ALTRI IN SFUSI!!!" : null
                 }, data.totalQty, '']);
 
                 // Children Rows (Indented)
@@ -1127,6 +1271,32 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     let childLabel = `  - ${childName}`;
                     const isChildInLoose = simpleItemsMap.has(childName);
                     
+                    // Check intersections
+                    const kitSet = itemKitParents.get(childName);
+                    const accSet = itemAccessoryParents.get(childName);
+                    
+                    // Logic:
+                    // 1. Is it in OTHER kits? (If current context is Kit, count > 1. If context is Machine, count > 0)
+                    // 2. Is it in ACCESSORIES? (If context is Machine, count > 1. If context is Kit, count > 0)
+                    
+                    const isCurrentContextKit = displayName.startsWith('KIT-');
+                    
+                    const inOtherKits = kitSet && (isCurrentContextKit ? (kitSet.size > 1 || !kitSet.has(displayName)) : kitSet.size > 0);
+                    const inAccessories = accSet && (!isCurrentContextKit ? (accSet.size > 1 || !accSet.has(displayName)) : accSet.size > 0);
+                    
+                    const warningParts: string[] = [];
+                    if (inOtherKits) warningParts.push("KIT");
+                    if (inAccessories) warningParts.push("ACCESSORI");
+                    if (isChildInLoose) warningParts.push("SFUSI");
+
+                    let warningMsg: string | null = null;
+                    if (warningParts.length > 0) {
+                        const joined = warningParts.length === 1 
+                            ? warningParts[0] 
+                            : warningParts.slice(0, -1).join(', ') + ' E ' + warningParts.slice(-1);
+                        warningMsg = `!!!ALTRI IN ${joined}!!!`;
+                    }
+
                     // Add Prep Note column logic
                     if (childData.prepNote) {
                         childLabel += ` [${childData.prepNote.toUpperCase()}]`;
@@ -1139,7 +1309,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             textColor: [80, 80, 80],
                             fontStyle: 'normal'
                         },
-                        _warning: isChildInLoose
+                        _warning: warningMsg
                     }, childData.qty, '']);
                 });
             });
@@ -1189,9 +1359,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
                     doc.setFont("helvetica", "bold");
                     doc.setFontSize(9); 
-                    doc.setTextColor(0, 0, 0);
+                    doc.setTextColor(220, 0, 0); // Make it Red for visibility
                     
-                    const warning = "!!!ALTRI IN SFUSI!!!";
+                    const warning = (data.cell.raw as any)._warning as string;
                     const textWidth = doc.getTextWidth(warning);
                     
                     // Align right in the cell with padding
@@ -1661,7 +1831,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         )}
 
         {/* --- MAIN LIST CONTENT --- */}
-        <div className="flex-1 overflow-y-auto bg-slate-950/30">
+        <div className="flex-1 overflow-y-auto bg-slate-950/30 relative flex flex-col">
+          {highlightedItemName && (
+              <div className="sticky top-0 left-0 right-0 z-20 bg-blue-600 text-white px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2">
+                  <div className="font-bold text-sm flex items-center gap-2">
+                      <Search size={16} /> EVIDENZIATO: <span className="underline">{highlightedItemName}</span>
+                  </div>
+                  <button onClick={() => setHighlightedItemName(null)} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-xs font-bold uppercase transition-colors">
+                      ESCI
+                  </button>
+              </div>
+          )}
+
           {!activeZone ? <div className="text-center py-20 text-slate-500">Crea una Zona per iniziare</div> :
            !activeSection ? <div className="text-center py-20 text-slate-500">Seleziona una Sezione</div> :
            activeSection.components.length === 0 ? <div className="text-center py-20 text-slate-600">Sezione vuota</div> : (
@@ -1679,16 +1860,21 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   const originalKit = comp.type === 'kit' ? kits.find(k => k.id === comp.referenceId) : null;
                   const hasKitReminders = originalKit?.reminders && originalKit.reminders.length > 0;
 
-                  console.log(`Checking item ${comp.name} (Ref: ${comp.referenceId}): isMissing=${isMissing}`);
+                  // Highlight Logic
+                  const isMainMatch = comp.name === highlightedItemName;
+                  const isSubMatch = comp.contents?.some(c => c.name === highlightedItemName);
+                  const isDimmed = highlightedItemName && !isMainMatch && !isSubMatch;
+
+                  const hasAccessories = comp.contents && comp.contents.length > 0;
 
                   return (
                       <div key={comp.uniqueId} 
                            draggable onDragStart={(e) => handleDragStart(e, activeSection.id, idx, comp.uniqueId)} onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)} onDragEnd={handleDragEnd} onDragOver={e => e.preventDefault()}
-                           className={`group relative p-2 rounded-lg border transition-all ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
+                           className={`group relative p-2 rounded-lg border transition-all duration-300 ${isDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : hasAccessories ? 'bg-cyan-900/10 border-cyan-900/30 hover:border-cyan-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
                           <div className="flex justify-between items-center">
                               <div className="flex items-center gap-2 overflow-hidden">
                                   <button onClick={(e) => { e.stopPropagation(); toggleSelection(comp.uniqueId); }} className={`text-slate-500 p-1 ${isSelected ? 'text-blue-500' : ''}`}>{isSelected ? <CheckSquare size={18}/> : <Square size={18}/>}</button>
-                                  {comp.type === 'kit' ? <PackageIcon size={18} className="text-purple-400"/> : <Box size={18} className="text-slate-400"/>}
+                                  {comp.type === 'kit' ? <PackageIcon size={18} className="text-purple-400"/> : <Box size={18} className={hasAccessories ? "text-cyan-400" : "text-slate-400"}/>}
                                   <div className="flex items-center gap-2 min-w-0">
                                       {isMissing && (
                                           <button 
@@ -1703,9 +1889,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                           </button>
                                       )}
                                       <div className="min-w-0">
-                                          <div className="font-medium text-slate-200 text-sm truncate flex items-center gap-2">
+                                          <div 
+                                              className={`font-medium text-sm truncate flex items-center gap-2 cursor-pointer hover:underline ${isMainMatch ? 'text-blue-400 font-bold scale-105 origin-left' : 'text-slate-200'}`}
+                                              onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === comp.name ? null : comp.name); }}
+                                              title="Clicca per evidenziare ovunque"
+                                          >
                                               {comp.name} 
-                                              {comp.type === 'kit' && <span className="text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle">KIT</span>}
+                                              {comp.type === 'kit' && <span className="text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">KIT</span>}
+                                              {comp.type === 'item' && hasAccessories && <span className="text-[10px] bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">MACCHINA</span>}
                                               {hasKitReminders && (
                                                   <button 
                                                     onClick={(e) => { e.stopPropagation(); setActiveKitRemindersId(activeKitRemindersId === comp.uniqueId ? null : comp.uniqueId); }}
@@ -1783,7 +1974,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 {comp.contents.map((c, i) => {
                                     // Check accessory existence
                                     const isAccMissing = c.itemId ? !inventory.some(inv => inv.id === c.itemId) : false;
-                                    
+                                    const warning = comp.type === 'kit' ? getItemWarning(c.name, comp.name) : null;
+                                    const isChildMatch = c.name === highlightedItemName;
+
                                     return (
                                         <div key={i} className="text-[10px] text-slate-400 flex justify-between w-full max-w-md leading-tight group/acc">
                                             <span className="flex items-center gap-1 min-w-0">
@@ -1799,7 +1992,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                         <AlertTriangle size={10} />
                                                     </button>
                                                 )}
-                                                <span className={`${isAccMissing ? 'text-rose-900 line-through decoration-rose-500/50' : ''} truncate`}>{c.name}</span>
+                                                <span 
+                                                    className={`truncate cursor-pointer hover:underline ${isAccMissing ? 'text-rose-900 line-through decoration-rose-500/50' : ''} ${isChildMatch ? 'text-blue-400 font-bold' : ''}`}
+                                                    onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === c.name ? null : c.name); }}
+                                                >
+                                                    {c.name}
+                                                </span>
+                                                {warning && (
+                                                    <span className="text-[9px] font-bold text-rose-500 ml-2 animate-pulse">
+                                                        {warning}
+                                                    </span>
+                                                )}
                                             </span>
                                             <span className="shrink-0 pl-2">x{c.quantity * comp.quantity}</span>
                                         </div>
