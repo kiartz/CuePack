@@ -125,7 +125,7 @@ export default function AuthenticatedApp() {
 
   if (loading) {
       return (
-          <div className="h-screen bg-slate-950 flex items-center justify-center text-slate-400 flex-col gap-4">
+          <div className="h-screen h-[100dvh] bg-slate-950 flex items-center justify-center text-slate-400 flex-col gap-4">
               <Loader2 className="animate-spin" size={48} />
               <p>Connessione al database in corso...</p>
               <p className="text-xs text-slate-600">Assicurati di aver configurato le chiavi Firebase.</p>
@@ -135,7 +135,7 @@ export default function AuthenticatedApp() {
 
   if (dbError) {
       return (
-          <div className="h-screen bg-slate-950 flex items-center justify-center text-rose-500 flex-col gap-4">
+          <div className="h-screen h-[100dvh] bg-slate-950 flex items-center justify-center text-rose-500 flex-col gap-4">
               <WifiOff size={48} />
               <p className="font-bold text-xl">{dbError}</p>
               <p className="text-slate-400">Controlla la tua connessione internet o la configurazione .env</p>
@@ -184,7 +184,7 @@ export default function AuthenticatedApp() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans">
       
       {/* Sidebar (Desktop) */}
       <aside className="hidden md:flex w-72 flex-col bg-slate-900 border-r border-slate-800 shrink-0">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -23,6 +23,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
 
   // Deletion State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 50;
 
   const filteredItems = useMemo(() => {
     // Safety check
@@ -76,6 +80,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
 
       return results;
   }, [items, searchTerm, selectedCategory]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCategory]);
+
+  const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
+  const paginatedItems = filteredItems.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   useEffect(() => {
     if (editingCell && editInputRef.current) {
@@ -320,9 +335,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                   </td>
                 </tr>
               ) : (
-                filteredItems.map(item => (
+                paginatedItems.map(item => (
                   <tr 
-                    key={item.id} 
+                    key={item.id}  
                     className="hover:bg-slate-800/50 transition-colors group"
                   >
                     {/* NAME COLUMN */}
@@ -453,6 +468,37 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             </tbody>
           </table>
         </div>
+        
+        {/* Pagination Footer */}
+        {filteredItems.length > 0 && (
+          <div className="bg-slate-800 border-t border-slate-700 p-4 flex items-center justify-between">
+             <div className="text-sm text-slate-400">
+                Mostrando {((currentPage - 1) * ITEMS_PER_PAGE) + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, filteredItems.length)} di {filteredItems.length} materiali
+             </div>
+             
+             <div className="flex items-center gap-2">
+                <button
+                   onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                   disabled={currentPage === 1}
+                   className="p-2 bg-slate-700 text-white rounded hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                   <ChevronLeft size={20} />
+                </button>
+                
+                <span className="text-sm text-slate-300 min-w-[80px] text-center">
+                   Pagina {currentPage} di {totalPages}
+                </span>
+
+                <button
+                   onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                   disabled={currentPage === totalPages}
+                   className="p-2 bg-slate-700 text-white rounded hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                   <ChevronRight size={20} />
+                </button>
+             </div>
+          </div>
+        )}
       </div>
 
       <ItemFormModal

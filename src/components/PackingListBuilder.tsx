@@ -1863,14 +1863,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   // Highlight Logic
                   const isMainMatch = comp.name === highlightedItemName;
                   const isSubMatch = comp.contents?.some(c => c.name === highlightedItemName);
-                  const isDimmed = highlightedItemName && !isMainMatch && !isSubMatch;
+                  
+                  // NEW LOGIC: if searching and not matched, hide completely
+                  if (highlightedItemName && !isMainMatch && !isSubMatch) return null;
+
+                  const isParentOfMatch = highlightedItemName && isSubMatch;
 
                   const hasAccessories = comp.contents && comp.contents.length > 0;
 
                   return (
                       <div key={comp.uniqueId} 
                            draggable onDragStart={(e) => handleDragStart(e, activeSection.id, idx, comp.uniqueId)} onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)} onDragEnd={handleDragEnd} onDragOver={e => e.preventDefault()}
-                           className={`group relative p-2 rounded-lg border transition-all duration-300 ${isDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : hasAccessories ? 'bg-cyan-900/10 border-cyan-900/30 hover:border-cyan-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
+                           className={`group relative p-2 rounded-lg border transition-all duration-300 ${isParentOfMatch ? 'opacity-70' : 'opacity-100'} ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : hasAccessories ? 'bg-cyan-900/10 border-cyan-900/30 hover:border-cyan-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
                           <div className="flex justify-between items-center">
                               <div className="flex items-center gap-2 overflow-hidden">
                                   <button onClick={(e) => { e.stopPropagation(); toggleSelection(comp.uniqueId); }} className={`text-slate-500 p-1 ${isSelected ? 'text-blue-500' : ''}`}>{isSelected ? <CheckSquare size={18}/> : <Square size={18}/>}</button>

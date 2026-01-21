@@ -18,6 +18,23 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
   
   // Highlight State (Totals View)
   const [highlightedItemName, setHighlightedItemName] = useState<string | null>(null);
+  const [itemSearch, setItemSearch] = useState('');
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+
+  // Helper to handle search/highlight clearing
+  const handleSetHighlight = (name: string | null) => {
+      setHighlightedItemName(name);
+      if (name) {
+          setItemSearch('');
+          // Optional: collapse search on mobile when selecting an item?
+          // setIsSearchExpanded(false); 
+      }
+  };
+
+  const handleSearchChange = (val: string) => {
+      setItemSearch(val);
+      if (val) setHighlightedItemName(null);
+  };
 
   // Note Modal State
   const [noteModal, setNoteModal] = useState<{ isOpen: boolean, targets: { uniqueId?: string, parentId?: string, childIdx?: number }[], text: string }>({
@@ -605,7 +622,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
           <div className="bg-slate-900 border-b border-slate-800 p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto">
                   <button onClick={() => setActiveListId(null)} className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg"><ArrowLeft size={20}/></button>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                       <h2 className="text-xl font-bold text-white flex items-center gap-2 truncate">
                           {activeList?.eventName}
                           {activeList?.version && <span className="text-xs font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">v{activeList.version}</span>}
@@ -614,22 +631,48 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                           <span>{activeList?.location}</span> • <span>{new Date(activeList?.eventDate || '').toLocaleDateString()}</span>
                       </div>
                   </div>
+
+                  {/* VIEW SWITCHER (Optimized for Mobile) */}
+                  <div className="flex items-center bg-slate-800 rounded-lg p-1 shrink-0">
+                      <button 
+                          onClick={() => setViewMode('zones')}
+                          className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'zones' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                          title="Vista Reparti"
+                      >
+                          <Layers size={18} /> <span className="hidden sm:inline">Reparti</span>
+                      </button>
+                      <button 
+                          onClick={() => setViewMode('totals')}
+                          className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'totals' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                          title="Vista Totali"
+                      >
+                          <LayoutList size={18} /> <span className="hidden sm:inline">Totali</span>
+                      </button>
+                  </div>
+
+                  {/* Mobile Search Toggle */}
+                  <button 
+                      onClick={() => setIsSearchExpanded(!isSearchExpanded)}
+                      className={`md:hidden p-2 rounded-lg transition-colors ${isSearchExpanded || itemSearch ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                  >
+                      <Search size={20} />
+                  </button>
               </div>
               
-              {/* VIEW SWITCHER */}
-              <div className="flex items-center bg-slate-800 rounded-lg p-1 shrink-0">
-                  <button 
-                      onClick={() => setViewMode('zones')}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'zones' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                  >
-                      <Layers size={16} /> Reparti
-                  </button>
-                  <button 
-                      onClick={() => setViewMode('totals')}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'totals' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                  >
-                      <LayoutList size={16} /> Totali
-                  </button>
+              {/* ITEM SEARCH */}
+              <div className={`relative flex-1 max-w-xs mx-4 transition-all duration-300 ${isSearchExpanded ? 'block w-full' : 'hidden'} md:block`}>
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                  <input 
+                      placeholder="Cerca nel materiale..." 
+                      className="w-full bg-slate-800 border border-slate-700 text-white pl-9 pr-8 py-1.5 rounded-lg text-sm outline-none focus:border-blue-500 transition-all"
+                      value={itemSearch}
+                      onChange={e => handleSearchChange(e.target.value)}
+                  />
+                  {itemSearch && (
+                      <button onClick={() => handleSearchChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                          <X size={14} />
+                      </button>
+                  )}
               </div>
           </div>
 
@@ -749,25 +792,32 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                 const showChangeWarning = hasChanged && isComponentUnresolved({ ...comp, warehouseState: ws }); 
                                                 
                                                 // Highlight Logic
-                                                const isMainMatch = comp.name === highlightedItemName;
-                                                const hasSubMatch = comp.contents?.some(c => c.name === highlightedItemName);
-                                                const isContainerDimmed = highlightedItemName && !isMainMatch && !hasSubMatch;
+                                                const isFilterActive = !!highlightedItemName || !!itemSearch;
+                                                const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+
+                                                const isMainMatch = checkMatch(comp.name);
+                                                const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
+                                                
+                                                // NEW LOGIC: if searching and not matched, hide completely
+                                                if (isFilterActive && !isMainMatch && !hasSubMatch) return null;
+
+                                                const isContainerOfMatch = isFilterActive && hasSubMatch;
 
                                                 return (
                                                     <React.Fragment key={comp.uniqueId}>
                                                         {/* Kit Header (No Checkboxes) */}
-                                                        <div className={`p-3 border-l-4 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${isContainerDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/10 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
-                                                            <div className={`flex-1 w-full transition-opacity ${highlightedItemName && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
+                                                        <div className={`p-3 border-l-4 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/10 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
+                                                            <div className={`flex-1 w-full min-w-0 transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
                                                                 <div className="flex items-center gap-2">
                                                                     <span 
-                                                                        className={`font-bold text-lg cursor-pointer hover:underline ${isMainMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
-                                                                        onClick={() => setHighlightedItemName(highlightedItemName === comp.name ? null : comp.name)}
+                                                                        className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMainMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
+                                                                        onClick={() => handleSetHighlight(highlightedItemName === comp.name ? null : comp.name)}
                                                                     >
                                                                         {comp.name}
                                                                     </span>
-                                                                    <span className="bg-purple-900 text-purple-200 px-2 py-0.5 rounded text-base font-mono font-bold">x{comp.quantity} (KIT)</span>
+                                                                    <span className="bg-purple-900 text-purple-200 px-2 py-0.5 rounded text-base font-mono font-bold shrink-0">x{comp.quantity}</span>
                                                                     {hasChanged && (
-                                                                        <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
+                                                                        <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'} hidden sm:inline`}>
                                                                             {ws.changeLog?.previousQuantity === 0 
                                                                                 ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-[10px]" : "text-white/60 font-bold uppercase tracking-wider text-[10px]"}> (NUOVO KIT)</span>
                                                                                 : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{activeList?.version})</span>
@@ -775,10 +825,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <div className="text-xs text-slate-500 mt-0.5">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2">• Nota Prod: {comp.notes}</span>}</div>
+                                                                <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: {comp.notes}</span>}</div>
                                                                 
                                                                 {ws.warehouseNote && (
-                                                                    <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block">
+                                                                    <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block w-full sm:w-auto">
                                                                         Note Magazzino: {ws.warehouseNote}
                                                                     </div>
                                                                 )}
@@ -792,7 +842,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                             </div>
 
                                                             {/* Kit Controls */}
-                                                            <div className={`flex items-center gap-2 transition-opacity ${highlightedItemName && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
+                                                            <div className={`flex items-center gap-2 self-end sm:self-center mt-2 sm:mt-0 transition-opacity shrink-0 ${isFilterActive && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
                                                                 <button 
                                                                     onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
                                                                     className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
@@ -817,11 +867,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                             const contentWarning = hasChanged && (!subWs.inDistinta || !subWs.loaded);
                                                             
                                                             // Content Highlight Logic
-                                                            const isChildMatch = sub.name === highlightedItemName;
-                                                            const isRowDimmed = highlightedItemName && !isChildMatch;
+                                                            const isChildMatch = checkMatch(sub.name);
+
+                                                            // Logic: If highlighting active
+                                                            // - If Kit is main match (isMainMatch) -> Show all children (Context)
+                                                            // - If Child is match -> Show Child
+                                                            // - Else -> Hide
+                                                            if (isFilterActive && !isMainMatch && !isChildMatch) return null;
 
                                                             return (
-                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${isContainerDimmed || isRowDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
+                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
                                                                     {/* Content Info */}
                                                                     <div className="flex-1 w-full flex items-center gap-3">
                                                                         <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${contentWarning ? 'bg-amber-500' : 'bg-purple-500/50'}`}></div>
@@ -829,7 +884,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                             <div className="flex items-center gap-2">
                                                                                 <span 
                                                                                     className={`font-medium cursor-pointer hover:underline ${isChildMatch ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
-                                                                                    onClick={() => setHighlightedItemName(highlightedItemName === sub.name ? null : sub.name)}
+                                                                                    onClick={() => handleSetHighlight(highlightedItemName === sub.name ? null : sub.name)}
                                                                                 >
                                                                                     {sub.name}
                                                                                 </span>
@@ -891,28 +946,36 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                             const showChangeWarning = hasChanged && !isComponentUnresolved(comp) ? false : hasChanged; 
                                             
                                             // Highlight Logic
-                                            const isMatch = comp.name === highlightedItemName;
-                                            const isDimmed = highlightedItemName && !isMatch;
+                                            const isFilterActive = !!highlightedItemName || !!itemSearch;
+                                            const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+
+                                            const isMatch = checkMatch(comp.name);
+                                            const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
+
+                                            // NEW LOGIC: if searching and not matched, hide completely
+                                            if (isFilterActive && !isMatch && !hasSubMatch) return null;
+
+                                            const isContainerOfMatch = isFilterActive && hasSubMatch;
 
                                             const hasAccessories = comp.contents && comp.contents.length > 0;
 
                                             return (
                                                 <React.Fragment key={comp.uniqueId}>
-                                                    <div className={`p-3 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${isDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${ws.isBroken ? 'bg-rose-900/10' : showChangeWarning ? 'bg-amber-900/10' : hasAccessories ? 'bg-cyan-900/10 border-l-4 border-cyan-500/50' : 'hover:bg-slate-800/50'}`}>
+                                                    <div className={`p-3 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${ws.isBroken ? 'bg-rose-900/10' : showChangeWarning ? 'bg-amber-900/10' : hasAccessories ? 'bg-cyan-900/10 border-l-4 border-cyan-500/50' : 'hover:bg-slate-800/50'}`}>
                                                         {/* Item Info */}
-                                                        <div className="flex-1 w-full">
+                                                        <div className="flex-1 w-full min-w-0">
                                                             <div className="flex items-center gap-2">
                                                                 <span 
-                                                                    className={`font-bold text-lg cursor-pointer hover:underline ${isMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
-                                                                    onClick={() => setHighlightedItemName(highlightedItemName === comp.name ? null : comp.name)}
+                                                                    className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
+                                                                    onClick={() => handleSetHighlight(highlightedItemName === comp.name ? null : comp.name)}
                                                                 >
                                                                     {comp.name}
                                                                 </span>
-                                                                <span className={`px-2 py-0.5 rounded text-base font-mono font-bold ${showChangeWarning ? 'bg-amber-500 text-black' : hasAccessories ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-slate-300'}`}>
+                                                                <span className={`px-2 py-0.5 rounded text-base font-mono font-bold shrink-0 ${showChangeWarning ? 'bg-amber-500 text-black' : hasAccessories ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-slate-300'}`}>
                                                                     x{comp.quantity}
                                                                 </span>
                                                                 {hasChanged && (
-                                                                <span className="text-slate-300 text-xs font-medium">
+                                                                <span className="text-slate-300 text-xs font-medium hidden sm:inline">
                                                                     {ws.changeLog?.previousQuantity === 0 
                                                                         ? <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px] ml-1"> (NUOVO MATERIALE)</span>
                                                                         : `(Era: ${ws.changeLog?.previousQuantity} v${activeList?.version})`
@@ -920,10 +983,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                 </span>
                                                             )}
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-0.5">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2">• Nota Prod: {comp.notes}</span>}</div>
+                                                            <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: {comp.notes}</span>}</div>
                                                             
                                                             {ws.warehouseNote && (
-                                                                <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block">
+                                                                <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block w-full sm:w-auto">
                                                                     Note Magazzino: {ws.warehouseNote}
                                                                 </div>
                                                             )}
@@ -937,10 +1000,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                         </div>
 
                                                         {/* Controls */}
-                                                        <div className="flex items-center gap-2 md:gap-6 w-full md:w-auto justify-between md:justify-end">
+                                                        <div className="flex items-center gap-2 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end mt-2 sm:mt-0 shrink-0">
                                                             
                                                                                                                   {/* Actions */}
-                                                                                                                  <div className="flex gap-1 pr-4 border-r border-slate-800">
+                                                                                                                  <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800">
                                                                                                                       <button 
                                                                                                                           onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
                                                                                                                           className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
@@ -957,21 +1020,21 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                                                                       </button>
                                                                                                                   </div>
                                                             {/* Checkboxes */}
-                                                            <div className="flex gap-4">
+                                                            <div className="flex gap-2 sm:gap-4">
                                                                 {(() => {
                                                                     const isResolved = ws.inDistinta && ws.loaded;
                                                                     const showWarning = hasChanged && !isResolved;
 
                                                                     return (
                                                                         <>
-                                                                            <label className="flex flex-col items-center gap-1 cursor-pointer group">
-                                                                                <span className="text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Distinta</span>
+                                                                            <label className="flex flex-col items-center gap-0.5 cursor-pointer group">
+                                                                                <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { inDistinta: !ws.inDistinta })} className={ws.inDistinta ? 'text-emerald-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'}>
                                                                                     {ws.inDistinta ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                                 </button>
                                                                             </label>
-                                                                            <label className="flex flex-col items-center gap-1 cursor-pointer group">
-                                                                                <span className="text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Carico</span>
+                                                                            <label className="flex flex-col items-center gap-0.5 cursor-pointer group">
+                                                                                <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { loaded: !ws.loaded })} className={ws.loaded ? 'text-blue-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'}>
                                                                                     {ws.loaded ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                                 </button>
@@ -979,8 +1042,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                         </>
                                                                     );
                                                                 })()}
-                                                                <label className="flex flex-col items-center gap-1 cursor-pointer group">
-                                                                    <span className="text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Rientro</span>
+                                                                <label className="flex flex-col items-center gap-0.5 cursor-pointer group">
+                                                                    <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
                                                                     <button onClick={() => updateComponentState(comp.uniqueId, { returned: !ws.returned })} className={ws.returned ? 'text-purple-500' : 'text-slate-600'}>
                                                                         {ws.returned ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                     </button>
@@ -996,10 +1059,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                         const contentWarning = hasChanged && (!subWs.inDistinta || !subWs.loaded);
                                                         
                                                         // Highlight Logic
-                                                        const isMatch = sub.name === highlightedItemName;
+                                                        const isMatch = checkMatch(sub.name);
+                                                        const isParentMatch = checkMatch(comp.name);
+
+                                                        if (isFilterActive && !isMatch && !isParentMatch) return null;
                                                         
                                                         return (
-                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${isDimmed ? 'opacity-25 grayscale' : 'opacity-100'} ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
+                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
                                                                 {/* Accessory Info */}
                                                                 <div className="flex-1 w-full flex items-center gap-3">
                                                                     <div className={`${hasAccessories ? 'text-cyan-500/50' : 'text-slate-600'} shrink-0`}> - </div>
@@ -1007,7 +1073,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                         <div className="flex items-center gap-2">
                                                                             <span 
                                                                                 className={`font-medium text-sm cursor-pointer hover:underline ${isMatch ? 'text-blue-400 font-bold' : 'text-slate-400'}`}
-                                                                                onClick={() => setHighlightedItemName(highlightedItemName === sub.name ? null : sub.name)}
+                                                                                onClick={() => handleSetHighlight(highlightedItemName === sub.name ? null : sub.name)}
                                                                             >
                                                                                 {sub.name}
                                                                             </span>
@@ -1180,72 +1246,84 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                               {/* Section A: Complex (Kits/Machines) */}
                               {Array.from(zoneData.complex.entries()).map(([key, data]) => {
                                   // Highlight Check (Parent)
-                                  const isMainMatch = data.name === highlightedItemName;
-                                  const hasSubMatch = Array.from(data.children.keys()).some(k => k === highlightedItemName);
-                                  const isContainerDimmed = highlightedItemName && !isMainMatch && !hasSubMatch;
+                                  const isFilterActive = !!highlightedItemName || !!itemSearch;
+                                  const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+
+                                  const isMainMatch = checkMatch(data.name);
+                                  const hasSubMatch = Array.from(data.children.keys()).some(k => checkMatch(k));
+
+                                  // Logic: Hide if neither parent nor children match
+                                  if (isFilterActive && !isMainMatch && !hasSubMatch) return null;
+
+                                  const isContainerOfMatch = isFilterActive && hasSubMatch;
                                   
                                   const parentInLoose = simpleItemsSet.has(data.name);
                                   const isActuallyKit = key.startsWith('KIT-');
 
                                   return (
-                                  <div key={key} className={`bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden transition-all duration-300 ${isContainerDimmed ? 'opacity-25 grayscale' : 'opacity-100'}`}>
-                                      <div className={`p-3 border-l-4 ${isActuallyKit ? 'border-purple-500/50 bg-purple-900/10' : 'border-cyan-500/50 bg-cyan-900/10'} flex flex-col md:flex-row gap-4 items-center transition-opacity ${highlightedItemName && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
-                                          <div className="flex-1 w-full flex items-center gap-2 flex-wrap">
+                                  <div key={key} className={`bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'}`}>
+                                      <div className={`p-3 border-l-4 ${isActuallyKit ? 'border-purple-500/50 bg-purple-900/10' : 'border-cyan-500/50 bg-cyan-900/10'} flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
+                                          <div className="flex-1 w-full min-w-0 flex items-center gap-2">
                                               <span 
-                                                  className={`font-bold text-lg cursor-pointer hover:underline ${isMainMatch ? 'text-blue-400 scale-105' : 'text-white'}`}
-                                                  onClick={() => setHighlightedItemName(highlightedItemName === data.name ? null : data.name)}
+                                                  className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMainMatch ? 'text-blue-400 scale-105' : 'text-white'}`}
+                                                  onClick={() => handleSetHighlight(highlightedItemName === data.name ? null : data.name)}
                                               >
                                                   {data.name}
                                               </span>
-                                              <span className={`${isActuallyKit ? 'bg-purple-900 text-purple-200' : 'bg-cyan-900 text-cyan-200'} px-2 py-0.5 rounded text-base font-mono font-bold`}>x{data.totalQty} ({isActuallyKit ? 'KIT' : 'MACCHINA'})</span>
-                                              {parentInLoose && <span className="text-[10px] font-bold text-rose-500 animate-pulse bg-rose-950/30 px-1 rounded">!!!ALTRI IN SFUSI!!!</span>}
+                                              <span className={`${isActuallyKit ? 'bg-purple-900 text-purple-200' : 'bg-cyan-900 text-cyan-200'} px-2 py-0.5 rounded text-base font-mono font-bold shrink-0`}>x{data.totalQty}</span>
+                                              {parentInLoose && <span className="text-[10px] font-bold text-rose-500 animate-pulse bg-rose-950/30 px-1 rounded hidden sm:inline">!!!ALTRI IN SFUSI!!!</span>}
                                           </div>
-                                          {/* Aggregated Actions for Parent (Notes/Issues only) */}
-                                          <div className="flex gap-1 pr-4 border-r border-slate-800">
-                                              <button 
-                                                  onClick={() => setNoteModal({ isOpen: true, targets: data.instances, text: '' })}
-                                                  className={`p-2 rounded hover:bg-slate-700 transition-colors ${data.hasNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
-                                              >
-                                                  <MessageSquare size={18} className={data.hasNote ? 'fill-current' : ''} />
-                                              </button>
-                                              <button 
-                                                  onClick={() => setBrokenModal({ isOpen: true, targets: data.instances, text: '' })}
-                                                  className={`p-2 rounded hover:bg-slate-700 transition-colors ${data.hasIssue ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
-                                              >
-                                                  <AlertTriangle size={18} className={data.hasIssue ? 'fill-current' : ''} />
-                                              </button>
-                                          </div>
-
-                                          {/* Parent Checkboxes (Only if NOT a Kit - e.g. Machine with accessories) */}
-                                          {!isActuallyKit && (
-                                              <div className="flex gap-4">
-                                                  {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
-                                                      handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty })
-                                                  )}
-                                                  {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
-                                                      handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty })
-                                                  )}
-                                                  {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
-                                                      handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty })
-                                                  )}
+                                          
+                                          {/* Controls Container */}
+                                          <div className="flex items-center w-full sm:w-auto justify-between sm:justify-end mt-2 sm:mt-0 shrink-0">
+                                              {/* Aggregated Actions for Parent (Notes/Issues only) */}
+                                              <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800 shrink-0">
+                                                  <button 
+                                                      onClick={() => setNoteModal({ isOpen: true, targets: data.instances, text: '' })}
+                                                      className={`p-2 rounded hover:bg-slate-700 transition-colors ${data.hasNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
+                                                  >
+                                                      <MessageSquare size={18} className={data.hasNote ? 'fill-current' : ''} />
+                                                  </button>
+                                                  <button 
+                                                      onClick={() => setBrokenModal({ isOpen: true, targets: data.instances, text: '' })}
+                                                      className={`p-2 rounded hover:bg-slate-700 transition-colors ${data.hasIssue ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
+                                                  >
+                                                      <AlertTriangle size={18} className={data.hasIssue ? 'fill-current' : ''} />
+                                                  </button>
                                               </div>
-                                          )}
+
+                                              {/* Parent Checkboxes (Only if NOT a Kit - e.g. Machine with accessories) */}
+                                              {!isActuallyKit && (
+                                                  <div className="flex gap-2 sm:gap-4 shrink-0">
+                                                      {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
+                                                          handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty })
+                                                      )}
+                                                      {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
+                                                          handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty })
+                                                      )}
+                                                      {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
+                                                          handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty })
+                                                      )}
+                                                  </div>
+                                              )}
+                                          </div>
                                       </div>
                                       <div className="divide-y divide-slate-800">
                                           {Array.from((data.children as Map<string, any>).entries()).map(([childName, childData]) => {
                                               const warning = getItemWarning(childName, key); 
-                                              const isChildMatch = childName === highlightedItemName;
-                                              const isRowDimmed = highlightedItemName && !isChildMatch;
+                                              const isChildMatch = checkMatch(childName);
+                                              
+                                              if (isFilterActive && !isMainMatch && !isChildMatch) return null;
                                               
                                               return (
-                                              <div key={childName} className={`pl-8 pr-3 py-2 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/30 transition-all duration-300 ${isContainerDimmed || isRowDimmed ? 'opacity-25 grayscale' : 'opacity-100'}`}>
+                                              <div key={childName} className={`pl-8 pr-3 py-2 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/30 transition-all duration-300 opacity-100`}>
                                                   <div className="flex-1 w-full flex items-center gap-3">
                                                       <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActuallyKit ? 'bg-purple-500/50' : 'bg-cyan-500/50'}`}></div>
                                                       <div className="flex flex-col">
                                                           <div className="flex items-center gap-2 flex-wrap">
                                                               <span 
                                                                   className={`font-medium cursor-pointer hover:underline ${isChildMatch ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
-                                                                  onClick={() => setHighlightedItemName(highlightedItemName === childName ? null : childName)}
+                                                                  onClick={() => handleSetHighlight(highlightedItemName === childName ? null : childName)}
                                                               >
                                                                   {childName}
                                                               </span>
@@ -1284,7 +1362,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                       </div>
                                                   </div>
                                               </div>
-                                          )})}
+                                          )})} 
                                       </div>
                                   </div>
                               )})}
@@ -1297,15 +1375,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                       </div>
                                       <div className="divide-y divide-slate-800">
                                           {Array.from((zoneData.simple as Map<string, any>).entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([name, data]) => {
-                                              const isMatch = name === highlightedItemName;
-                                              const isDimmed = highlightedItemName && !isMatch;
+                                              const isFilterActive = !!highlightedItemName || !!itemSearch;
+                                              const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+
+                                              const isMatch = checkMatch(name);
                                               
+                                              if (isFilterActive && !isMatch) return null;
+
                                               return (
-                                              <div key={name} className={`p-3 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/50 transition-colors duration-300 ${isDimmed ? 'opacity-25 grayscale' : 'opacity-100'}`}>
+                                              <div key={name} className={`p-3 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/50 transition-colors duration-300 opacity-100`}>
                                                   <div className="flex-1 w-full flex items-center gap-2">
                                                       <span 
                                                           className={`font-bold text-lg cursor-pointer hover:underline ${isMatch ? 'text-blue-400' : 'text-white'}`}
-                                                          onClick={() => setHighlightedItemName(highlightedItemName === name ? null : name)}
+                                                          onClick={() => handleSetHighlight(highlightedItemName === name ? null : name)}
                                                       >
                                                           {data.name}
                                                       </span>
