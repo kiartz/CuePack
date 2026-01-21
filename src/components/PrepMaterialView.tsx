@@ -15,6 +15,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
   // Detail View State
   const [activeZoneId, setActiveZoneId] = useState<string>('');
   const [viewMode, setViewMode] = useState<'zones' | 'totals'>('zones');
+  const [showOnlyChanges, setShowOnlyChanges] = useState(false);
   
   // Highlight State (Totals View)
   const [highlightedItemName, setHighlightedItemName] = useState<string | null>(null);
@@ -117,6 +118,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
           const complexItems = new Map<string, {
               name: string,
               totalQty: number,
+              originalTotalQty: number, // Added for change tracking
               inDistintaQty: number,
               loadedQty: number,
               returnedQty: number,
@@ -126,6 +128,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
               children: Map<string, { 
                   name: string,
                   totalQty: number, 
+                  originalTotalQty: number, // Added for change tracking
                   inDistintaQty: number,
                   loadedQty: number,
                   returnedQty: number,
@@ -139,6 +142,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
           const simpleItems = new Map<string, {
               name: string,
               totalQty: number,
+              originalTotalQty: number, // Added for change tracking
               inDistintaQty: number,
               loadedQty: number,
               returnedQty: number,
@@ -151,19 +155,25 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
               section.components.forEach(comp => {
                   const ws = comp.warehouseState || { inDistinta: false, loaded: false, returned: false };
                   const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
+                  
+                  // Calculate Original Quantity based on changeLog
+                  const compOriginalQty = ws.changeLog !== undefined ? ws.changeLog.previousQuantity : comp.quantity;
 
                   if (isComplex) {
                       const displayName = comp.type === 'kit' ? `KIT-${comp.name}` : comp.name;
                       if (!complexItems.has(displayName)) {
                           complexItems.set(displayName, { 
                               name: comp.name,
-                              totalQty: 0, inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
+                              totalQty: 0, originalTotalQty: 0, 
+                              inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
                               hasNote: false, hasIssue: false,
                               instances: [], children: new Map() 
                           });
                       }
                       const parent = complexItems.get(displayName)!;
                       parent.totalQty += comp.quantity;
+                      parent.originalTotalQty += compOriginalQty;
+                      
                       if (comp.type !== 'kit') {
                           if (ws.inDistinta) parent.inDistintaQty += comp.quantity;
                           if (ws.loaded) parent.loadedQty += comp.quantity;
@@ -178,14 +188,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                           if (!parent.children.has(sub.name)) {
                               parent.children.set(sub.name, { 
                                   name: sub.name,
-                                  totalQty: 0, inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
+                                  totalQty: 0, originalTotalQty: 0,
+                                  inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
                                   hasNote: false, hasIssue: false,
                                   instances: [] 
                               });
                           }
                           const child = parent.children.get(sub.name)!;
                           const q = sub.quantity * comp.quantity;
+                          const qOriginal = sub.quantity * compOriginalQty; // Based on parent original qty
+                          
                           child.totalQty += q;
+                          child.originalTotalQty += qOriginal;
+                          
                           if (subWs.inDistinta) child.inDistintaQty += q;
                           if (subWs.loaded) child.loadedQty += q;
                           if (subWs.returned) child.returnedQty += q;
@@ -198,13 +213,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                       if (!simpleItems.has(comp.name)) {
                           simpleItems.set(comp.name, { 
                               name: comp.name,
-                              totalQty: 0, inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
+                              totalQty: 0, originalTotalQty: 0,
+                              inDistintaQty: 0, loadedQty: 0, returnedQty: 0, 
                               hasNote: false, hasIssue: false,
                               instances: [] 
                           });
                       }
                       const item = simpleItems.get(comp.name)!;
                       item.totalQty += comp.quantity;
+                      item.originalTotalQty += compOriginalQty;
+                      
                       if (ws.inDistinta) item.inDistintaQty += comp.quantity;
                       if (ws.loaded) item.loadedQty += comp.quantity;
                       if (ws.returned) item.returnedQty += comp.quantity;
@@ -505,6 +523,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                            <div className="flex items-center gap-4 text-sm text-slate-500">
                                <span className="flex items-center gap-1"><MapPin size={14}/> {list.location}</span>
                                <span className="flex items-center gap-1"><Calendar size={14}/> {new Date(list.eventDate).toLocaleDateString()}</span>
+                               {list.completedAt && (
+                                   <span className="hidden md:flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded text-[10px] font-bold text-slate-400 border border-slate-700/50">
+                                       Lista del {new Date(list.completedAt).toLocaleString()}
+                                   </span>
+                               )}
                            </div>
                        </div>
 
@@ -567,12 +590,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
   const activeZone = activeList?.zones?.find(z => z.id === activeZoneId);
   const zoneDeletedItems = activeList?.deletedItems?.filter(d => d.zoneName === activeZone?.name);
 
+  // Calculate previous version for display
+  const previousVersion = (parseFloat(activeList?.version || '1.0') - 0.1).toFixed(1);
+
   // Helper for Totals Buttons
   const renderTotalButton = (
       type: 'distinta' | 'carico' | 'rientro',
       current: number,
       total: number,
-      onClick: () => void
+      onClick: () => void,
+      showWarning?: boolean
   ) => {
       let bgColor = 'bg-slate-800';
       let textColor = 'text-slate-600';
@@ -587,6 +614,9 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
           if (type === 'distinta') textColor = 'text-emerald-500';
           if (type === 'carico') textColor = 'text-blue-500';
           if (type === 'rientro') textColor = 'text-purple-500';
+      } else if (showWarning && (type === 'distinta' || type === 'carico')) {
+          // RED PULSE FOR WARNING
+          textColor = 'text-rose-500 animate-pulse';
       } else if (isStarted) {
           // YELLOW BUTTON
           bgColor = 'bg-yellow-500 hover:bg-yellow-400';
@@ -627,8 +657,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                           {activeList?.eventName}
                           {activeList?.version && <span className="text-xs font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">v{activeList.version}</span>}
                       </h2>
-                      <div className="text-xs text-slate-500 flex gap-2">
+                      <div className="text-xs text-slate-500 flex items-center gap-2">
                           <span>{activeList?.location}</span> • <span>{new Date(activeList?.eventDate || '').toLocaleDateString()}</span>
+                          {activeList?.completedAt && (
+                              <span className="ml-2 hidden md:inline-block bg-slate-800 px-2 py-0.5 rounded text-[10px] text-slate-400 font-bold border border-slate-700/50">
+                                  LISTA DEL {new Date(activeList.completedAt).toLocaleString().toUpperCase()}
+                              </span>
+                          )}
                       </div>
                   </div>
 
@@ -694,7 +729,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                             >
                                 {zone.name}
                                 {isModifiedZone && (
-                                    <span className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] animate-pulse" title="Modifiche rilevate in questa zona" />
+                                    <span 
+                                        onClick={(e) => { e.stopPropagation(); setActiveZoneId(zone.id); setShowOnlyChanges(prev => !prev); }}
+                                        className={`w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] animate-pulse hover:scale-150 transition-transform ${showOnlyChanges && activeZoneId === zone.id ? 'ring-2 ring-white scale-125' : ''}`} 
+                                        title="Clicca per mostrare solo le modifiche" 
+                                    />
                                 )}
                             </button>
                         );
@@ -703,6 +742,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
 
                 {/* Main Content (Zones) */}
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar relative flex flex-col">
+                    {showOnlyChanges && (
+                        <div className="sticky top-0 left-0 right-0 z-20 bg-amber-600 text-black px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2 mb-4 shrink-0 rounded-lg">
+                            <div className="flex items-center gap-2 font-bold text-sm">
+                                <AlertTriangle size={16} /> VISTA MODIFICHE ATTIVA: Mostrando solo gli oggetti aggiunti o variati
+                            </div>
+                            <button onClick={() => setShowOnlyChanges(false)} className="bg-black/20 hover:bg-black/30 px-3 py-1 rounded text-xs font-bold uppercase transition-colors">
+                                MOSTRA TUTTO
+                            </button>
+                        </div>
+                    )}
+
                     {highlightedItemName && (
                         <div className="sticky top-0 left-0 right-0 z-20 bg-blue-600 text-white px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2 mb-4 shrink-0 rounded-lg">
                             <div className="flex items-center gap-4">
@@ -798,15 +848,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                 const isMainMatch = checkMatch(comp.name);
                                                 const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
                                                 
-                                                // NEW LOGIC: if searching and not matched, hide completely
+                                                // Filter Logic: Search + Changes Filter
                                                 if (isFilterActive && !isMainMatch && !hasSubMatch) return null;
+                                                if (showOnlyChanges && !hasChanged) return null;
 
                                                 const isContainerOfMatch = isFilterActive && hasSubMatch;
 
                                                 return (
                                                     <React.Fragment key={comp.uniqueId}>
                                                         {/* Kit Header (No Checkboxes) */}
-                                                        <div className={`p-3 border-l-4 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/10 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
+                                                        <div className={`p-3 border-l-4 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/5 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
                                                             <div className={`flex-1 w-full min-w-0 transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
                                                                 <div className="flex items-center gap-2">
                                                                     <span 
@@ -815,12 +866,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                     >
                                                                         {comp.name}
                                                                     </span>
-                                                                    <span className="bg-purple-900 text-purple-200 px-2 py-0.5 rounded text-base font-mono font-bold shrink-0">x{comp.quantity}</span>
+                                                                    <span className={`${showChangeWarning ? 'bg-amber-500 text-black' : 'bg-purple-900 text-purple-200'} px-2 py-0.5 rounded text-base font-mono font-bold shrink-0`}>x{comp.quantity}</span>
                                                                     {hasChanged && (
-                                                                        <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'} hidden sm:inline`}>
+                                                                        <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
                                                                             {ws.changeLog?.previousQuantity === 0 
                                                                                 ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-[10px]" : "text-white/60 font-bold uppercase tracking-wider text-[10px]"}> (NUOVO KIT)</span>
-                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{activeList?.version})</span>
+                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{previousVersion})</span>
                                                                             }
                                                                         </span>
                                                                     )}
@@ -876,10 +927,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                             if (isFilterActive && !isMainMatch && !isChildMatch) return null;
 
                                                             return (
-                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
+                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                     {/* Content Info */}
                                                                     <div className="flex-1 w-full flex items-center gap-3">
-                                                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${contentWarning ? 'bg-amber-500' : 'bg-purple-500/50'}`}></div>
+                                                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${contentWarning ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-purple-500/50'}`}></div>
                                                                         <div>
                                                                             <div className="flex items-center gap-2">
                                                                                 <span 
@@ -888,7 +939,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                                 >
                                                                                     {sub.name}
                                                                                 </span>
-                                                                                <span className={`text-base px-1.5 py-0.5 rounded font-mono ${contentWarning ? 'bg-amber-900/20 text-amber-500 font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
+                                                                                <span className={`text-base px-1.5 py-0.5 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
+                                                                                {hasChanged && (
+                                                                                    <span className={`text-xs font-medium ml-2 ${contentWarning ? 'text-amber-400 font-bold' : 'opacity-40'}`}>
+                                                                                        {ws.changeLog?.previousQuantity === 0 
+                                                                                            ? "(NUOVO)" 
+                                                                                            : `(Era: ${sub.quantity * ws.changeLog!.previousQuantity} v${previousVersion})`}
+                                                                                    </span>
+                                                                                )}
                                                                             </div>
                                                                             {subWs.warehouseNote && <div className="text-xs text-blue-400 bg-blue-900/20 px-1 rounded inline-block mt-0.5">Nota: {subWs.warehouseNote}</div>}
                                                                             {subWs.isBroken && <div className="text-rose-500 text-xs font-bold uppercase mt-0.5">{subWs.brokenNote || 'ROTTO'}</div>}
@@ -952,8 +1010,9 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                             const isMatch = checkMatch(comp.name);
                                             const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
 
-                                            // NEW LOGIC: if searching and not matched, hide completely
+                                            // Filter Logic: Search + Changes Filter
                                             if (isFilterActive && !isMatch && !hasSubMatch) return null;
+                                            if (showOnlyChanges && !hasChanged) return null;
 
                                             const isContainerOfMatch = isFilterActive && hasSubMatch;
 
@@ -975,10 +1034,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                     x{comp.quantity}
                                                                 </span>
                                                                 {hasChanged && (
-                                                                <span className="text-slate-300 text-xs font-medium hidden sm:inline">
+                                                                <span className={`text-xs font-medium ${showChangeWarning ? 'text-amber-400 font-bold' : 'text-slate-300'}`}>
                                                                     {ws.changeLog?.previousQuantity === 0 
                                                                         ? <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px] ml-1"> (NUOVO MATERIALE)</span>
-                                                                        : `(Era: ${ws.changeLog?.previousQuantity} v${activeList?.version})`
+                                                                        : ` (Era: ${ws.changeLog?.previousQuantity} v${previousVersion})`
                                                                     }
                                                                 </span>
                                                             )}
@@ -1065,10 +1124,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                         if (isFilterActive && !isMatch && !isParentMatch) return null;
                                                         
                                                         return (
-                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/5' : 'hover:bg-slate-800/30'}`}>
+                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                 {/* Accessory Info */}
                                                                 <div className="flex-1 w-full flex items-center gap-3">
-                                                                    <div className={`${hasAccessories ? 'text-cyan-500/50' : 'text-slate-600'} shrink-0`}> - </div>
+                                                                    <div className={`${hasAccessories ? (contentWarning ? 'text-amber-500' : 'text-cyan-500/50') : 'text-slate-600'} shrink-0`}> - </div>
                                                                     <div>
                                                                         <div className="flex items-center gap-2">
                                                                             <span 
@@ -1077,7 +1136,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                                             >
                                                                                 {sub.name}
                                                                             </span>
-                                                                            <span className={`text-base px-1.5 py-0.5 rounded font-mono ${hasAccessories ? 'bg-cyan-900/20 text-cyan-400' : 'bg-slate-800 text-slate-500'}`}>x{totalQty}</span>
+                                                                            <span className={`text-base px-1.5 py-0.5 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : hasAccessories ? 'bg-cyan-900/20 text-cyan-400' : 'bg-slate-800 text-slate-500'}`}>x{totalQty}</span>
+                                                                            {hasChanged && (
+                                                                                <span className={`text-xs font-medium ml-2 ${contentWarning ? 'text-amber-400 font-bold' : 'opacity-40'}`}>
+                                                                                    {ws.changeLog?.previousQuantity === 0 
+                                                                                        ? "(NUOVO)" 
+                                                                                        : `(Era: ${sub.quantity * ws.changeLog!.previousQuantity} v${previousVersion})`}
+                                                                                </span>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                 </div>
@@ -1142,6 +1208,31 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                 {/* Zone Tabs (Same as Zones View) */}
                 <div className="flex bg-slate-900 border-b border-slate-800 overflow-x-auto px-4 gap-1 shrink-0">
                     {activeList.zones.map(zone => {
+                        const hasZoneDeletions = activeList.deletedItems?.some(d => d.zoneName === zone.name);
+                        
+                        let hasZoneChanges = false;
+                        const zData = aggregatedData.get(zone.id);
+                        if (zData) {
+                            // Check Complex
+                            if (!hasZoneChanges) {
+                                for (const data of zData.complex.values()) {
+                                    if (data.totalQty !== data.originalTotalQty) { hasZoneChanges = true; break; }
+                                    for (const child of data.children.values()) {
+                                         if (child.totalQty !== child.originalTotalQty) { hasZoneChanges = true; break; }
+                                    }
+                                    if (hasZoneChanges) break;
+                                }
+                            }
+                            // Check Simple
+                            if (!hasZoneChanges) {
+                                for (const data of zData.simple.values()) {
+                                    if (data.totalQty !== data.originalTotalQty) { hasZoneChanges = true; break; }
+                                }
+                            }
+                        }
+
+                        const isModifiedZone = hasZoneDeletions || hasZoneChanges;
+
                         return (
                             <button
                                 key={zone.id}
@@ -1149,6 +1240,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                 className={`px-4 py-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${activeZoneId === zone.id ? 'border-blue-500 text-white bg-slate-800' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
                             >
                                 {zone.name}
+                                {isModifiedZone && (
+                                    <span 
+                                        onClick={(e) => { e.stopPropagation(); setActiveZoneId(zone.id); setShowOnlyChanges(prev => !prev); }}
+                                        className={`w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] animate-pulse hover:scale-150 transition-transform ${showOnlyChanges && activeZoneId === zone.id ? 'ring-2 ring-white scale-125' : ''}`} 
+                                        title="Clicca per mostrare solo le modifiche" 
+                                    />
+                                )}
                             </button>
                         );
                     })}
@@ -1156,6 +1254,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
 
                 {/* Main Content (Active Zone Totals) */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col relative">
+                    {showOnlyChanges && (
+                        <div className="sticky top-0 left-0 right-0 z-20 bg-amber-600 text-black px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2 shrink-0">
+                            <div className="flex items-center gap-2 font-bold text-sm">
+                                <AlertTriangle size={16} /> VISTA MODIFICHE ATTIVA: Mostrando solo le variazioni totali
+                            </div>
+                            <button onClick={() => setShowOnlyChanges(false)} className="bg-black/20 hover:bg-black/30 px-3 py-1 rounded text-xs font-bold uppercase transition-colors">
+                                MOSTRA TUTTO
+                            </button>
+                        </div>
+                    )}
+
                     {highlightedItemName && (
                         <div className="sticky top-0 left-0 right-0 z-20 bg-blue-600 text-white px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2 shrink-0">
                             <div className="flex items-center gap-4">
@@ -1252,17 +1361,26 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                   const isMainMatch = checkMatch(data.name);
                                   const hasSubMatch = Array.from(data.children.keys()).some(k => checkMatch(k));
 
-                                  // Logic: Hide if neither parent nor children match
+                                  // Filter Logic: Search + Changes Filter
                                   if (isFilterActive && !isMainMatch && !hasSubMatch) return null;
+                                  if (showOnlyChanges && data.totalQty === data.originalTotalQty) return null;
 
                                   const isContainerOfMatch = isFilterActive && hasSubMatch;
                                   
                                   const parentInLoose = simpleItemsSet.has(data.name);
+                                  const hasChanged = data.totalQty !== data.originalTotalQty;
+                                  
+                                  // Warning logic: if changed and not all items in distinta/loaded
                                   const isActuallyKit = key.startsWith('KIT-');
+                                  const isResolved = isActuallyKit 
+                                    ? Array.from(data.children.values()).every((c: any) => c.inDistintaQty >= c.totalQty && c.loadedQty >= c.totalQty)
+                                    : (data.inDistintaQty >= data.totalQty && data.loadedQty >= data.totalQty);
+                                  
+                                  const showWarning = hasChanged && !isResolved;
 
                                   return (
                                   <div key={key} className={`bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'}`}>
-                                      <div className={`p-3 border-l-4 ${isActuallyKit ? 'border-purple-500/50 bg-purple-900/10' : 'border-cyan-500/50 bg-cyan-900/10'} flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
+                                      <div className={`p-3 border-l-4 ${isActuallyKit ? 'border-purple-500/50' : 'border-cyan-500/50'} ${showWarning ? 'bg-amber-900/10 border-amber-500' : hasChanged ? 'bg-amber-900/10' : (isActuallyKit ? 'bg-purple-900/10' : 'bg-cyan-900/10')} flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
                                           <div className="flex-1 w-full min-w-0 flex items-center gap-2">
                                               <span 
                                                   className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMainMatch ? 'text-blue-400 scale-105' : 'text-white'}`}
@@ -1270,7 +1388,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                               >
                                                   {data.name}
                                               </span>
-                                              <span className={`${isActuallyKit ? 'bg-purple-900 text-purple-200' : 'bg-cyan-900 text-cyan-200'} px-2 py-0.5 rounded text-base font-mono font-bold shrink-0`}>x{data.totalQty}</span>
+                                              <span className={`${showWarning ? 'bg-amber-500 text-black' : isActuallyKit ? 'bg-purple-900 text-purple-200' : 'bg-cyan-900 text-cyan-200'} px-2 py-0.5 rounded text-base font-mono font-bold shrink-0`}>x{data.totalQty}</span>
+                                              {hasChanged && (
+                                                  <span className={`text-xs font-bold ${showWarning ? 'text-amber-400' : 'text-slate-400'}`}>
+                                                      {data.originalTotalQty === 0 ? '(NUOVO)' : `(Era: ${data.originalTotalQty} v${previousVersion})`}
+                                                  </span>
+                                              )}
                                               {parentInLoose && <span className="text-[10px] font-bold text-rose-500 animate-pulse bg-rose-950/30 px-1 rounded hidden sm:inline">!!!ALTRI IN SFUSI!!!</span>}
                                           </div>
                                           
@@ -1296,10 +1419,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                               {!isActuallyKit && (
                                                   <div className="flex gap-2 sm:gap-4 shrink-0">
                                                       {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
-                                                          handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty })
+                                                          handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty }),
+                                                          showWarning
                                                       )}
                                                       {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
-                                                          handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty })
+                                                          handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty }),
+                                                          showWarning
                                                       )}
                                                       {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
                                                           handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty })
@@ -1315,10 +1440,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                               
                                               if (isFilterActive && !isMainMatch && !isChildMatch) return null;
                                               
+                                              const hasChanged = childData.totalQty !== childData.originalTotalQty;
+                                              const isResolved = childData.inDistintaQty >= childData.totalQty && childData.loadedQty >= childData.totalQty;
+                                              const showWarning = hasChanged && !isResolved;
+
                                               return (
-                                              <div key={childName} className={`pl-8 pr-3 py-2 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/30 transition-all duration-300 opacity-100`}>
+                                              <div key={childName} className={`pl-8 pr-3 py-2 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 opacity-100 ${showWarning ? 'bg-amber-900/10' : hasChanged ? 'bg-amber-900/5 hover:bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                   <div className="flex-1 w-full flex items-center gap-3">
-                                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActuallyKit ? 'bg-purple-500/50' : 'bg-cyan-500/50'}`}></div>
+                                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActuallyKit ? 'bg-purple-500/50' : 'bg-cyan-500/50'} ${showWarning ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : ''}`}></div>
                                                       <div className="flex flex-col">
                                                           <div className="flex items-center gap-2 flex-wrap">
                                                               <span 
@@ -1327,7 +1456,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                               >
                                                                   {childName}
                                                               </span>
-                                                              <span className={`text-base px-1.5 py-0.5 rounded font-mono ${isActuallyKit ? 'bg-slate-800 text-slate-400' : 'bg-cyan-900/20 text-cyan-400'}`}>x{childData.totalQty}</span>
+                                                              <span className={`text-base px-1.5 py-0.5 rounded font-mono ${showWarning ? 'bg-amber-500 text-black font-bold' : isActuallyKit ? 'bg-slate-800 text-slate-400' : 'bg-cyan-900/20 text-cyan-400'}`}>x{childData.totalQty}</span>
+                                                              {hasChanged && (
+                                                                  <span className={`text-xs font-bold ${showWarning ? 'text-amber-400' : 'text-slate-400'}`}>
+                                                                      {childData.originalTotalQty === 0 ? '(NUOVO)' : `(Era: ${childData.originalTotalQty} v${previousVersion})`}
+                                                                  </span>
+                                                              )}
                                                           </div>
                                                           {warning && <span className="text-[10px] font-bold text-rose-500 animate-pulse mt-0.5">{warning}</span>}
                                                       </div>
@@ -1351,10 +1485,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
 
                                                       <div className="flex gap-4">
                                                           {renderTotalButton('distinta', childData.inDistintaQty, childData.totalQty, () => 
-                                                              handleBatchUpdate(childData.instances, { inDistinta: childData.inDistintaQty < childData.totalQty })
+                                                              handleBatchUpdate(childData.instances, { inDistinta: childData.inDistintaQty < childData.totalQty }),
+                                                              showWarning
                                                           )}
                                                           {renderTotalButton('carico', childData.loadedQty, childData.totalQty, () => 
-                                                              handleBatchUpdate(childData.instances, { loaded: childData.loadedQty < childData.totalQty })
+                                                              handleBatchUpdate(childData.instances, { loaded: childData.loadedQty < childData.totalQty }),
+                                                              showWarning
                                                           )}
                                                           {renderTotalButton('rientro', childData.returnedQty, childData.totalQty, () => 
                                                               handleBatchUpdate(childData.instances, { returned: childData.returnedQty < childData.totalQty })
@@ -1376,14 +1512,20 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                       <div className="divide-y divide-slate-800">
                                           {Array.from((zoneData.simple as Map<string, any>).entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([name, data]) => {
                                               const isFilterActive = !!highlightedItemName || !!itemSearch;
-                                              const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+                                              const checkMatch = (n: string) => highlightedItemName ? n === highlightedItemName : (itemSearch ? n.toLowerCase().includes(itemSearch.toLowerCase()) : false);
 
                                               const isMatch = checkMatch(name);
                                               
+                                              // Filter Logic: Search + Changes Filter
                                               if (isFilterActive && !isMatch) return null;
+                                              if (showOnlyChanges && data.totalQty === data.originalTotalQty) return null;
+
+                                              const hasChanged = data.totalQty !== data.originalTotalQty;
+                                              const isResolved = data.inDistintaQty >= data.totalQty && data.loadedQty >= data.totalQty;
+                                              const showWarning = hasChanged && !isResolved;
 
                                               return (
-                                              <div key={name} className={`p-3 flex flex-col md:flex-row gap-4 items-center hover:bg-slate-800/50 transition-colors duration-300 opacity-100`}>
+                                              <div key={name} className={`p-3 flex flex-col md:flex-row gap-4 items-center transition-colors duration-300 opacity-100 ${showWarning ? 'bg-amber-900/10' : hasChanged ? 'bg-amber-900/10 hover:bg-amber-900/20' : 'hover:bg-slate-800/50'}`}>
                                                   <div className="flex-1 w-full flex items-center gap-2">
                                                       <span 
                                                           className={`font-bold text-lg cursor-pointer hover:underline ${isMatch ? 'text-blue-400' : 'text-white'}`}
@@ -1391,9 +1533,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
                                                       >
                                                           {data.name}
                                                       </span>
-                                                      <span className="px-2 py-0.5 rounded text-base font-mono font-bold bg-slate-800 text-slate-300">
+                                                      <span className={`px-2 py-0.5 rounded text-base font-mono font-bold shrink-0 ${showWarning ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300'}`}>
                                                           x{data.totalQty}
                                                       </span>
+                                                      {hasChanged && (
+                                                          <span className={`text-xs font-bold ${showWarning ? 'text-amber-400' : 'text-slate-400'}`}>
+                                                              {data.originalTotalQty === 0 ? '(NUOVO)' : `(Era: ${data.originalTotalQty} v${previousVersion})`}
+                                                          </span>
+                                                      )}
                                                   </div>
                                                   <div className="flex items-center gap-4">
                                                       {/* Actions */}
@@ -1414,10 +1561,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ lists }) => 
 
                                                       <div className="flex gap-4">
                                                           {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
-                                                              handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty })
+                                                              handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty }),
+                                                              showWarning
                                                           )}
                                                           {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
-                                                              handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty })
+                                                              handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty }),
+                                                              showWarning
                                                           )}
                                                           {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
                                                               handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty })

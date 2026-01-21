@@ -92,6 +92,7 @@ export interface PackingList {
   // Versioning
   version?: string; // "1.0", "1.1", etc.
   snapshot?: ListZone[]; // Snapshot of zones when version was last bumped
+  completedAt?: string; // ISO date of when the list was marked as completed
   deletedItems?: { // Items removed since last snapshot
     originalComponent: ListComponent;
     zoneName: string;

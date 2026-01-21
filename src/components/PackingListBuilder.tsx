@@ -982,7 +982,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           version: newVersion,
           snapshot: updatedZones, // Snapshot is the state NOW
           zones: updatedZones,    // Zones updated with changeLogs
-          deletedItems: newDeletedItems
+          deletedItems: newDeletedItems,
+          completedAt: new Date().toISOString()
       });
       
       alert(`Lista completata! Versione aggiornata a ${newVersion}`);
