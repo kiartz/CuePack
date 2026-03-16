@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CuePack Manager</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              slate: {
+                850: '#151f32',
+                900: '#0f172a',
+                950: '#020617',
+              }
+            },
+            animation: {
+              'in': 'fadeIn 0.2s ease-out forwards',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0' },
+                '100%': { opacity: '1' },
+              },
+              zoomIn: {
+                '0%': { transform: 'scale(0.95)', opacity: '0' },
+                '100%': { transform: 'scale(1)', opacity: '1' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      /* Custom utility classes mapping to Tailwind config */
+      .animate-in { animation: fadeIn 0.2s ease-out forwards; }
+      .zoom-in-95 { animation: zoomIn 0.2s ease-out forwards; }
+      
+      /* Scrollbar personalizzata */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #0f172a; }
+      ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+  <body class="bg-slate-950 text-slate-100 antialiased h-screen overflow-hidden">
+    <div id="root" class="h-full flex flex-col"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
