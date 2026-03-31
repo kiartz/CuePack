@@ -355,7 +355,7 @@ export default function AuthenticatedApp() {
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex justify-between items-center">
            <div className="flex flex-col gap-1">
               <span>© R. Chiartano</span>
-              <span className="opacity-50">v0.5.0 (Definitive Deletion)</span>
+              <span className="opacity-50 text-[10px]">v0.5.1 (Warehouse Unified)</span>
            </div>
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors" title="Esci">
              <LogOut size={16} />
@@ -383,6 +383,9 @@ export default function AuthenticatedApp() {
                 <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg text-lg font-medium text-rose-500 hover:bg-slate-800 flex items-center gap-2">
                     <LogOut size={20} /> Esci
                 </button>
+            </div>
+            <div className="pt-8 text-center text-[10px] text-slate-600 uppercase tracking-[2px]">
+                CuePack Manager ✨ v0.5.1
             </div>
          </nav>
       </div>
