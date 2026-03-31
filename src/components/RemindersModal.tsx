@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { X, Plus, Trash2, Edit2, Check, Lightbulb, Square, CheckSquare } from 'lucide-react';
 import { Reminder } from '../types';
 
@@ -26,7 +27,7 @@ export const RemindersModal: React.FC<RemindersModalProps> = ({
   const handleAdd = () => {
     if (!newNote.trim()) return;
     const newItem: Reminder = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       text: newNote.trim(),
       isCompleted: false,
       createdAt: new Date().toISOString()

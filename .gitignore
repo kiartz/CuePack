@@ -22,6 +22,20 @@ dist-ssr
 .env.test.local.example
 .env.production.local.example
 
+.firebase/
+.firebaserc
+.firebaserc.local
+.firebaserc.example
+.firebaserc.local.example
+
+.firebase-debug.log*
+.firebase-error.log*.firebase-debug.*
+
+.firestore-debug.log*
+.firestore-error.log*.firestore-debug.*
+
+thumbs.db
+
 
 # Editor directories and files
 .vscode/*

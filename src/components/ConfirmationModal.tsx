@@ -37,16 +37,16 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
         
         <p className="text-slate-300 mb-6 leading-relaxed">{message}</p>
         
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-col-reverse md:flex-row justify-end gap-3 mt-6">
           <button 
             onClick={onClose}
-            className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+            className="w-full md:w-auto px-4 py-3 md:py-2 text-slate-400 font-medium hover:text-white hover:bg-slate-800 rounded-lg transition-all text-center"
           >
             Annulla
           </button>
           <button 
             onClick={() => { onConfirm(); onClose(); }}
-            className={`px-6 py-2 text-white rounded-lg font-medium shadow-lg transition-all ${
+            className={`w-full md:w-auto px-6 py-3 md:py-2 text-white rounded-lg font-bold shadow-lg transition-all text-center ${
               isDanger 
                 ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/20' 
                 : isSuccess

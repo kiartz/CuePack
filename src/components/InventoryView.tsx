@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent } from '../types';
 import { ItemFormModal } from './ItemFormModal';
@@ -21,8 +22,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const [editValue, setEditValue] = useState<string | number>('');
   const editInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
 
-  // Deletion State
+  // Deletion & Action Mode State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+  const [activeInventoryAction, setActiveInventoryAction] = useState<'duplicate' | 'delete' | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -205,7 +207,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       newItem = { ...itemData, id: existingCollision.id };
     } else {
       // New or Update existing ID
-      const id = editingItem ? editingItem.id : crypto.randomUUID();
+      const id = editingItem ? editingItem.id : generateId();
       newItem = { ...itemData, id };
     }
 
@@ -261,76 +263,90 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   };
 
   const handleDuplicate = async (item: InventoryItem) => {
-    const newItem = { ...item, id: crypto.randomUUID(), name: `${item.name} (Copia)` };
+    const newItem = { ...item, id: generateId(), name: `${item.name} (Copia)` };
     await addOrUpdateItem(COLL_INVENTORY, newItem);
     handleOpenModal(newItem);
   };
 
   return (
-    <div className="h-full flex flex-col p-6 space-y-4">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        <h1 className="text-3xl font-bold text-white">Inventario Materiale</h1>
+    <div className="h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-2">
+        <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario</h1>
         
-        <div className="flex flex-col md:flex-row gap-2 w-full xl:w-auto">
-          {/* Search Bar */}
-          <div className="relative flex-grow md:w-64">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={20} />
+        <div className="flex flex-nowrap items-center gap-2 w-full xl:w-auto">
+          {/* Search Bar - Grows */}
+          <div className="relative flex-1 min-w-0 md:w-64">
+            <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
             <input 
               type="text"
-              placeholder="Cerca materiale... (es. 'cavo 10')"
-              className="w-full bg-slate-800 border border-slate-700 text-white pl-10 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="Cerca..."
+              className="w-full bg-slate-800 border border-slate-700 text-white pl-9 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
 
-          {/* Category Filter */}
-          <div className="relative min-w-[180px]">
-             <div className="absolute left-3 top-2.5 pointer-events-none text-slate-400">
-               <Filter size={18} />
+          <div className="flex items-center gap-1.5 shrink-0">
+             {/* Square Category Filter */}
+             <div className="relative group/filter">
+                <div className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${selectedCategory !== 'All' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                    <Filter size={18} />
+                </div>
+                <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    title="Filtra per categoria"
+                >
+                    <option value="All">Tutto</option>
+                    {Object.values(Category).map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                </select>
              </div>
-             <select
-               value={selectedCategory}
-               onChange={(e) => setSelectedCategory(e.target.value)}
-               className="w-full bg-slate-800 border border-slate-700 text-white pl-10 pr-8 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none cursor-pointer"
-             >
-               <option value="All">Tutte le Categorie</option>
-               {Object.values(Category).map(cat => (
-                 <option key={cat} value={cat}>{cat}</option>
-               ))}
-             </select>
-             <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
-               <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-             </div>
-          </div>
 
-          <button 
-            onClick={() => handleOpenModal()}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 font-medium transition-colors whitespace-nowrap"
-          >
-            <Plus size={20} />
-            <span>Nuovo</span>
-          </button>
+             <button 
+                onClick={() => setActiveInventoryAction(p => p === 'duplicate' ? null : 'duplicate')}
+                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'duplicate' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                title="Attiva Duplicazione rapida"
+             >
+                <Copy size={18} />
+             </button>
+             <button 
+                onClick={() => setActiveInventoryAction(p => p === 'delete' ? null : 'delete')}
+                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                title="Attiva Eliminazione rapida"
+             >
+                <Trash2 size={18} />
+             </button>
+
+             <button 
+                onClick={() => handleOpenModal()}
+                className="bg-blue-600 hover:bg-blue-500 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-all shadow-lg shadow-blue-900/30 active:scale-95"
+             >
+                <Plus size={20} />
+                <span className="hidden sm:inline">Nuovo</span>
+             </button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
-        <div className="overflow-auto flex-1 custom-scrollbar">
-          <table className="w-full text-left border-collapse">
+      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
+        <div className="overflow-x-auto overflow-y-auto flex-1 custom-scrollbar w-full">
+          <table className="w-full text-left border-collapse whitespace-nowrap md:whitespace-normal">
             <thead className="bg-slate-800 text-slate-300 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="p-4 font-semibold text-sm uppercase tracking-wider">Nome</th>
-                <th className="p-4 font-semibold text-sm uppercase tracking-wider">Categoria</th>
-                <th className="p-4 font-semibold text-right text-sm uppercase tracking-wider">Peso (kg)</th>
-                <th className="p-4 font-semibold text-right text-sm uppercase tracking-wider">Consumo (W)</th>
-                <th className="p-4 font-semibold text-right text-sm uppercase tracking-wider">Stock</th>
-                <th className="p-4 font-semibold text-center text-sm uppercase tracking-wider">Azioni</th>
+                <th className="py-2 px-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Nome</th>
+                <th className="py-2 px-2 font-bold text-[10px] uppercase tracking-wider text-slate-500">Cat.</th>
+                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">kg</th>
+                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">Watt</th>
+                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">Stock</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-500">
+                  <td colSpan={5} className="p-8 text-center text-slate-500">
                     Nessun materiale trovato.
                   </td>
                 </tr>
@@ -338,19 +354,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                 paginatedItems.map(item => (
                   <tr 
                     key={item.id}  
-                    className="hover:bg-slate-800/50 transition-colors group"
+                    className={`hover:bg-slate-800/50 transition-colors group cursor-pointer ${activeInventoryAction ? 'bg-blue-900/10' : ''}`}
+                    onClick={() => {
+                        if (activeInventoryAction === 'duplicate') { handleDuplicate(item); setActiveInventoryAction(null); }
+                        else if (activeInventoryAction === 'delete') { setItemToDelete(item.id); setActiveInventoryAction(null); }
+                        else { handleOpenModal(item); }
+                    }}
                   >
                     {/* NAME COLUMN */}
-                    <td className="p-4" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'name'); }}>
+                    <td className="py-2 px-3" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'name'); }}>
                       {editingCell?.itemId === item.id && editingCell?.field === 'name' ? (
                           <input 
                             ref={editInputRef as React.RefObject<HTMLInputElement>}
                             type="text"
-                            className="w-full bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none"
+                            className="w-full bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             onBlur={saveInlineEdit}
                             onKeyDown={handleKeyDown}
+                            onClick={(e) => e.stopPropagation()}
                           />
                       ) : (
                           <div className="flex items-center gap-2 cursor-text" title="Doppio click per rinominare">
@@ -370,20 +392,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     </td>
 
                     {/* CATEGORY COLUMN */}
-                    <td className="p-4" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'category'); }}>
+                    <td className="py-2 px-2" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'category'); }}>
                       {editingCell?.itemId === item.id && editingCell?.field === 'category' ? (
                           <select 
                             ref={editInputRef as React.RefObject<HTMLSelectElement>}
-                            className="bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none text-sm"
+                            className="bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-white outline-none text-[10px]"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             onBlur={saveInlineEdit}
                             onKeyDown={handleKeyDown}
+                            onClick={(e) => e.stopPropagation()}
                           >
                              {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                       ) : (
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer
                             ${item.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
                             item.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
                             item.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
@@ -398,70 +421,65 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     </td>
 
                     {/* WEIGHT COLUMN */}
-                    <td className="p-4 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'weight'); }}>
+                    <td className="py-2 px-2 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'weight'); }}>
                         {editingCell?.itemId === item.id && editingCell?.field === 'weight' ? (
                              <input 
                                 ref={editInputRef as React.RefObject<HTMLInputElement>}
                                 type="number"
                                 step="0.1"
-                                className="w-20 bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none text-right font-mono"
+                                className="w-14 bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none text-right font-mono"
                                 value={editValue}
                                 onChange={(e) => setEditValue(Number(e.target.value))}
                                 onBlur={saveInlineEdit}
                                 onKeyDown={handleKeyDown}
+                                onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className="text-slate-300 font-mono cursor-pointer" title="Doppio click per modificare peso">{item.weight}</span>
+                             <span className="text-slate-300 font-mono text-xs cursor-pointer" title="Doppio click per modificare peso">{item.weight}</span>
                         )}
                     </td>
 
                     {/* POWER CONSUMPTION COLUMN */}
-                    <td className="p-4 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'powerConsumption'); }}>
+                    <td className="py-2 px-2 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'powerConsumption'); }}>
                         {editingCell?.itemId === item.id && editingCell?.field === 'powerConsumption' ? (
                              <input 
                                 ref={editInputRef as React.RefObject<HTMLInputElement>}
                                 type="number"
                                 min="0"
-                                className="w-20 bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none text-right font-mono"
+                                className="w-14 bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none text-right font-mono"
                                 value={editValue}
                                 onChange={(e) => setEditValue(Number(e.target.value))}
                                 onBlur={saveInlineEdit}
                                 onKeyDown={handleKeyDown}
+                                onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className={`font-mono cursor-pointer ${(item.powerConsumption || 0) > 0 ? 'text-yellow-400' : 'text-slate-500'}`} title="Doppio click per modificare consumo">
+                             <span className={`font-mono text-xs cursor-pointer ${(item.powerConsumption || 0) > 0 ? 'text-yellow-400' : 'text-slate-500'}`} title="Doppio click per modificare consumo">
                                 {item.powerConsumption || 0}
                              </span>
                         )}
                     </td>
 
                     {/* STOCK COLUMN */}
-                    <td className="p-4 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'inStock'); }}>
+                    <td className="py-2 px-2 text-right" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'inStock'); }}>
                        {editingCell?.itemId === item.id && editingCell?.field === 'inStock' ? (
                              <input 
                                 ref={editInputRef as React.RefObject<HTMLInputElement>}
                                 type="number"
-                                className="w-20 bg-slate-950 border border-blue-500 rounded p-1 text-white outline-none text-right font-mono font-bold"
+                                className="w-14 bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none text-right font-mono font-bold"
                                 value={editValue}
                                 onChange={(e) => setEditValue(Number(e.target.value))}
                                 onBlur={saveInlineEdit}
                                 onKeyDown={handleKeyDown}
+                                onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className={`font-mono font-bold cursor-pointer ${item.inStock > 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Doppio click per modificare stock">
+                             <span className={`font-mono text-xs font-bold cursor-pointer ${item.inStock > 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Doppio click per modificare stock">
                                 {item.inStock}
                              </span>
                         )}
                     </td>
 
-                    {/* ACTIONS */}
-                    <td className="p-4">
-                      <div className="flex justify-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => { e.stopPropagation(); handleOpenModal(item); }} className="p-2 text-blue-400 hover:text-blue-300 rounded-lg hover:bg-slate-800" title="Modifica completa"><Edit2 size={16} /></button>
-                        <button onClick={(e) => { e.stopPropagation(); handleDuplicate(item); }} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" title="Duplica"><Copy size={16} /></button>
-                        <button onClick={(e) => { e.stopPropagation(); setItemToDelete(item.id); }} className="p-2 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800" title="Elimina"><Trash2 size={16} /></button>
-                      </div>
-                    </td>
                   </tr>
                 ))
               )}
@@ -471,7 +489,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         
         {/* Pagination Footer */}
         {filteredItems.length > 0 && (
-          <div className="bg-slate-800 border-t border-slate-700 p-4 flex items-center justify-between">
+          <div className="bg-slate-800 border-t border-slate-700 p-3 sm:p-4 pb-[calc(12px+env(safe-area-inset-bottom))] flex items-center justify-between">
              <div className="text-sm text-slate-400">
                 Mostrando {((currentPage - 1) * ITEMS_PER_PAGE) + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, filteredItems.length)} di {filteredItems.length} materiali
              </div>

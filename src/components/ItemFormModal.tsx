@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { InventoryItem, Category } from '../types';
 import { Modal } from './Modal';
 import { Plus, X, Search, Link, ArrowLeft } from 'lucide-react';
@@ -125,7 +126,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (!quickForm.name?.trim() || !onCreateAccessory) return;
       
       const newItemData: InventoryItem = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           name: quickForm.name.trim(),
           category: quickForm.category || Category.CABLES,
           inStock: quickForm.inStock || 0,
@@ -254,9 +255,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                   </div>
               </div>
           </div>
-          <div className="flex justify-end gap-3 p-6 border-t border-slate-800 bg-slate-900 rounded-b-xl">
-              <button onClick={() => setIsQuickCreateOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">Annulla</button>
-              <button onClick={handleCreateAndAddAccessory} disabled={!quickForm.name} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-medium transition-colors">Crea Accessorio</button>
+          <div className="flex flex-col-reverse md:flex-row justify-end gap-3 p-6 border-t border-slate-800 bg-slate-900 rounded-b-xl">
+              <button onClick={() => setIsQuickCreateOpen(false)} className="w-full md:w-auto px-4 py-3 md:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
+              <button onClick={handleCreateAndAddAccessory} disabled={!quickForm.name} className="w-full md:w-auto px-6 py-3 md:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Crea Accessorio</button>
           </div>
       </div>
   );
@@ -323,9 +324,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         {isQuickCreateOpen && renderQuickCreateForm()}
       </div>
 
-      <div className="flex justify-end gap-3 pt-6 border-t border-slate-800 mt-2">
-        <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">Annulla</button>
-        <button onClick={handleSubmit} disabled={!formData.name} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20">Salva</button>
+      <div className="flex flex-col-reverse md:flex-row justify-end gap-3 pt-6 border-t border-slate-800 mt-2">
+        <button onClick={onClose} className="w-full md:w-auto px-4 py-3 md:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
+        <button onClick={handleSubmit} disabled={!formData.name} className="w-full md:w-auto px-6 py-3 md:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Salva Materiale</button>
       </div>
     </Modal>
   );

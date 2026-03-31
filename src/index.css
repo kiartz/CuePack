@@ -21,3 +21,18 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #475569;
 }
+
+/* Prevent accidental pull-to-refresh and improve mobile scrolling */
+html, body {
+  overscroll-behavior-y: none;
+  overflow: hidden;
+  height: 100%;
+  position: fixed; 
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+}

@@ -18,6 +18,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 }) => {
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeListAction, setActiveListAction] = useState<'archive' | 'restore' | 'delete' | 'duplicate' | null>(null);
+  const [activeWarehouseMode, setActiveWarehouseMode] = useState<'distinta' | 'carico' | 'rientro' | null>(null);
+
+  // Auto-select 'distinta' on Desktop if no mode is selected
+  React.useEffect(() => {
+    if (activeListId && !activeWarehouseMode && typeof window !== 'undefined' && window.innerWidth >= 1024) {
+      setActiveWarehouseMode('distinta');
+    }
+  }, [activeListId, activeWarehouseMode]);
   
   // Detail View State
   const [activeZoneId, setActiveZoneId] = useState<string>('');
@@ -490,33 +499,58 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   // --- RENDER: LIST VIEW ---
   if (!activeListId) {
     return (
-      <div className="h-full flex flex-col p-6 bg-slate-950 overflow-hidden">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-              <Truck className="text-blue-500" size={32} />
-              Preparazione Materiale
+      <div className="h-full flex flex-col p-2 sm:p-4 bg-slate-950 overflow-hidden">
+        <div className="mb-3">
+          <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90 flex items-center gap-2">
+              <Truck className="text-blue-500" size={20} />
+              Magazzino
           </h1>
-          <p className="text-slate-400">Gestione carichi, scarichi e segnalazioni magazzino</p>
+          <p className="text-xs text-slate-500 leading-none">Gestione carichi, scarichi e segnalazioni</p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-4 mb-6 items-start md:items-center">
-            <div className="relative flex-1 max-w-md">
+        <div className="flex flex-col xl:flex-row gap-4 mb-6 items-start xl:items-center">
+            <div className="relative flex-1 max-w-xl w-full">
                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                <input 
                   placeholder="Cerca evento..." 
-                  className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-2 rounded-lg outline-none focus:border-blue-500"
+                  className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3 rounded-lg outline-none focus:border-blue-500"
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                />
             </div>
             
-            <button 
-                onClick={() => setShowArchived(!showArchived)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${showArchived ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-            >
-                <Archive size={18} />
-                {showArchived ? 'Mostra Attivi' : 'Mostra Archivio'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+               <button 
+                   onClick={() => setActiveListAction(p => p === 'archive' ? null : 'archive')}
+                   className={`p-2.5 sm:p-3 rounded-lg flex items-center justify-center transition-all ${activeListAction === 'archive' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40 ring-2 ring-amber-500/50' : 'bg-amber-600/10 text-amber-500 hover:bg-amber-600/20 border border-amber-900/30'}`}
+                   title="Attiva modalità Archiviazione"
+               >
+                   <Archive size={20} />
+               </button>
+               {showArchived && (
+                 <>
+                   <button 
+                       onClick={() => setActiveListAction(p => p === 'restore' ? null : 'restore')}
+                       className={`px-3 py-2 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'restore' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                   >
+                       <RefreshCcw size={18} /> Ripristina
+                   </button>
+                   <button 
+                       onClick={() => setActiveListAction(p => p === 'delete' ? null : 'delete')}
+                       className={`px-3 py-2 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'delete' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                   >
+                       <Trash2 size={18} /> Elimina
+                   </button>
+                 </>
+               )}
+               <button 
+                   onClick={() => { setShowArchived(!showArchived); setActiveListAction(null); }}
+                   className={`flex items-center justify-center flex-1 md:flex-none gap-2 px-6 py-2.5 rounded-lg font-bold transition-all ${showArchived ? 'bg-slate-700 text-white border border-slate-600 shadow-xl' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'} xl:ml-auto w-full md:w-auto`}
+               >
+                   <div className={`w-2 h-2 rounded-full ${showArchived ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></div>
+                   {showArchived ? 'VEDI ATTIVI' : 'VAI ALL\'ARCHIVIO'}
+               </button>
+            </div>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
@@ -597,13 +631,26 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                 }
 
                return (
-                   <div key={list.id} className={`border rounded-xl p-4 hover:border-slate-600 transition-all flex items-center gap-4 group ${borderColor} ${bgColor}`}>
+                   <div key={list.id} 
+                        onClick={(e) => {
+                            if (activeListAction === 'archive') {
+                                if (!list.isArchived) { setArchiveConfirm({ isOpen: true, listId: list.id, listName: list.eventName, action: 'archive' }); setActiveListAction(null); }
+                            } else if (activeListAction === 'restore') {
+                                if (list.isArchived) { setArchiveConfirm({ isOpen: true, listId: list.id, listName: list.eventName, action: 'restore' }); setActiveListAction(null); }
+                            } else if (activeListAction === 'delete') {
+                                if (list.isArchived) { setDeleteConfirm({ isOpen: true, listId: list.id, listName: list.eventName }); setActiveListAction(null); }
+                            } else if (!activeListAction) {
+                                setActiveListId(list.id); setActiveZoneId(list.zones?.[0]?.id || '');
+                            }
+                        }}
+                        className={`border rounded-xl p-4 hover:border-slate-500 transition-all flex items-center gap-4 group cursor-pointer relative ${activeListAction ? 'ring-4 ring-transparent hover:ring-emerald-500/20' : ''} ${borderColor} ${bgColor}`}
+                   >
                        <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold text-lg shrink-0 relative">
                            {list.eventName.charAt(0).toUpperCase()}
                            {list.version && <div className="absolute -bottom-2 -right-2 bg-slate-950 text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">v{list.version}</div>}
                        </div>
                        
-                       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setActiveListId(list.id); setActiveZoneId(list.zones?.[0]?.id || ''); }}>
+                       <div className="flex-1 min-w-0">
                            <h3 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors truncate flex items-center gap-3">
                                 {list.eventName}
                                 {list.isArchived && <span className="text-[10px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-bold uppercase">Archiviato</span>}
@@ -628,7 +675,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                            </div>
                        </div>
 
-                       <div className="flex items-center gap-2">
+                       <div className="hidden md:flex items-center gap-2">
                            {hasIssues && (
                                <button 
                                     onClick={(e) => { e.stopPropagation(); setIssuesModalList(list); }}
@@ -659,10 +706,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                         action: list.isArchived ? 'restore' : 'archive'
                                     });
                                 }}
-                                className={`p-3 rounded-lg transition-colors ${list.isArchived ? 'bg-slate-800 hover:bg-emerald-600 text-slate-400 hover:text-white' : 'bg-slate-800 hover:bg-amber-600 text-slate-400 hover:text-white'}`}
+                                className={`p-2 rounded-full border transition-all ${list.isArchived ? 'bg-emerald-900/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white' : 'bg-amber-900/20 border-amber-500/30 text-amber-500 hover:bg-amber-600 hover:text-white'}`}
                                 title={list.isArchived ? "Ripristina" : "Archivia"}
                            >
-                               {list.isArchived ? <RefreshCcw size={20} /> : <Archive size={20} />}
+                               {list.isArchived ? <RefreshCcw size={16} /> : <Archive size={16} />}
                            </button>
 
                            {list.isArchived && (
@@ -681,13 +728,6 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                     <Trash2 size={20} />
                                 </button>
                             )}
-
-                           <button 
-                                onClick={(e) => { e.stopPropagation(); setActiveListId(list.id); setActiveZoneId(list.zones?.[0]?.id || ''); }}
-                                className="p-3 bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-400 rounded-lg transition-colors"
-                           >
-                               <ChevronRight size={20} />
-                           </button>
                        </div>
                    </div>
                );
@@ -728,7 +768,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
         <Modal 
             isOpen={archiveConfirm.isOpen} 
             onClose={() => setArchiveConfirm(prev => ({ ...prev, isOpen: false }))} 
-            title={archiveConfirm.action === 'archive' ? 'Archivia Evento' : 'Ripristina Evento'}
+            title={archiveConfirm.action === 'archive' ? 'Archiviando' : 'Ripristino'}
+            size="sm"
         >
             <div className="space-y-4">
                 <p className="text-slate-300">
@@ -766,6 +807,41 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const activeZone = activeList?.zones?.find(z => z.id === activeZoneId);
   const zoneDeletedItems = activeList?.deletedItems?.filter(d => d.zoneName === activeZone?.name);
 
+  // --- RENDER: MODE SELECTOR (Only for Mobile/Tablet) ---
+  if (activeListId && activeList && !activeWarehouseMode) {
+      return (
+          <div className="h-full flex flex-col p-6 bg-slate-950 items-center justify-center animate-in zoom-in-95 duration-300">
+              <div className="max-w-md w-full bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl p-8 relative overflow-hidden">
+                  <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-600/20 blur-[80px] rounded-full" />
+                  <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-600/10 blur-[80px] rounded-full" />
+                  
+                  <div className="relative z-10 flex flex-col items-center text-center">
+                     <div className="bg-slate-800 p-4 rounded-3xl shadow-inner mb-6 ring-1 ring-slate-700">
+                         <Truck className="text-blue-500" size={48} />
+                     </div>
+                     <h2 className="text-2xl font-bold text-white mb-2">Seleziona Fase Operativa</h2>
+                     <p className="text-slate-400 mb-8 max-w-[280px]">Cosa vuoi eseguire oggi per l'evento <span className="text-white font-medium">"{activeList.eventName}"</span>?</p>
+                     
+                     <div className="flex flex-col gap-3 w-full">
+                         <button onClick={() => setActiveWarehouseMode('distinta')} className="group w-full bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/50 text-emerald-500 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95 text-lg">
+                             <Square size={20} className="group-hover:scale-110 transition-transform" /> Spunta Distinta
+                         </button>
+                         <button onClick={() => setActiveWarehouseMode('carico')} className="group w-full bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/50 text-blue-500 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95 text-lg">
+                             <Square size={20} className="group-hover:scale-110 transition-transform" /> Carico Camion
+                         </button>
+                         <button onClick={() => setActiveWarehouseMode('rientro')} className="group w-full bg-purple-600/10 hover:bg-purple-600/20 border border-purple-500/50 text-purple-500 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95 text-lg">
+                             <Square size={20} className="group-hover:scale-110 transition-transform" /> Rientro Magazzino
+                         </button>
+                     </div>
+                     <button onClick={() => setActiveListId(null)} className="mt-8 text-slate-500 hover:text-white transition-colors flex items-center gap-2 text-sm font-medium">
+                        <ArrowLeft size={16} /> Torna alle Liste
+                     </button>
+                  </div>
+              </div>
+          </div>
+      );
+  }
+
   // Calculate previous version for display
   const previousVersion = (parseFloat(activeList?.version || '1.0') - 0.1).toFixed(1);
 
@@ -778,16 +854,18 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       showWarning?: boolean,
       disabled?: boolean
   ) => {
+      if (activeWarehouseMode !== type) return null;
+
       let bgColor = 'bg-slate-800';
       let textColor = 'text-slate-600';
-      let icon = <Square size={24} />;
+      let icon = <Square size={40} className="w-10 h-10 md:w-8 md:h-8" />;
       let label = '';
       
       const isComplete = current >= total;
       const isStarted = current > 0;
       
       if (isComplete) {
-          icon = <CheckSquare size={24} />;
+          icon = <CheckSquare size={40} className="w-10 h-10 md:w-8 md:h-8" />;
           if (type === 'distinta') textColor = 'text-emerald-500';
           if (type === 'carico') textColor = 'text-blue-500';
           if (type === 'rientro') textColor = 'text-purple-500';
@@ -805,17 +883,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       }
 
       return (
-          <label className={`flex flex-col items-center gap-1 group ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
-              <span className="text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">
+          <label className={`flex flex-col items-center gap-1.5 group ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
+              <span className="text-[10px] sm:text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300 border-b-2 border-transparent group-hover:border-current pb-0.5">
                   {type === 'distinta' ? 'Distinta' : type === 'carico' ? 'Carico' : 'Rientro'}
               </span>
               <button 
                   onClick={onClick}
                   disabled={disabled}
-                  className={`flex items-center justify-center min-w-[32px] h-8 rounded transition-all ${isStarted && !isComplete ? bgColor : ''} ${!isStarted || isComplete ? 'hover:scale-110' : ''} ${textColor} ${disabled ? 'cursor-not-allowed' : ''}`}
+                  className={`flex items-center justify-center min-w-[56px] h-12 md:min-w-[44px] md:h-10 rounded-xl transition-all shadow-md ${isStarted && !isComplete ? bgColor : ''} ${!isStarted || isComplete ? 'hover:scale-110 active:scale-95' : ''} ${textColor} ${disabled ? 'cursor-not-allowed' : ''} ${type === 'distinta' ? (showWarning ? 'bg-emerald-900/20 ring-2 ring-emerald-500/50' : 'bg-slate-800') : 'bg-slate-800'}`}
               >
                   {isStarted && !isComplete ? (
-                      <span className="text-xs font-bold px-1">{label}</span>
+                      <span className="text-sm md:text-base font-bold px-2">{label}</span>
                   ) : (
                       icon
                   )}
@@ -823,17 +901,48 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           </label>
       );
   };
-
   return (
       <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
           {/* Header */}
           <div className="bg-slate-900 border-b border-slate-800 p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto">
-                  <button onClick={() => setActiveListId(null)} className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg"><ArrowLeft size={20}/></button>
+                   {/* Desktop-only Direct Mode Switcher */}
+                   <div className="hidden lg:flex items-center bg-slate-950 p-1 rounded-xl border border-slate-700 shadow-inner mr-2">
+                       <button 
+                           onClick={() => setActiveWarehouseMode('distinta')}
+                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeWarehouseMode === 'distinta' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                       >
+                           DISTINTA
+                       </button>
+                       <button 
+                           onClick={() => setActiveWarehouseMode('carico')}
+                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeWarehouseMode === 'carico' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                       >
+                           CARICO
+                       </button>
+                       <button 
+                           onClick={() => setActiveWarehouseMode('rientro')}
+                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeWarehouseMode === 'rientro' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                       >
+                           RIENTRO
+                       </button>
+                   </div>
+
+                   {/* Mobile-only Back Button (Goes back to selector screen) */}
+                   <button 
+                       onClick={() => setActiveWarehouseMode(null)} 
+                       className="lg:hidden p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg flex items-center gap-2 group" 
+                       title="Scegli altra operazione"
+                   >
+                       <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform"/>
+                   </button>
+
                   <div className="min-w-0 flex-1">
                       <h2 className="text-xl font-bold text-white flex items-center gap-2 truncate">
                           {activeList?.eventName}
-                          {activeList?.version && <span className="text-xs font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">v{activeList.version}</span>}
+                          <span className={`text-xs ml-2 px-2 py-0.5 rounded uppercase font-black border ${activeWarehouseMode === 'distinta' ? 'bg-emerald-900/40 text-emerald-400 border-emerald-500/30' : activeWarehouseMode === 'carico' ? 'bg-blue-900/40 text-blue-400 border-blue-500/30' : 'bg-purple-900/40 text-purple-400 border-purple-500/30'}`}>
+                              {activeWarehouseMode}
+                          </span>
                       </h2>
                       <div className="text-xs text-slate-500 flex items-center gap-2">
                           <span>{activeList?.location}</span> • <span>{new Date(activeList?.eventDate || '').toLocaleDateString()}</span>
@@ -1035,16 +1144,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                 return (
                                                     <React.Fragment key={comp.uniqueId}>
                                                         {/* Kit Header (No Checkboxes) */}
-                                                        <div className={`p-3 border-l-4 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/5 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
+                                                        <div className={`py-1 px-3 border-l-4 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${showChangeWarning ? 'bg-amber-900/5 border-amber-500' : 'bg-purple-900/10 border-purple-500/50'}`}>
                                                             <div className={`flex-1 w-full min-w-0 transition-opacity ${isFilterActive && !isMainMatch ? 'opacity-50' : 'opacity-100'}`}>
                                                                 <div className="flex items-center gap-2">
                                                                     <span 
-                                                                        className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMainMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
+                                                                        className={`font-bold text-sm cursor-pointer hover:underline truncate whitespace-normal ${isMainMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
                                                                         onClick={() => handleSetHighlight(highlightedItemName === comp.name ? null : comp.name)}
                                                                     >
                                                                         {comp.name}
                                                                     </span>
-                                                                    <span className={`${showChangeWarning ? 'bg-amber-500 text-black' : 'bg-purple-900 text-purple-200'} px-2 py-0.5 rounded text-base font-mono font-bold shrink-0`}>x{comp.quantity}</span>
+                                                                    <span className={`${showChangeWarning ? 'bg-amber-500 text-black' : 'bg-purple-900 text-purple-200'} px-1.5 py-0.5 rounded text-xs font-mono font-bold shrink-0`}>x{comp.quantity}</span>
                                                                     {hasChanged && (
                                                                         <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
                                                                             {ws.changeLog?.previousQuantity === 0 
@@ -1074,17 +1183,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                             <div className={`flex items-center gap-2 self-end sm:self-center mt-2 sm:mt-0 transition-opacity shrink-0 ${isFilterActive && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
                                                                 <button 
                                                                     onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
-                                                                    className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
+                                                                    className={`p-1 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
                                                                     title="Aggiungi Nota Magazzino"
                                                                 >
-                                                                    <MessageSquare size={18} className={ws.warehouseNote ? 'fill-current' : ''} />
+                                                                    <MessageSquare size={16} className={ws.warehouseNote ? 'fill-current' : ''} />
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' })}
-                                                                    className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
+                                                                    className={`p-1 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
                                                                     title={ws.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
                                                                 >
-                                                                    <AlertTriangle size={18} className={ws.isBroken ? 'fill-current' : ''} />
+                                                                    <AlertTriangle size={16} className={ws.isBroken ? 'fill-current' : ''} />
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -1105,19 +1214,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                             if (isFilterActive && !isMainMatch && !isChildMatch) return null;
 
                                                             return (
-                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
+                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-1 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                     {/* Content Info */}
                                                                     <div className="flex-1 w-full flex items-center gap-3">
                                                                         <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${contentWarning ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-purple-500/50'}`}></div>
                                                                         <div>
                                                                             <div className="flex items-center gap-2">
                                                                                 <span 
-                                                                                    className={`font-medium cursor-pointer hover:underline ${isChildMatch ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
+                                                                                    className={`font-medium text-sm cursor-pointer hover:underline ${isChildMatch ? 'text-blue-400 font-bold' : 'text-slate-300'}`}
                                                                                     onClick={() => handleSetHighlight(highlightedItemName === sub.name ? null : sub.name)}
                                                                                 >
                                                                                     {sub.name}
                                                                                 </span>
-                                                                                <span className={`text-base px-1.5 py-0.5 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
+                                                                                <span className={`text-[11px] px-1 py-0.2 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
                                                                                 {hasChanged && (
                                                                                     <span className={`text-xs font-medium ml-2 ${contentWarning ? 'text-amber-400 font-bold' : 'opacity-40'}`}>
                                                                                         {ws.changeLog?.previousQuantity === 0 
@@ -1155,17 +1264,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                                                                       {/* Content Checkboxes */}
                                                                                                                                        <div className="flex gap-4">                                                                            <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
                                                                                  <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                                     {subWs.inDistinta ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
                                                                                  <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                                     {subWs.loaded ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
                                                                                  <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                                     {subWs.returned ? <CheckSquare size={24} /> : <Square size={24} />}
                                                                                  </button>
                                                                              </label>
                                                                          </div>
@@ -1199,18 +1308,18 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
                                             return (
                                                 <React.Fragment key={comp.uniqueId}>
-                                                    <div className={`p-3 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${ws.isBroken ? 'bg-rose-900/10' : showChangeWarning ? 'bg-amber-900/10' : hasAccessories ? 'bg-cyan-900/10 border-l-4 border-cyan-500/50' : 'hover:bg-slate-800/50'}`}>
+                                                    <div className={`py-1 px-3 flex flex-col sm:flex-row gap-2 sm:gap-4 items-start sm:items-center transition-all duration-300 ${isContainerOfMatch ? 'opacity-70' : 'opacity-100'} ${ws.isBroken ? 'bg-rose-900/10' : showChangeWarning ? 'bg-amber-900/10' : hasAccessories ? 'bg-cyan-900/10 border-l-4 border-cyan-500/50' : 'hover:bg-slate-800/50'}`}>
                                                         {/* Item Info */}
                                                         <div className="flex-1 w-full min-w-0">
                                                             <div className="flex items-center gap-2">
                                                                 <span 
-                                                                    className={`font-bold text-lg cursor-pointer hover:underline truncate whitespace-normal ${isMatch ? 'text-blue-400 scale-105 origin-left' : 'text-white'}`}
+                                                                    className={`font-bold text-sm cursor-pointer hover:underline truncate whitespace-normal ${isMatch ? 'text-blue-400' : 'text-white'}`}
                                                                     onClick={() => handleSetHighlight(highlightedItemName === comp.name ? null : comp.name)}
                                                                 >
                                                                     {comp.name}
                                                                     {comp.isTemporary && <span className="bg-yellow-400 text-black text-[10px] font-bold px-1.5 py-0.5 rounded ml-2 shrink-0">TEMP</span>}
                                                                 </span>
-                                                                <span className={`px-2 py-0.5 rounded text-base font-mono font-bold shrink-0 ${showChangeWarning ? 'bg-amber-500 text-black' : hasAccessories ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-slate-300'}`}>
+                                                                <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold shrink-0 ${showChangeWarning ? 'bg-amber-500 text-black' : hasAccessories ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-slate-300'}`}>
                                                                     x{comp.quantity}
                                                                 </span>
                                                                 {hasChanged && (
@@ -1246,49 +1355,56 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                                                       <button 
                                                                                                                               onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
                                                                                                                               disabled={isReadOnly}
-                                                                                                                              className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                                                                              className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
                                                                                                                               title="Aggiungi Nota Magazzino"
                                                                                                                           >
-                                                                                                                              <MessageSquare size={18} className={ws.warehouseNote ? 'fill-current' : ''} />
+                                                                                                                              <MessageSquare size={16} className={ws.warehouseNote ? 'fill-current' : ''} />
                                                                                                                           </button>
                                                                                                                           <button 
                                                                                                                               onClick={() => setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' })}
                                                                                                                               disabled={isReadOnly}
-                                                                                                                              className={`p-2 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                                                                              className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
                                                                                                                               title={ws.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
                                                                                                                           >
-                                                                                                                              <AlertTriangle size={18} className={ws.isBroken ? 'fill-current' : ''} />
+                                                                                                                              <AlertTriangle size={16} className={ws.isBroken ? 'fill-current' : ''} />
                                                                                                                           </button>
                                                                                                                   </div>
                                                             {/* Checkboxes */}
-                                                            <div className="flex gap-2 sm:gap-4">
+                                                            <div className="flex gap-2 sm:gap-3">
                                                                 {(() => {
                                                                     const isResolved = ws.inDistinta && ws.loaded;
                                                                     const showWarning = hasChanged && !isResolved;
+                                                                    const checkSize = 30;
+
+                                                                    // Helper to determine if a checkbox label should be hidden on mobile
+                                                                    const getMobileClass = (type: string) => {
+                                                                        if (activeWarehouseMode && activeWarehouseMode !== type) return 'hidden sm:flex';
+                                                                        return 'flex';
+                                                                    };
 
                                                                     return (
                                                                         <>
-                                                                            <label className={`flex flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
+                                                                             <label className={`${getMobileClass('distinta')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
                                                                                  <button onClick={() => updateComponentState(comp.uniqueId, { inDistinta: !ws.inDistinta })} disabled={isReadOnly} className={`${ws.inDistinta ? 'text-emerald-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {ws.inDistinta ? <CheckSquare size={24} /> : <Square size={24} />}
+                                                                                     {ws.inDistinta ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
                                                                                  </button>
                                                                              </label>
-                                                                             <label className={`flex flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
+                                                                             <label className={`${getMobileClass('carico')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
                                                                                  <button onClick={() => updateComponentState(comp.uniqueId, { loaded: !ws.loaded })} disabled={isReadOnly} className={`${ws.loaded ? 'text-blue-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {ws.loaded ? <CheckSquare size={24} /> : <Square size={24} />}
+                                                                                     {ws.loaded ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
                                                                                  </button>
                                                                              </label>
-                                                                         </>
-                                                                     );
-                                                                 })()}
-                                                                 <label className={`flex flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                     <span className="text-[8px] sm:text-[10px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
-                                                                     <button onClick={() => updateComponentState(comp.uniqueId, { returned: !ws.returned })} disabled={isReadOnly} className={`${ws.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                         {ws.returned ? <CheckSquare size={24} /> : <Square size={24} />}
-                                                                     </button>
-                                                                 </label>
+                                                                             <label className={`${getMobileClass('rientro')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
+                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { returned: !ws.returned })} disabled={isReadOnly} className={`${ws.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                                     {ws.returned ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
+                                                                                 </button>
+                                                                             </label>
+                                                                        </>
+                                                                    );
+                                                                })()}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -1306,7 +1422,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                         if (isFilterActive && !isMatch && !isParentMatch) return null;
                                                         
                                                         return (
-                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-2 border-b border-slate-800/50 flex flex-col md:flex-row gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
+                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-1 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                 {/* Accessory Info */}
                                                                 <div className="flex-1 w-full flex items-center gap-3">
                                                                     <div className={`${hasAccessories ? (contentWarning ? 'text-amber-500' : 'text-cyan-500/50') : 'text-slate-600'} shrink-0`}> - </div>
@@ -1351,22 +1467,23 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                                                                   </button>
                                                                                                                               </div>
                                                                 
-                                                                                                                              <div className="flex gap-4">                                                                        <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                            <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} />}
-                                                                            </button>
-                                                                        </label>
-                                                                        <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                            <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} />}
-                                                                            </button>
-                                                                        </label>
-                                                                        <label className={`flex flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                            <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
-                                                                            </button>
-                                                                        </label>
-                                                                    </div>
+                                                                                                                              <div className="flex gap-4">
+                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden sm:flex' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                            {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                        </button>
+                                                                    </label>
+                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden sm:flex' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                            {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                        </button>
+                                                                    </label>
+                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden sm:flex' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                            {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                        </button>
+                                                                    </label>
+                                                                </div>
                                                                 </div>
                                                             </div>
                                                         );

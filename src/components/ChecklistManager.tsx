@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { Save, Plus, Trash2, Edit2, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
 import { ChecklistCategory, ChecklistGroup } from '../types';
 import { addOrUpdateItem, COLL_CHECKLIST_CONFIG } from '../firebase';
@@ -45,7 +46,7 @@ export const ChecklistManager: React.FC<ChecklistManagerProps> = ({ checklist, o
 
   const addCategory = () => {
     const newCat: ChecklistCategory = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       title: 'Nuovo Settore',
       subtitle: 'Descrizione settore',
       groups: []

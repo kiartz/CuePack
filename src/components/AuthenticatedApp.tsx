@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Layers, Package, ClipboardList, Menu, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
+import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { PackingListBuilder } from './PackingListBuilder';
@@ -45,6 +46,8 @@ export default function AuthenticatedApp() {
   const [listToCopyAsModel, setListToCopyAsModel] = useState<PackingList | null>(null);
 
   // --- FIRESTORE SUBSCRIPTIONS --- 
+  const hasAttemptedSeeding = useRef<{ [key: string]: boolean }>({});
+
   useEffect(() => {
     setLoading(true);
 
@@ -54,9 +57,10 @@ export default function AuthenticatedApp() {
         snapshot.forEach(doc => items.push(doc.data() as InventoryItem));
         setInventory(items);
         
-        // SEEDING: If DB is empty, load initial data
-        if (snapshot.empty && !snapshot.metadata.fromCache) {
+        // SEEDING: If DB is empty, load initial data (only once)
+        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_INVENTORY]) {
              console.log("Seeding Database with Initial Inventory...");
+             hasAttemptedSeeding.current[COLL_INVENTORY] = true;
              batchWriteItems(COLL_INVENTORY, INITIAL_INVENTORY);
         }
     }, (error) => {
@@ -70,8 +74,9 @@ export default function AuthenticatedApp() {
         snapshot.forEach(doc => items.push(doc.data() as Kit));
         setKits(items);
 
-        if (snapshot.empty && !snapshot.metadata.fromCache) {
+        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_KITS]) {
              console.log("Seeding Database with Initial Kits...");
+             hasAttemptedSeeding.current[COLL_KITS] = true;
              batchWriteItems(COLL_KITS, INITIAL_KITS);
         }
     }, (error) => console.error("Kits Sync Error:", error));
@@ -146,7 +151,7 @@ export default function AuthenticatedApp() {
         : [{ id: 'def', name: 'Zona Principale', sections: sourceList.sections || [] }];
 
       const newList: PackingList = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         eventName: `${sourceList.eventName || ''} (Copia)`,
         eventDate: sourceList.eventDate || '',
         setupDate: sourceList.setupDate || '',
@@ -169,13 +174,13 @@ export default function AuthenticatedApp() {
         reminders: sourceList.reminders || [],
 
         zones: sourceZones.map(z => ({
-            id: crypto.randomUUID(),
+            id: generateId(),
             name: z.name || '',
             sections: (z.sections || []).map(s => ({
-                id: crypto.randomUUID(),
+                id: generateId(),
                 name: s.name || '',
                 components: (s.components || []).map(c => ({ 
-                    uniqueId: crypto.randomUUID(),
+                    uniqueId: generateId(),
                     type: c.type,
                     referenceId: c.referenceId,
                     name: c.name || '',
@@ -266,6 +271,7 @@ export default function AuthenticatedApp() {
           inventory={inventory} 
           kits={kits} 
           lists={packingLists}
+          masterChecklist={masterChecklist}
           activeListId={activeListId}
           setActiveListId={setActiveListId}
           listToOpenInBuilderId={listToOpenInBuilderId}
@@ -293,13 +299,13 @@ export default function AuthenticatedApp() {
       
       {/* Sidebar (Desktop) */}
       <aside className="hidden md:flex w-72 flex-col bg-slate-900 border-r border-slate-800 shrink-0">
-        {/* Header */}
-        <div className="p-6 border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-3">
-             <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white">C</div>
-             <h1 className="text-xl font-bold tracking-tight">CuePack</h1>
+        {/* Header - NANO Compact */}
+        <div className="p-2 px-3 border-b border-slate-800 shrink-0 bg-slate-950/50">
+          <div className="flex items-center gap-1.5">
+             <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-[10px]">C</div>
+             <h1 className="text-xs font-bold tracking-tight uppercase opacity-80">CuePack</h1>
           </div>
-          <p className="text-xs text-slate-500 mt-1">Cloud Rental Management</p>
+          <p className="text-[9px] text-slate-600 leading-none mt-0.5">Cloud Rental Management</p>
         </div>
         
         {/* Navigation Menu */}
@@ -358,12 +364,12 @@ export default function AuthenticatedApp() {
       </aside>
 
       {/* Mobile Header & Menu Overlay */}
-      <div className={`fixed inset-0 z-50 bg-slate-900 md:hidden transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-         <div className="flex justify-between items-center p-6 border-b border-slate-800">
-            <h1 className="text-xl font-bold">Menu</h1>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-400"><Menu /></button>
+      <div className={`fixed inset-0 z-[60] bg-slate-900 md:hidden transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+         <div className="flex justify-between items-center p-4 pt-[calc(1rem+env(safe-area-inset-top))] border-b border-slate-800">
+            <h1 className="text-lg font-bold">Menu</h1>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors"><X size={20} /></button>
          </div>
-         <nav className="p-6 space-y-4">
+         <nav className="p-6 space-y-4 overflow-y-auto max-h-[calc(100dvh-5rem)] pb-24">
             {navItems.map(item => (
                 <button
                     key={item.id}
@@ -383,15 +389,30 @@ export default function AuthenticatedApp() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* View Content */}
-        <div className="flex-1 overflow-hidden bg-slate-950 relative">
+        
+        {/* Mobile Header - COMPACT & SAFE */}
+        <header className="md:hidden flex items-center justify-between px-4 bg-slate-900 border-b border-slate-800 shrink-0 z-50 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]">
+           <div className="flex items-center gap-2">
+             <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-[10px] shadow-lg ring-1 ring-white/20">C</div>
+             <div className="flex flex-col leading-none">
+                <h1 className="text-sm font-black tracking-tighter text-white uppercase">CuePack</h1>
+                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest">Manager</span>
+             </div>
+           </div>
+           <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg border border-slate-700 shadow-sm transition-all active:scale-95">
+              <Menu size={20} />
+           </button>
+        </header>
+
+        {/* View Content - Padded for Bottom Safe Area on mobile */}
+        <div className="flex-1 overflow-hidden bg-slate-950 relative z-0 pb-[env(safe-area-inset-bottom)]">
           {renderContent()}
         </div>
 
         {/* --- DEDICATED NEW MISSION MODAL (ARCHIVE) --- */}
         {isNewProjectFromArchiveOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-300">
-                <div className="bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl max-w-md w-full p-8 animate-in zoom-in-95 duration-300 relative overflow-hidden">
+                 <div className="bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-300 relative overflow-hidden">
                     {/* Background Glow */}
                     <div className="absolute -top-24 -right-24 w-48 h-48 bg-emerald-600/20 blur-[80px] rounded-full" />
                     <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-blue-600/10 blur-[80px] rounded-full" />

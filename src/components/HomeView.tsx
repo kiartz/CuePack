@@ -1,4 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { Download, Upload, LayoutDashboard, Database, Package, FileText, AlertCircle, Archive, Trash2 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -105,7 +106,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     itemsToWrite.push({ ...importedItem, id: existing.id });
                 } else {
                     // Create new item
-                    itemsToWrite.push({ ...importedItem, id: importedItem.id || crypto.randomUUID() });
+                    itemsToWrite.push({ ...importedItem, id: importedItem.id || generateId() });
                 }
              });
              
@@ -129,7 +130,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 if (existing) {
                     kitsToWrite.push({ ...importedKit, id: existing.id });
                 } else {
-                    kitsToWrite.push({ ...importedKit, id: importedKit.id || crypto.randomUUID() });
+                    kitsToWrite.push({ ...importedKit, id: importedKit.id || generateId() });
                 }
              });
 
@@ -157,8 +158,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <LayoutDashboard size={32} className="text-white" />
             </div>
             <div>
-                <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-                <p className="text-slate-400">Panoramica e gestione workspace</p>
+                <h1 className="text-xl font-bold text-white leading-tight">Dashboard</h1>
+                <p className="text-xs text-slate-500">Panoramica e gestione workspace</p>
             </div>
         </div>
 
@@ -187,7 +188,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <p className="text-sm text-slate-500 mb-6 flex-1">
                         Salva inventario e kit in un file backup.
                     </p>
-                    <button onClick={handleExportCatalog} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors">
+                    <button onClick={handleExportCatalog} className="w-full py-3 md:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-colors">
                         Salva Catalogo
                     </button>
                 </div>
@@ -202,7 +203,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         Ripristina backup o unisci cataloghi.
                     </p>
                     <input type="file" ref={catalogFileInputRef} onChange={handleCatalogFileChange} className="hidden" accept=".json" />
-                    <button onClick={handleImportCatalogClick} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors">
+                    <button onClick={handleImportCatalogClick} className="w-full py-3 md:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-colors">
                         Carica Catalogo
                     </button>
                 </div>
@@ -216,7 +217,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <p className="text-sm text-slate-500 mb-6 flex-1">
                         Modifica la struttura della checklist globale (Settori, Gruppi, Voci).
                     </p>
-                    <button onClick={onNavigateToChecklist} className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors">
+                    <button onClick={onNavigateToChecklist} className="w-full py-3 md:py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg shadow-emerald-900/20 transition-colors">
                         Modifica Checklist
                     </button>
                 </div>

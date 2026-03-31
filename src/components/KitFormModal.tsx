@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { generateId } from '../utils';
 import { Plus, Search, X, Lightbulb } from 'lucide-react';
 import { InventoryItem, Kit, Category } from '../types';
 import { Modal } from './Modal';
@@ -26,6 +27,9 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
   // Reminder State
   const [reminderInput, setReminderInput] = useState('');
   const [isRemindersOpen, setIsRemindersOpen] = useState(false);
+  
+  // Mobile Tab State
+  const [activeTab, setActiveTab] = useState<'info' | 'picker'>('info');
 
   useEffect(() => {
     if (initialData) {
@@ -50,7 +54,7 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
     const cleanItems = (formData.items && Array.isArray(formData.items)) ? formData.items : [];
     const newKit = {
       ...formData as Kit,
-      id: initialData?.id || crypto.randomUUID(),
+      id: initialData?.id || generateId(),
       category: formData.category || Category.OTHER,
       items: cleanItems,
       reminders: formData.reminders || []
@@ -104,18 +108,34 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="xl">
-      <div className="flex flex-col lg:flex-row gap-6 h-[60vh]">
+      {/* MOBILE TABS SELECTOR */}
+      <div className="flex lg:hidden bg-slate-900 border border-slate-800 rounded-xl p-1 mb-4 shrink-0">
+        <button 
+          onClick={() => setActiveTab('info')}
+          className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'info' ? 'bg-slate-800 text-white shadow-lg border border-slate-700' : 'text-slate-500'}`}
+        >
+          Dettagli Kit
+        </button>
+        <button 
+          onClick={() => setActiveTab('picker')}
+          className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'picker' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500'}`}
+        >
+          Aggiungi Materiale
+        </button>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-6 h-[70vh] lg:h-[60vh]">
         {/* LEFT COLUMN (Form + Content) */}
-        <div className="flex-1 flex flex-col gap-4 min-h-0">
+        <div className={`flex-1 flex flex-col gap-4 min-h-0 ${activeTab !== 'info' ? 'hidden lg:flex' : 'flex'}`}>
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
                 <label className="block text-sm text-slate-400 mb-1">Nome Kit</label>
-                <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white outline-none focus:border-purple-500" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Es. Kit Regia" />
+                <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 md:p-2 text-white outline-none focus:border-purple-500 text-base md:text-sm" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Es. Kit Regia" />
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Categoria</label>
-                <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white outline-none focus:border-purple-500" value={formData.category || Category.OTHER} onChange={e => setFormData({...formData, category: e.target.value as Category})}>
+                <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 md:p-2 text-white outline-none focus:border-purple-500 text-base md:text-sm" value={formData.category || Category.OTHER} onChange={e => setFormData({...formData, category: e.target.value as Category})}>
                   {Object.values(Category).map(c => <option key={c as string} value={c as string}>{c as string}</option>)}
                 </select>
               </div>
@@ -132,9 +152,8 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
                   <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800">
                     <span className="text-slate-300 text-sm truncate flex-1 mr-2">{getInventoryName(item.itemId)}</span>
                     <div className="flex items-center gap-3">
-                      {/* Fixed: Wrapped assignment in braces to return void instead of the element */}
-                      <input ref={el => { qtyInputRefs.current[item.itemId] = el; }} type="number" className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center text-white text-sm outline-none" value={item.quantity} onChange={e => updateItemQty(item.itemId, Number(e.target.value))} />
-                      <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500"><X size={16} /></button>
+                      <input ref={el => { qtyInputRefs.current[item.itemId] = el; }} type="number" className="w-16 bg-slate-800 border border-slate-700 rounded p-2 text-center text-white text-base md:text-sm outline-none" value={item.quantity} onChange={e => updateItemQty(item.itemId, Number(e.target.value))} />
+                      <button onClick={() => removeItemFromKit(item.itemId)} className="text-rose-500 p-2 -mr-2"><X size={20} /></button>
                     </div>
                   </div>
                 ))}
@@ -144,14 +163,14 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
         </div>
 
         {/* RIGHT COLUMN (Picker) */}
-        <div className="w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700 h-full">
+        <div className={`w-full lg:w-96 bg-slate-800 rounded-lg p-4 flex flex-col border border-slate-700 h-full ${activeTab !== 'picker' ? 'hidden lg:flex' : 'flex'}`}>
           <div className="flex justify-between items-center mb-3">
             <h4 className="font-semibold text-white text-sm">Aggiungi Materiale</h4>
             <button onClick={() => setIsNewItemModalOpen(true)} className="p-1.5 bg-slate-700 rounded text-slate-200"><Plus size={14} /></button>
           </div>
           <div className="relative mb-3">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-            <input type="text" placeholder="Cerca materiale..." className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none" value={itemSearch} onChange={e => setItemSearch(e.target.value)} />
+            <Search className="absolute left-3 top-3.5 md:top-2.5 text-slate-400" size={16} />
+            <input type="text" placeholder="Cerca materiale..." className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-3 md:py-2 rounded-lg text-base md:text-sm outline-none" value={itemSearch} onChange={e => setItemSearch(e.target.value)} />
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
             {filteredPickerItems.map(item => (
@@ -163,20 +182,20 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
           </div>
         </div>
       </div>
-      <div className="flex justify-between items-center mt-6 pt-4 border-t border-slate-800">
+      <div className="flex flex-col-reverse md:flex-row justify-between items-stretch md:items-center mt-6 pt-4 border-t border-slate-800 gap-4">
         <button 
             onClick={() => setIsRemindersOpen(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${formData.reminders && formData.reminders.length > 0 ? 'bg-yellow-900/20 text-yellow-400 border border-yellow-900/30 shadow-lg shadow-yellow-900/20' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-yellow-400'}`}
+            className={`flex items-center justify-center gap-2 p-3 md:px-4 md:py-2 w-full md:w-auto rounded-lg transition-colors ${formData.reminders && formData.reminders.length > 0 ? 'bg-yellow-900/20 text-yellow-400 border border-yellow-900/30' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-yellow-400'}`}
         >
-            <Lightbulb size={18} className={formData.reminders && formData.reminders.length > 0 ? 'fill-current' : ''} />
+            <Lightbulb size={20} className={formData.reminders && formData.reminders.length > 0 ? 'fill-current' : ''} />
             <span className="text-sm font-bold uppercase tracking-wider">Promemoria Kit {formData.reminders && formData.reminders.length > 0 ? `(${formData.reminders.length})` : ''}</span>
         </button>
-        <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 text-slate-400">Annulla</button>
-            <button onClick={handleSave} className="px-6 py-2 bg-purple-600 text-white rounded-lg font-bold">Salva Kit</button>
+        <div className="flex gap-2 flex-col md:flex-row w-full md:w-auto">
+            <button onClick={onClose} className="w-full md:w-auto p-3 md:px-4 md:py-2 text-slate-400 font-medium">Annulla</button>
+            <button onClick={handleSave} className="w-full md:w-auto p-3 md:px-6 md:py-2 bg-purple-600 text-white rounded-lg font-bold shadow-lg shadow-purple-900/20">Salva Kit</button>
         </div>
       </div>
-      <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={async (d) => { const ni = { ...d, id: crypto.randomUUID(), accessories: d.accessories || [] }; await addOrUpdateItem(COLL_INVENTORY, ni); addItemToKit(ni); }} title="Nuovo Materiale" inventory={inventory} />
+      <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={async (d) => { const ni = { ...d, id: generateId(), accessories: d.accessories || [] }; await addOrUpdateItem(COLL_INVENTORY, ni); addItemToKit(ni); }} title="Nuovo Materiale" inventory={inventory} />
     
       {/* REMINDERS MODAL */}
       <Modal isOpen={isRemindersOpen} onClose={() => setIsRemindersOpen(false)} title="Promemoria Kit" size="md">
