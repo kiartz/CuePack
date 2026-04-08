@@ -1244,12 +1244,42 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
 
   // --- EXPORT ---
+  const flattenComponents = (components: ListComponent[]) => {
+    const flat: ListComponent[] = [];
+    components.forEach(c => {
+      if (c.type === 'template' && c.templateContents) {
+        c.templateContents.forEach(tc => {
+          const existing = flat.find(f => f.type === tc.type && f.referenceId === tc.referenceId);
+          if (existing) {
+            existing.quantity += (tc.quantity * c.quantity);
+          } else {
+            flat.push({
+              ...tc,
+              uniqueId: generateId(),
+              quantity: tc.quantity * c.quantity
+            } as ListComponent);
+          }
+        });
+      } else {
+        const existing = flat.find(f => f.type === c.type && f.referenceId === c.referenceId);
+        if (existing) {
+          existing.quantity += c.quantity;
+        } else {
+          flat.push({ ...c });
+        }
+      }
+    });
+    return flat;
+  };
+
   const calculateZoneTotals = (zone: ListZone) => {
     const totalsMap = new Map<string, number>();
-    zone.sections.forEach(s => s.components.forEach(c => {
+    const flatComps = flattenComponents(zone.sections.flatMap(s => s.components));
+    
+    flatComps.forEach(c => {
         totalsMap.set(c.name, (totalsMap.get(c.name) || 0) + c.quantity);
         c.contents?.forEach(sub => totalsMap.set(sub.name, (totalsMap.get(sub.name) || 0) + (sub.quantity * c.quantity)));
-    }));
+    });
     return totalsMap;
   };
 
@@ -1313,7 +1343,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         const tableBody: any[] = [];
 
         zone.sections.forEach(section => {
-            if (section.components.length === 0) return;
+            const flatComponents = flattenComponents(section.components);
+            if (flatComponents.length === 0) return;
 
             // Section Header Row
             tableBody.push([{ 
@@ -1323,7 +1354,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             }]);
 
             // Items
-            section.components.forEach(comp => {
+            flatComponents.forEach(comp => {
                 let nameContent = comp.name;
                 if (comp.isTemporary) nameContent += ' (TEMP)';
                 if (comp.type === 'kit') nameContent = `[KIT] ${comp.name}`;
@@ -1452,7 +1483,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         };
 
         zone.sections.forEach(section => {
-            section.components.forEach(comp => {
+            const flatComponents = flattenComponents(section.components);
+            flatComponents.forEach(comp => {
                 const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
                 const note = comp.warehouseState?.warehouseNote;
 
