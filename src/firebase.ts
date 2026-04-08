@@ -1,10 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { InventoryItem, Kit, PackingList, ChecklistCategory } from './types';
+import { InventoryItem, Kit, PackingList, ChecklistCategory, Template } from './types';
 
 // Define a Union type for all possible database items
-export type DbItem = InventoryItem | Kit | PackingList | { id: string, categories: ChecklistCategory[] };
+export type DbItem = InventoryItem | Kit | PackingList | Template | { id: string, categories: ChecklistCategory[] };
 
 
 // Helper to safely access environment variables without strict type checking
@@ -33,6 +33,7 @@ export const auth = getAuth(app);
 // Collection References Constants
 export const COLL_INVENTORY = 'inventory';
 export const COLL_KITS = 'kits';
+export const COLL_TEMPLATES = 'templates';
 export const COLL_LISTS = 'packing_lists';
 export const COLL_CHECKLIST_CONFIG = 'checklist_config';
 

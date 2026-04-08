@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy } from 'lucide-react';
+import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
+import { TemplatesView } from './TemplatesView';
 import { PackingListBuilder } from './PackingListBuilder';
 import { HomeView } from './HomeView';
 import { ChecklistView } from './ChecklistView';
 import { ChecklistManager } from './ChecklistManager';
 import { PrepMaterialView } from './PrepMaterialView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
-import { InventoryItem, Kit, PackingList, ChecklistCategory } from '../types';
-import { db, auth, COLL_INVENTORY, COLL_KITS, COLL_LISTS, COLL_CHECKLIST_CONFIG, batchWriteItems, addOrUpdateItem } from '../firebase';
+import { InventoryItem, Kit, Template, PackingList, ChecklistCategory } from '../types';
+import { db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, batchWriteItems, addOrUpdateItem } from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
-type View = 'home' | 'inventory' | 'kits' | 'lists' | 'checklist-manager' | 'prep-material';
+type View = 'home' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material';
 
 export default function AuthenticatedApp() {
   const [currentView, setCurrentView] = useState<View>('home');
@@ -22,6 +23,7 @@ export default function AuthenticatedApp() {
   // --- REAL-TIME DATA STATE ---
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [kits, setKits] = useState<Kit[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [packingLists, setPackingLists] = useState<PackingList[]>([]);
   const [masterChecklist, setMasterChecklist] = useState<ChecklistCategory[]>([]);
   
@@ -81,6 +83,13 @@ export default function AuthenticatedApp() {
         }
     }, (error) => console.error("Kits Sync Error:", error));
 
+    // 2.5 Templates Listener
+    const unsubTemplates = onSnapshot(collection(db, COLL_TEMPLATES), (snapshot) => {
+        const items: Template[] = [];
+        snapshot.forEach(doc => items.push(doc.data() as Template));
+        setTemplates(items);
+    }, (error) => console.error("Templates Sync Error:", error));
+
     // 3. Lists Listener
     const unsubLists = onSnapshot(collection(db, COLL_LISTS), (snapshot) => {
         const items: PackingList[] = [];
@@ -108,6 +117,7 @@ export default function AuthenticatedApp() {
     return () => {
         unsubInventory();
         unsubKits();
+        unsubTemplates();
         unsubLists();
         unsubChecklist();
     };
@@ -128,6 +138,7 @@ export default function AuthenticatedApp() {
     { id: 'home', label: 'Home', icon: Home },
     { id: 'inventory', label: 'Inventario', icon: Layers },
     { id: 'kits', label: 'Kit Materiale', icon: Package },
+    { id: 'templates', label: 'Template', icon: Blocks },
     { id: 'lists', label: 'Crea Liste', icon: ClipboardList },
     { id: 'prep-material', label: 'Magazzino', icon: Truck },
   ];
@@ -266,10 +277,18 @@ export default function AuthenticatedApp() {
             kits={kits} 
             inventory={inventory} 
         />;
+      case 'templates':
+        return <TemplatesView 
+            templates={templates} 
+            inventory={inventory} 
+            kits={kits} 
+            lists={packingLists}
+        />;
       case 'lists':
         return <PackingListBuilder 
           inventory={inventory} 
           kits={kits} 
+          templates={templates}
           lists={packingLists}
           masterChecklist={masterChecklist}
           activeListId={activeListId}
@@ -302,10 +321,10 @@ export default function AuthenticatedApp() {
         {/* Header - NANO Compact */}
         <div className="p-2 px-3 border-b border-slate-800 shrink-0 bg-slate-950/50">
           <div className="flex items-center gap-1.5">
-             <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-[10px]">C</div>
+             <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-xs">C</div>
              <h1 className="text-xs font-bold tracking-tight uppercase opacity-80">CuePack</h1>
           </div>
-          <p className="text-[9px] text-slate-600 leading-none mt-0.5">Cloud Rental Management</p>
+          <p className="text-xs text-slate-600 leading-none mt-0.5">Cloud Rental Management</p>
         </div>
         
         {/* Navigation Menu */}
@@ -355,7 +374,7 @@ export default function AuthenticatedApp() {
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex justify-between items-center">
            <div className="flex flex-col gap-1">
               <span>© R. Chiartano</span>
-              <span className="opacity-50 text-[10px]">v0.5.1 (Warehouse Unified)</span>
+              <span className="opacity-50 text-xs">v0.5.2 (Templates System)</span>
            </div>
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors" title="Esci">
              <LogOut size={16} />
@@ -384,8 +403,8 @@ export default function AuthenticatedApp() {
                     <LogOut size={20} /> Esci
                 </button>
             </div>
-            <div className="pt-8 text-center text-[10px] text-slate-600 uppercase tracking-[2px]">
-                CuePack Manager ✨ v0.5.1
+            <div className="pt-8 text-center text-xs text-slate-600 uppercase tracking-[2px]">
+                CuePack Manager ✨ v0.5.2
             </div>
          </nav>
       </div>
@@ -396,10 +415,10 @@ export default function AuthenticatedApp() {
         {/* Mobile Header - COMPACT & SAFE */}
         <header className="md:hidden flex items-center justify-between px-4 bg-slate-900 border-b border-slate-800 shrink-0 z-50 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]">
            <div className="flex items-center gap-2">
-             <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-[10px] shadow-lg ring-1 ring-white/20">C</div>
+             <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-xs shadow-lg ring-1 ring-white/20">C</div>
              <div className="flex flex-col leading-none">
                 <h1 className="text-sm font-black tracking-tighter text-white uppercase">CuePack</h1>
-                <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest">Manager</span>
+                <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">Manager</span>
              </div>
            </div>
            <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg border border-slate-700 shadow-sm transition-all active:scale-95">

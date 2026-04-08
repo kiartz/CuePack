@@ -51,16 +51,36 @@ export interface WarehouseState {
 // For the Packing List Builder
 export interface ListComponent {
   uniqueId: string; // unique instance ID in the list
-  type: 'item' | 'kit';
-  referenceId: string; // ID of the inventory item or kit
+  type: 'item' | 'kit' | 'template';
+  referenceId: string; // ID of the inventory item, kit, or template
   name: string;
   quantity: number;
   category: string; // Cached for sorting/display
-  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string }[]; // Snapshot of contents (Kit items OR Item accessories)
+  // contents stores accessories for items, kit components for kits.
+  // For 'template', it might store an unpacked array of these structures (kits and items).
+  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string; subContents?: any[] }[]; 
+  templateContents?: ListComponent[]; // Dedicated field for Templates to hold fully-formed kits/items
   notes?: string;
   warehouseState?: WarehouseState;
   isTemporary?: boolean;
 }
+
+// --- TEMPLATES ---
+export interface TemplateComponent {
+  type: 'item' | 'kit';
+  referenceId: string;
+  quantity: number;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description?: string;
+  category: Category;
+  items: TemplateComponent[]; // Can contain both items and kits
+  reminders?: string[];
+}
+
 
 export interface ListSection {
   id: string;

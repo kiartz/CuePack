@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory } from '../types';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers } from 'lucide-react';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ChecklistView } from './ChecklistView';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -16,6 +16,7 @@ import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTO
 interface PackingListBuilderProps {
   inventory: InventoryItem[];
   kits: Kit[];
+  templates: Template[];
   lists: PackingList[];
   masterChecklist: ChecklistCategory[];
   activeListId: string;
@@ -29,6 +30,7 @@ interface PackingListBuilderProps {
 export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({ 
   inventory, 
   kits, 
+  templates,
   lists, 
   masterChecklist,
   activeListId, 
@@ -307,6 +309,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         .filter(x => x.score > -1)
         .map(x => x.kit);
   }, [kits, pickerSearch, selectedCategory]);
+
+  const filteredPickerTemplates = useMemo(() => {
+      const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
+      return templates.map(template => {
+            const combined = `${(template.name||'').toLowerCase()} ${(template.category||'').toLowerCase()} ${(template.description||'').toLowerCase()}`;
+            if (!searchTokens.every(token => combined.includes(token))) return { template, score: -1, nameMatches: 0 };
+            if (selectedCategory !== 'All' && template.category !== selectedCategory) return { template, score: -1, nameMatches: 0 };
+            return { template, score: 1, nameMatches: 1 };
+        })
+        .filter(x => x.score > -1)
+        .map(x => x.template);
+  }, [templates, pickerSearch, selectedCategory]);
 
 
   // Switch to edit mode when activeListId changes
@@ -861,9 +875,52 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setIsTempItemModalOpen(false);
   };
 
-  const generateComponentFromItem = (item: InventoryItem | Kit, type: 'item' | 'kit'): Omit<ListComponent, 'uniqueId' | 'quantity' | 'notes'> => {
-      // (Implementation same as before, simplified for brevity in this replace block but logic retained)
-      if (type === 'kit') {
+  const generateComponentFromItem = (item: InventoryItem | Kit | Template, type: 'item' | 'kit' | 'template'): Omit<ListComponent, 'uniqueId' | 'quantity' | 'notes'> => {
+      if (type === 'template') {
+        const t = item as Template;
+        const builtContents: ListComponent[] = t.items.map((tc, idx) => {
+             const master = tc.type === 'kit' ? kits.find(k => k.id === tc.referenceId) : inventory.find(i => i.id === tc.referenceId);
+             if (!master) return null;
+             
+             let contents: any[] = [];
+             let name = 'Sconosciuto';
+             let category = 'Altro';
+             
+             if (tc.type === 'kit') {
+                 const k = master as Kit;
+                 name = k.name;
+                 category = 'Kit';
+                 contents = k.items.map(ki => {
+                     const invItem = inventory.find(inv => inv.id === ki.itemId);
+                     return { itemId: invItem?.id, name: invItem?.name || '?', quantity: ki.quantity, category: invItem?.category || 'Altro' };
+                 });
+             } else {
+                 const i = master as InventoryItem;
+                 name = i.name;
+                 category = i.category;
+                 contents = (i.accessories || []).map(acc => {
+                     const invItem = inventory.find(inv => inv.id === acc.itemId);
+                     return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro' };
+                 });
+             }
+             
+             return {
+                 uniqueId: `tmpl-child-${Date.now()}-${idx}`,
+                 type: tc.type,
+                 referenceId: tc.referenceId,
+                 name: name,
+                 category: category,
+                 quantity: tc.quantity,
+                 contents: contents,
+                 warehouseState: { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+             } as ListComponent;
+        }).filter(Boolean) as ListComponent[];
+
+        return {
+          type: 'template', referenceId: t.id, name: t.name, category: 'Template',
+          templateContents: builtContents
+        };
+      } else if (type === 'kit') {
         const k = item as Kit;
         return {
           type: 'kit', referenceId: k.id, name: k.name, category: 'Kit',
@@ -877,14 +934,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         return {
           type: 'item', referenceId: i.id, name: i.name, category: i.category,
           contents: (i.accessories || []).map(acc => {
-              const i = inventory.find(inv => inv.id === acc.itemId);
-              return { itemId: acc.itemId, name: i?.name || '?', quantity: acc.quantity, category: i?.category || 'Altro' };
+              const invItem = inventory.find(inv => inv.id === acc.itemId);
+              return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro' };
           })
         };
       }
   };
 
-  const addToSection = (item: InventoryItem | Kit, type: 'item' | 'kit') => {
+  const addToSection = (item: InventoryItem | Kit | Template, type: 'item' | 'kit' | 'template') => {
       if (!activeSection) return;
       
       // Check for replacement
@@ -1673,7 +1730,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 >
                                   <Lightbulb size={20} className={list.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
                                 </button>
-                                {list.version && <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono shrink-0">v{list.version}</span>}
+                                {list.version && <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono shrink-0">v{list.version}</span>}
                              </div>
                              <div className="hidden md:flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-1 text-sm text-slate-400 mt-1">
                                 <div className="flex items-center gap-1 min-w-0"><MapPin size={14} className="shrink-0" /> <span className="truncate">{list.location || 'Nessuna location'}</span></div>
@@ -1686,11 +1743,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   {/* Stats & Metadata - Hidden on Mobile */}
                   <div className="hidden md:flex items-center gap-6 text-sm text-slate-500 mt-2 md:mt-0 border-t md:border-t-0 border-slate-700/50 pt-2 md:pt-0 w-full md:w-auto justify-between md:justify-end">
                       <div className="flex flex-col">
-                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">Elementi</span>
+                          <span className="text-xs uppercase font-bold tracking-wider text-slate-600">Elementi</span>
                           <span className="text-slate-300 font-medium text-lg">{totalItems}</span>
                       </div>
                       <div className="flex flex-col items-end">
-                           <span className="text-[10px] uppercase font-bold tracking-wider text-slate-600">Creato il</span>
+                           <span className="text-xs uppercase font-bold tracking-wider text-slate-600">Creato il</span>
                            <span className="text-sm">{new Date(list.creationDate || Date.now()).toLocaleDateString()}</span>
                       </div>
                   </div>
@@ -1886,12 +1943,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           <div className="flex items-center justify-between gap-1.5 sm:gap-3">
             <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
                 <button 
-                onClick={handleBackToList} 
-                className="p-1.5 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-lg border border-slate-700 shadow-lg shrink-0"
-                title="Eventi"
+                  onClick={handleBackToList} 
+                  className="p-1.5 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-2"
+                  title="Eventi"
                 >
-                <List size={18} />
-                <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider ml-2 text-white">Eventi</span>
+                  <List size={18} />
+                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider text-white">Eventi</span>
                 </button>
 
                 {/* Mobile-only Checklist Shortcut */}
@@ -1901,18 +1958,28 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 title="Checklist"
                 >
                 <ClipboardList size={18} />
-                <span className="text-[10px] font-bold uppercase tracking-tight text-white">Check</span>
+                <span className="text-xs font-bold uppercase tracking-tight text-white">Check</span>
                 {activeList && activeList.checklistCheckedItems && activeList.checklistCheckedItems.length > 0 && (
-                    <span className="bg-blue-600 text-white px-1 rounded-full text-[9px] min-w-[14px] text-center font-bold">
+                    <span className="bg-blue-600 text-white px-1 rounded-full text-xs min-w-[14px] text-center font-bold">
                         {activeList.checklistCheckedItems.length}
                     </span>
                 )}
                 </button>
                 
+                {/* Reminders/Notes Shortcut */}
+                <button 
+                  onClick={() => setActiveRemindersListId(activeList?.id || null)} 
+                  className={`p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-1.5 transition-colors ${activeList?.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-400 hover:text-white'}`}
+                  title="Note & Promemoria"
+                >
+                  <Lightbulb size={18} className={activeList?.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
+                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight text-white">Note</span>
+                </button>
+                
                 <div className="flex flex-col min-w-0 overflow-hidden">
                     <div className="flex items-center gap-1 min-w-0">
                         <span className="text-white font-bold text-xs sm:text-lg truncate">{activeList?.eventName}</span>
-                        {activeList?.version && <span className="text-[8px] sm:text-xs bg-slate-800 text-emerald-400 px-1 rounded font-bold shrink-0">v{activeList.version}</span>}
+                        {activeList?.version && <span className="text-xs sm:text-xs bg-slate-800 text-emerald-400 px-1 rounded font-bold shrink-0">v{activeList.version}</span>}
                     </div>
                 </div>
             </div>
@@ -1973,7 +2040,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             </div>
           </div>
 
-          <div className="md:hidden flex flex-col gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-[11px]">
+          <div className="md:hidden flex flex-col gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs">
              <div className="flex items-center gap-2">
                 <div className="flex-1 flex items-center gap-2 min-w-0">
                     <div className="shrink-0 flex items-center gap-1 text-slate-500 font-bold uppercase">
@@ -2085,9 +2152,41 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     {pickerSearch && isPickerHovered && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
                         
+                        {/* Templates matches */}
+                        {filteredPickerTemplates.length > 0 && (
+                            <div className="px-4 py-1.5 bg-slate-800 text-xs font-bold text-emerald-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                                Template ({filteredPickerTemplates.length})
+                            </div>
+                        )}
+                        {filteredPickerTemplates.map(template => {
+                          const qtyInZone = activeZone?.sections.reduce((total, section) => 
+                            total + section.components
+                              .filter(c => c.type === 'template' && c.referenceId === template.id)
+                              .reduce((subtotal, comp) => subtotal + comp.quantity, 0),
+                            0
+                          ) || 0;
+                          
+                          return (
+                          <button key={template.id} onClick={() => addToSection(template, 'template')} className="w-full text-left px-4 py-3 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group">
+                            <div>
+                                <div className="text-sm text-white flex items-center gap-2">
+                                    <Blocks size={14} className="text-emerald-400" />
+                                    {template.name}
+                                    {qtyInZone > 0 && (
+                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold">
+                                            x{qtyInZone}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="text-xs text-slate-500 pl-6">{template.items.length} componenti base</div>
+                            </div>
+                            <Plus size={16} className="text-slate-600 group-hover:text-emerald-500 transition-colors"/>
+                          </button>
+                        )})}
+
                         {/* Kit matches */}
                         {filteredPickerKits.length > 0 && (
-                            <div className="px-4 py-1.5 bg-slate-800 text-[10px] font-bold text-purple-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                            <div className="px-4 py-1.5 bg-slate-800 text-xs font-bold text-purple-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
                                 Kit & Set ({filteredPickerKits.length})
                             </div>
                         )}
@@ -2106,7 +2205,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                     <PackageIcon size={14} className="text-purple-400" />
                                     {kit.name}
                                     {qtyInZone > 0 && (
-                                        <span className="text-[10px] bg-purple-950 text-purple-400 border border-purple-900 px-1.5 rounded font-bold">
+                                        <span className="text-xs bg-purple-950 text-purple-400 border border-purple-900 px-1.5 rounded font-bold">
                                             x{qtyInZone}
                                         </span>
                                     )}
@@ -2119,7 +2218,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
                         {/* Inventory matches */}
                         {filteredPickerItems.length > 0 && (
-                            <div className="px-4 py-1.5 bg-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                            <div className="px-4 py-1.5 bg-slate-800 text-xs font-bold text-slate-400 uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
                                 Materiale Singolo
                             </div>
                         )}
@@ -2137,7 +2236,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 <div className="text-sm text-white flex items-center gap-2">
                                     {item.name}
                                     {qtyInZone > 0 && (
-                                        <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold">
+                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold">
                                             x{qtyInZone}
                                         </span>
                                     )}
@@ -2149,7 +2248,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         )})}
                         
                         {/* Create new */}
-                        {filteredPickerItems.length === 0 && filteredPickerKits.length === 0 && <button onClick={() => setIsNewItemModalOpen(true)} className="w-full text-left px-4 py-3 hover:bg-slate-800 text-emerald-500 flex gap-2"><Plus/> Crea "{pickerSearch}"</button>}
+                        {filteredPickerItems.length === 0 && filteredPickerKits.length === 0 && filteredPickerTemplates.length === 0 && <button onClick={() => setIsNewItemModalOpen(true)} className="w-full text-left px-4 py-3 hover:bg-slate-800 text-emerald-500 flex gap-2"><Plus/> Crea "{pickerSearch}"</button>}
                       </div>
                     )}
                 </div>
@@ -2166,7 +2265,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             setTempItemFormData({ name: '', quantity: 1, category: activeSection?.name || '', notes: '' });
                             setIsTempItemModalOpen(true);
                         }}
-                        className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg flex items-center gap-1.5 font-bold text-[10px] sm:text-xs transition-all shrink-0 shadow-lg shadow-amber-900/20"
+                        className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg flex items-center gap-1.5 font-bold text-xs transition-all shrink-0 shadow-lg shadow-amber-900/20"
                         title="Articolo Temporaneo"
                     >
                         <Plus size={14} /> <span className="hidden md:inline">Temp.</span><span className="md:hidden">T</span>
@@ -2179,8 +2278,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 {(selectedIds.size > 0 || clipboard.length > 0) && (
                     <div className="hidden md:flex items-center gap-2 ml-2 pl-2 border-l border-slate-700 animate-in fade-in">
                          <div className="flex flex-col gap-0.5 mr-2">
-                            <button onClick={selectAllInSection} className="text-[10px] uppercase font-bold text-slate-500 hover:text-white leading-none">Tutti</button>
-                            <button onClick={deselectAll} className="text-[10px] uppercase font-bold text-slate-500 hover:text-white leading-none">Nessuno</button>
+                            <button onClick={selectAllInSection} className="text-xs uppercase font-bold text-slate-500 hover:text-white leading-none">Tutti</button>
+                            <button onClick={deselectAll} className="text-xs uppercase font-bold text-slate-500 hover:text-white leading-none">Nessuno</button>
                          </div>
                          {selectedIds.size > 0 && (
                             <>
@@ -2222,9 +2321,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   const isReplacing = replacingComponentId === comp.uniqueId;
                   
                   // Check existence
-                  const isMissing = !comp.isTemporary && (comp.type === 'item' 
-                      ? !inventory.some(i => i.id === comp.referenceId)
-                      : !kits.some(k => k.id === comp.referenceId));
+                  // Check existence
+                  const isMissing = !comp.isTemporary && (
+                      comp.type === 'item' ? !inventory.some(i => i.id === comp.referenceId) :
+                      comp.type === 'template' ? !templates.some(t => t.id === comp.referenceId) :
+                      !kits.some(k => k.id === comp.referenceId)
+                  );
 
                   // Retrieve Kit Reminders if applicable
                   const originalKit = comp.type === 'kit' ? kits.find(k => k.id === comp.referenceId) : null;
@@ -2244,11 +2346,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   return (
                       <div key={comp.uniqueId} 
                            draggable onDragStart={(e) => handleDragStart(e, activeSection.id, idx, comp.uniqueId)} onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)} onDragEnd={handleDragEnd} onDragOver={e => e.preventDefault()}
-                           className={`group relative p-2 rounded-lg border transition-all duration-300 ${isParentOfMatch ? 'opacity-70' : 'opacity-100'} ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : hasAccessories ? 'bg-cyan-900/10 border-cyan-900/30 hover:border-cyan-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
+                           className={`group relative p-2 rounded-lg border transition-all duration-300 ${isParentOfMatch ? 'opacity-70' : 'opacity-100'} ${isReplacing ? 'border-amber-500 bg-amber-900/10 ring-1 ring-amber-500' : isSelected ? 'bg-blue-900/20 border-blue-500/50' : comp.type === 'template' ? 'bg-emerald-900/10 border-emerald-900/30 hover:border-emerald-500/30' : comp.type === 'kit' ? 'bg-purple-900/10 border-purple-900/30 hover:border-purple-500/30' : hasAccessories ? 'bg-cyan-900/10 border-cyan-900/30 hover:border-cyan-500/30' : 'bg-slate-800 border-slate-700 hover:border-slate-600'}`}>
                           <div className="flex justify-between items-center">
                               <div className="flex items-center gap-2 overflow-hidden">
                                   <button onClick={(e) => { e.stopPropagation(); toggleSelection(comp.uniqueId); }} className={`text-slate-500 p-1 ${isSelected ? 'text-blue-500' : ''}`}>{isSelected ? <CheckSquare size={18}/> : <Square size={18}/>}</button>
-                                  {comp.type === 'kit' ? <PackageIcon size={18} className="text-purple-400"/> : <Box size={18} className={hasAccessories ? "text-cyan-400" : "text-slate-400"}/>}
+                                  {comp.type === 'template' ? <Blocks size={18} className="text-emerald-400"/> : comp.type === 'kit' ? <PackageIcon size={18} className="text-purple-400"/> : <Box size={18} className={hasAccessories ? "text-cyan-400" : "text-slate-400"}/>}
                                   <div className="flex items-center gap-2 min-w-0">
                                       {isMissing && (
                                           <button 
@@ -2256,12 +2358,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                 e.stopPropagation();
                                                 setFeedbackModal({
                                                     isOpen: true,
-                                                    title: 'Oggetto Mancante',
-                                                    message: "Questo oggetto è stato cancellato dall'inventario, devi sostituirlo con un oggetto esistente.",
+                                                    title: 'Elemento Mancante',
+                                                    message: "Questo elemento è stato cancellato dal database, devi sostituirlo con uno o più elementi esistenti.",
                                                     type: 'error'
                                                 });
                                             }}
-                                            title="Oggetto cancellato dall'inventario"
+                                            title="Elemento cancellato dal database"
                                             className="text-rose-500 hover:text-rose-400 shrink-0"
                                           >
                                               <AlertTriangle size={16} />
@@ -2274,9 +2376,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                               title="Clicca per evidenziare ovunque"
                                           >
                                               {comp.name} 
-                                              {comp.isTemporary && <span className="bg-yellow-400 text-black text-[10px] font-bold px-1.5 py-0.5 rounded ml-2 shrink-0">TEMP</span>}
-                                              {comp.type === 'kit' && <span className="text-[10px] bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">KIT</span>}
-                                              {comp.type === 'item' && hasAccessories && <span className="text-[10px] bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">MACCHINA</span>}
+                                              {comp.isTemporary && <span className="bg-yellow-400 text-black text-xs font-bold px-1.5 py-0.5 rounded ml-2 shrink-0">TEMP</span>}
+                                              {comp.type === 'template' && <span className="text-xs bg-emerald-900 text-emerald-200 px-1 rounded align-middle no-underline font-bold">TMPL</span>}
+                                              {comp.type === 'kit' && <span className="text-xs bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">KIT</span>}
+                                              {comp.type === 'item' && hasAccessories && <span className="text-xs bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">MACCHINA</span>}
                                               {hasKitReminders && (
                                                   <button 
                                                     onClick={(e) => { e.stopPropagation(); setActiveKitRemindersId(activeKitRemindersId === comp.uniqueId ? null : comp.uniqueId); }}
@@ -2374,7 +2477,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           {/* KIT REMINDERS PANEL */}
                           {activeKitRemindersId === comp.uniqueId && hasKitReminders && (
                               <div className="mt-2 mx-2 bg-yellow-900/20 border border-yellow-700/30 rounded p-3 animate-in slide-in-from-top-2 fade-in duration-200">
-                                  <div className="text-[10px] font-bold text-yellow-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                  <div className="text-xs font-bold text-yellow-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                                       <Lightbulb size={12} className="fill-current"/> Cose da ricordare per questo Kit:
                                   </div>
                                   <ul className="space-y-1">
@@ -2394,43 +2497,71 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                               </div>
                           )}
 
-                          {/* Contents */}
-                          {comp.contents && comp.contents.length > 0 && (
-                            <div className="mt-2 ml-7 pl-3 border-l-2 border-slate-700 space-y-0.5">
-                                {comp.contents.map((c, i) => {
-                                    // Check accessory existence
+                          {/* Contents (Kits, Machines, Templates) */}
+                          {((comp.contents && comp.contents.length > 0) || (comp.templateContents && comp.templateContents.length > 0)) && (
+                            <div className="mt-2 ml-7 pl-3 border-l-2 border-slate-700 space-y-1.5 animate-in fade-in duration-300">
+                                {/* Standard Machine Contents / Kit Items */}
+                                {comp.contents?.map((c, i) => {
                                     const isAccMissing = c.itemId ? !inventory.some(inv => inv.id === c.itemId) : false;
-                                    const warning = null;
-                                    const isChildMatch = c.name === highlightedItemName;
+                                    const isChildMatch = highlightedItemName && c.name === highlightedItemName;
 
                                     return (
-                                        <div key={i} className="text-[10px] text-slate-400 flex justify-between w-full max-w-md leading-tight group/acc">
+                                        <div key={`acc-${i}`} className={`text-xs flex justify-between w-full max-w-md leading-tight group/acc ${isChildMatch ? 'text-blue-400' : 'text-slate-400'}`}>
                                             <span className="flex items-center gap-1 min-w-0">
                                                 {isAccMissing && (
-                                                    <button 
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setFeedbackModal({
-                                                                isOpen: true,
-                                                                title: 'Accessorio Mancante',
-                                                                message: "Questo accessorio è stato cancellato dall'inventario.",
-                                                                type: 'error'
-                                                            });
-                                                        }}
-                                                        className="text-rose-500 hover:text-rose-400 shrink-0"
-                                                        title="Accessorio eliminato dall'inventario"
-                                                    >
-                                                        <AlertTriangle size={10} />
-                                                    </button>
+                                                    <AlertTriangle size={10} className="text-rose-500 shrink-0" />
                                                 )}
                                                 <span 
-                                                    className={`truncate cursor-pointer hover:underline ${isAccMissing ? 'text-rose-900 line-through decoration-rose-500/50' : ''} ${isChildMatch ? 'text-blue-400 font-bold' : ''}`}
+                                                    className={`truncate cursor-pointer hover:underline ${isAccMissing ? 'text-rose-900 line-through decoration-rose-500/50' : ''} ${isChildMatch ? 'font-bold underline' : ''}`}
                                                     onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === c.name ? null : c.name); }}
                                                 >
                                                     {c.name}
                                                 </span>
                                             </span>
-                                            <span className="shrink-0 pl-2">x{c.quantity * comp.quantity}</span>
+                                            <span className="shrink-0 pl-2 opacity-60">x{c.quantity * comp.quantity}</span>
+                                        </div>
+                                    );
+                                })}
+
+                                {/* Expanded Template Contents */}
+                                {comp.templateContents?.map((tc, i) => {
+                                    const isChildMatch = highlightedItemName && tc.name === highlightedItemName;
+                                    const hasSubContents = tc.contents && tc.contents.length > 0;
+                                    
+                                    return (
+                                        <div key={`tmpl-child-${i}`} className="space-y-1">
+                                            <div className={`text-xs flex justify-between w-full max-w-md leading-tight group/tmpl ${isChildMatch ? 'text-blue-400' : 'text-emerald-400/90'}`}>
+                                                <span className="flex items-center gap-1 min-w-0">
+                                                    <span 
+                                                        className={`truncate cursor-pointer hover:underline font-medium ${isChildMatch ? 'font-bold underline text-blue-400' : ''}`}
+                                                        onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === tc.name ? null : tc.name); }}
+                                                    >
+                                                        {tc.name}
+                                                    </span>
+                                                    {tc.type === 'kit' && <span className="text-xs bg-emerald-900/40 text-emerald-300 px-1 rounded uppercase font-bold shrink-0">Kit</span>}
+                                                </span>
+                                                <span className="shrink-0 pl-2 opacity-70">x{tc.quantity * comp.quantity}</span>
+                                            </div>
+                                            
+                                            {/* Nested Kit Items or Machine Accessories inside Template */}
+                                            {hasSubContents && (
+                                                <div className="ml-3 border-l border-emerald-900/30 pl-2 space-y-0.5">
+                                                    {tc.contents?.map((sub, si) => {
+                                                        const isSubMatch = highlightedItemName && sub.name === highlightedItemName;
+                                                        return (
+                                                            <div key={si} className={`text-xs flex justify-between w-full max-w-sm leading-tight ${isSubMatch ? 'text-blue-400 font-bold' : 'text-slate-500'}`}>
+                                                                <span 
+                                                                    className="truncate cursor-pointer hover:underline"
+                                                                    onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === sub.name ? null : sub.name); }}
+                                                                >
+                                                                    - {sub.name}
+                                                                </span>
+                                                                <span className="shrink-0 pl-2 opacity-50">x{sub.quantity * tc.quantity * comp.quantity}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -2534,7 +2665,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                       autoFocus
                       onKeyDown={(e) => e.key === 'Enter' && confirmVersionUpdate()}
                   />
-                  {versionError && <p className="mt-2 text-[10px] text-rose-500 font-bold uppercase tracking-tight animate-in fade-in slide-in-from-top-1">{versionError}</p>}
+                  {versionError && <p className="mt-2 text-xs text-rose-500 font-bold uppercase tracking-tight animate-in fade-in slide-in-from-top-1">{versionError}</p>}
               </div>
               <div className="flex justify-end gap-3 mt-6">
                   <button 

@@ -104,6 +104,14 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
     return inventory.filter(i => i.name.toLowerCase().includes(term) || i.category.toLowerCase().includes(term));
   }, [inventory, itemSearch]);
 
+  const itemQuantities = useMemo(() => {
+    const map = new Map<string, number>();
+    formData.items?.forEach(item => {
+      map.set(item.itemId, (map.get(item.itemId) || 0) + item.quantity);
+    });
+    return map;
+  }, [formData.items]);
+
   const getInventoryName = (id: string) => inventory.find(i => i.id === id)?.name || 'Unknown Item';
 
   return (
@@ -112,13 +120,13 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
       <div className="flex lg:hidden bg-slate-900 border border-slate-800 rounded-xl p-1 mb-4 shrink-0">
         <button 
           onClick={() => setActiveTab('info')}
-          className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'info' ? 'bg-slate-800 text-white shadow-lg border border-slate-700' : 'text-slate-500'}`}
+          className={`flex-1 py-2.5 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'info' ? 'bg-slate-800 text-white shadow-lg border border-slate-700' : 'text-slate-500'}`}
         >
           Dettagli Kit
         </button>
         <button 
           onClick={() => setActiveTab('picker')}
-          className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'picker' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500'}`}
+          className={`flex-1 py-2.5 text-xs font-black uppercase tracking-widest rounded-lg transition-all ${activeTab === 'picker' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500'}`}
         >
           Aggiungi Materiale
         </button>
@@ -173,12 +181,20 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
             <input type="text" placeholder="Cerca materiale..." className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-3 py-3 md:py-2 rounded-lg text-base md:text-sm outline-none" value={itemSearch} onChange={e => setItemSearch(e.target.value)} />
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
-            {filteredPickerItems.map(item => (
-              <button key={item.id} onClick={() => addItemToKit(item)} className="w-full text-left p-2 hover:bg-slate-700 rounded flex justify-between items-center group">
-                <span className="text-xs text-slate-300 truncate">{item.name}</span>
-                <Plus size={14} className="text-slate-500 group-hover:text-purple-400" />
-              </button>
-            ))}
+            {filteredPickerItems.map(item => {
+              const qty = itemQuantities.get(item.id) || 0;
+              return (
+                <button key={item.id} onClick={() => addItemToKit(item)} className="w-full text-left p-2 hover:bg-slate-700 rounded flex justify-between items-center group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs text-slate-300 truncate">{item.name}</span>
+                    {qty > 0 && (
+                      <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900/50 px-1 rounded font-bold shrink-0">x{qty}</span>
+                    )}
+                  </div>
+                  <Plus size={14} className="text-slate-500 group-hover:text-purple-400" />
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -195,7 +211,20 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
             <button onClick={handleSave} className="w-full md:w-auto p-3 md:px-6 md:py-2 bg-purple-600 text-white rounded-lg font-bold shadow-lg shadow-purple-900/20">Salva Kit</button>
         </div>
       </div>
-      <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={async (d) => { const ni = { ...d, id: generateId(), accessories: d.accessories || [] }; await addOrUpdateItem(COLL_INVENTORY, ni); addItemToKit(ni); }} title="Nuovo Materiale" inventory={inventory} />
+      <ItemFormModal 
+        isOpen={isNewItemModalOpen} 
+        onClose={() => setIsNewItemModalOpen(false)} 
+        onSave={async (d) => { 
+          const ni: InventoryItem = { ...d, id: generateId(), accessories: (d as any).accessories || [] }; 
+          await addOrUpdateItem(COLL_INVENTORY, ni); 
+          addItemToKit(ni); 
+        }} 
+        onCreateAccessory={async (newItem: InventoryItem) => {
+          await addOrUpdateItem(COLL_INVENTORY, newItem);
+        }}
+        title="Nuovo Materiale" 
+        inventory={inventory} 
+      />
     
       {/* REMINDERS MODAL */}
       <Modal isOpen={isRemindersOpen} onClose={() => setIsRemindersOpen(false)} title="Promemoria Kit" size="md">

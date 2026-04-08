@@ -270,3 +270,4 @@ export const ChecklistManager: React.FC<ChecklistManagerProps> = ({ checklist, o
     </div>
   );
 };
+

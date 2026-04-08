@@ -75,7 +75,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
           <div className="px-3 py-2 flex justify-end">
               <button 
                 onClick={resetChecks}
-                className="text-[10px] text-slate-500 hover:text-rose-400 flex items-center gap-1 transition-colors"
+                className="text-xs text-slate-500 hover:text-rose-400 flex items-center gap-1 transition-colors"
               >
                   <RotateCcw size={10} /> Reset Tutto
               </button>
@@ -130,7 +130,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                  {/* Right: Toggle Switch & Info (Controls Enabled State Only) */}
                  <div className="flex items-center gap-2 shrink-0">
                      {isEnabled && (
-                         <div className={`text-[10px] font-mono mr-1 ${isComplete ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
+                         <div className={`text-xs font-mono mr-1 ${isComplete ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
                              {checkedGroups}/{totalGroups}
                          </div>
                      )}
@@ -145,7 +145,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                         title={isEnabled ? "Disattiva Settore" : "Attiva Settore"}
                      >
                         <span 
-                            className={`absolute top-0.5 left-0.5 bg-white w-4 h-4 rounded-full shadow-sm transition-transform duration-200 flex items-center justify-center text-[8px] font-bold text-slate-800
+                            className={`absolute top-0.5 left-0.5 bg-white w-4 h-4 rounded-full shadow-sm transition-transform duration-200 flex items-center justify-center text-xs font-bold text-slate-800
                                 ${isEnabled ? 'translate-x-5' : 'translate-x-0'}
                             `}
                         >
@@ -176,7 +176,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                             <div className={`shrink-0 transition-colors ${isGroupChecked ? 'text-emerald-500' : 'text-slate-500 group-hover/item:text-slate-300'}`}>
                                 {isGroupChecked ? <CheckSquare size={16} /> : <Square size={16} />}
                             </div>
-                            <h4 className={`text-[11px] font-bold uppercase tracking-wider leading-tight ${isGroupChecked ? 'opacity-80' : ''}`}>
+                            <h4 className={`text-xs font-bold uppercase tracking-wider leading-tight ${isGroupChecked ? 'opacity-80' : ''}`}>
                                 {group.title}
                             </h4>
                         </div>
@@ -185,7 +185,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                         <div className={`pl-7 pr-2 border-l border-slate-800/50 ml-2.5 mt-1 mb-2 ${isGroupChecked ? 'opacity-50 grayscale' : 'opacity-100'}`}>
                             <ul className="space-y-1">
                                 {group.items.map((item, itemIdx) => (
-                                    <li key={itemIdx} className="flex items-start gap-2 text-[10px] text-slate-400 leading-snug">
+                                    <li key={itemIdx} className="flex items-start gap-2 text-xs text-slate-400 leading-snug">
                                         <span className="mt-1 w-1 h-1 rounded-full bg-slate-600 shrink-0" />
                                         <span>{item}</span>
                                     </li>
@@ -196,7 +196,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                     );
                   })}
                   {!isEnabled && (
-                      <div className="text-center text-[10px] text-slate-500 italic py-2">
+                      <div className="text-center text-xs text-slate-500 italic py-2">
                           Attiva il settore (SI) per spuntare le voci
                       </div>
                   )}

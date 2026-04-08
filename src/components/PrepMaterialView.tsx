@@ -91,16 +91,23 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       list.zones.forEach(z => {
           z.sections.forEach(s => {
               s.components.forEach(c => {
-                  if (c.warehouseState?.isBroken || c.warehouseState?.warehouseNote) {
-                      issues.push({ component: c, zoneName: z.name, sectionName: s.name });
-                  }
-                  // Check contents for kits
-                  if (c.contents) {
-                      c.contents.forEach(sub => {
-                          if (sub.warehouseState?.isBroken || sub.warehouseState?.warehouseNote) {
-                              issues.push({ component: { ...c, name: `${c.name} > ${sub.name}` }, zoneName: z.name, sectionName: s.name });
-                          }
-                      });
+                  const processComp = (comp: ListComponent) => {
+                      if (comp.warehouseState?.isBroken || comp.warehouseState?.warehouseNote) {
+                          issues.push({ component: comp, zoneName: z.name, sectionName: s.name });
+                      }
+                      if (comp.contents) {
+                          comp.contents.forEach(sub => {
+                              if (sub.warehouseState?.isBroken || sub.warehouseState?.warehouseNote) {
+                                  issues.push({ component: { ...comp, name: `${comp.name} > ${sub.name}` }, zoneName: z.name, sectionName: s.name });
+                              }
+                          });
+                      }
+                  };
+                  
+                  if (c.type === 'template' && c.templateContents) {
+                      c.templateContents.forEach(processComp);
+                  } else {
+                      processComp(c);
                   }
               });
           });
@@ -108,7 +115,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       return issues;
   };
 
-  const isComponentUnresolved = (c: ListComponent) => {
+  const isComponentUnresolved = (c: ListComponent): boolean => {
+      if (c.type === 'template' && c.templateContents) {
+          return c.templateContents.some(isComponentUnresolved);
+      }
+      
       const ws = c.warehouseState;
       // If no change log, it's not "unresolved" in the context of "Modified Warning"
       if (!ws?.changeLog) return false;
@@ -196,12 +207,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
             };
 
           zone.sections.forEach(section => {
-              section.components.forEach(comp => {
+              const processComp = (comp: ListComponent, multiplier: number) => {
                   const ws = comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
                   const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
                   
                   // Calculate Original Quantity based on changeLog
-                  const compOriginalQty = ws.changeLog !== undefined ? ws.changeLog.previousQuantity : comp.quantity;
+                  const baseOriginalQty = ws.changeLog !== undefined ? ws.changeLog.previousQuantity : comp.quantity;
+                  const finalQty = comp.quantity * multiplier;
+                  const finalOrigQty = baseOriginalQty * multiplier;
 
                   if (isComplex) {
                       const displayName = comp.type === 'kit' ? `KIT-${comp.name}` : comp.name;
@@ -215,21 +228,21 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           });
                       }
                       const parent = complexItems.get(displayName)!;
-                      parent.totalQty += comp.quantity;
-                      parent.originalTotalQty += compOriginalQty;
+                      parent.totalQty += finalQty;
+                      parent.originalTotalQty += finalOrigQty;
                       
                       if (comp.type !== 'kit') {
-                          if (ws.inDistinta) parent.inDistintaQty += comp.quantity;
-                          if (ws.loaded) parent.loadedQty += comp.quantity;
-                          if (ws.returned) parent.returnedQty += comp.quantity;
+                          if (ws.inDistinta) parent.inDistintaQty += finalQty;
+                          if (ws.loaded) parent.loadedQty += finalQty;
+                          if (ws.returned) parent.returnedQty += finalQty;
                       }
                       if (comp.notes || ws.warehouseNote) parent.hasNote = true;
                       if (ws.isBroken) parent.hasIssue = true;
                       parent.instances.push({ uniqueId: comp.uniqueId, note: ws.warehouseNote, isBroken: ws.isBroken });
                       
                       // Aggrego sia le note di produzione che quelle di magazzino
-                      if (comp.notes) addAggregatedNote(parent.aggregatedNotes, comp.quantity, comp.notes);
-                      if (ws.warehouseNote) addAggregatedNote(parent.aggregatedNotes, comp.quantity, ws.warehouseNote);
+                      if (comp.notes) addAggregatedNote(parent.aggregatedNotes, finalQty, comp.notes);
+                      if (ws.warehouseNote) addAggregatedNote(parent.aggregatedNotes, finalQty, ws.warehouseNote);
 
                       comp.contents?.forEach((sub, subIdx) => {
                           const subWs = sub.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
@@ -243,8 +256,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                               });
                           }
                           const child = parent.children.get(sub.name)!;
-                          const q = sub.quantity * comp.quantity;
-                          const qOriginal = sub.quantity * compOriginalQty;
+                          const q = sub.quantity * finalQty;
+                          const qOriginal = sub.quantity * finalOrigQty;
                           
                           child.totalQty += q;
                           child.originalTotalQty += qOriginal;
@@ -273,19 +286,27 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           });
                       }
                       const item = simpleItems.get(comp.name)!;
-                      item.totalQty += comp.quantity;
-                      item.originalTotalQty += compOriginalQty;
+                      item.totalQty += finalQty;
+                      item.originalTotalQty += finalOrigQty;
                       
-                      if (ws.inDistinta) item.inDistintaQty += comp.quantity;
-                      if (ws.loaded) item.loadedQty += comp.quantity;
-                      if (ws.returned) item.returnedQty += comp.quantity;
+                      if (ws.inDistinta) item.inDistintaQty += finalQty;
+                      if (ws.loaded) item.loadedQty += finalQty;
+                      if (ws.returned) item.returnedQty += finalQty;
                       if (comp.notes || ws.warehouseNote) item.hasNote = true;
                       if (ws.isBroken) item.hasIssue = true;
                       item.instances.push({ uniqueId: comp.uniqueId, note: ws.warehouseNote, isBroken: ws.isBroken });
                       
                       // Aggrego sia le note di produzione che quelle di magazzino
-                      if (comp.notes) addAggregatedNote(item.aggregatedNotes, comp.quantity, comp.notes);
-                      if (ws.warehouseNote) addAggregatedNote(item.aggregatedNotes, comp.quantity, ws.warehouseNote);
+                      if (comp.notes) addAggregatedNote(item.aggregatedNotes, finalQty, comp.notes);
+                      if (ws.warehouseNote) addAggregatedNote(item.aggregatedNotes, finalQty, ws.warehouseNote);
+                  }
+              };
+
+              section.components.forEach(comp => {
+                  if (comp.type === 'template' && comp.templateContents) {
+                      comp.templateContents.forEach(tc => processComp(tc, comp.quantity));
+                  } else {
+                      processComp(comp, 1);
                   }
               });
           });
@@ -350,6 +371,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           }
                       };
                   }
+                  if (c.type === 'template' && c.templateContents) {
+                      const found = c.templateContents.some(tc => tc.uniqueId === componentId);
+                      if (found) {
+                          return {
+                              ...c,
+                              templateContents: c.templateContents.map(tc => 
+                                  tc.uniqueId === componentId 
+                                      ? { ...tc, warehouseState: { ...tc.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' }, ...updates } }
+                                      : tc
+                              )
+                          };
+                      }
+                  }
                   return c;
               })
           }))
@@ -378,6 +412,29 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       };
                       return { ...c, contents: newContents };
                   }
+                  if (c.type === 'template' && c.templateContents) {
+                      const found = c.templateContents.some(tc => tc.uniqueId === componentId);
+                      if (found) {
+                          return {
+                              ...c,
+                              templateContents: c.templateContents.map(tc => {
+                                  if (tc.uniqueId === componentId && tc.contents) {
+                                      const newContents = [...tc.contents];
+                                      const currentContent = newContents[contentIdx];
+                                      newContents[contentIdx] = {
+                                          ...currentContent,
+                                          warehouseState: {
+                                              ...currentContent.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                                              ...updates
+                                          }
+                                      };
+                                      return { ...tc, contents: newContents };
+                                  }
+                                  return tc;
+                              })
+                          };
+                      }
+                  }
                   return c;
               })
           }))
@@ -397,43 +454,52 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           sections: z.sections.map(s => ({
               ...s,
               components: s.components.map(c => {
-                  // Check if this component is a direct target
-                  const isDirectTarget = targets.some(t => t.uniqueId === c.uniqueId);
-                  
-                  // Check if any children are targets
-                  let newContents = c.contents;
-                  if (c.contents) {
-                      const childTargets = targets.filter(t => t.parentId === c.uniqueId);
-                      if (childTargets.length > 0) {
-                          newContents = c.contents.map((sub, idx) => {
-                              if (childTargets.some(t => t.childIdx === idx)) {
-                                  return {
-                                      ...sub,
-                                      warehouseState: {
-                                          ...sub.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-                                          ...updates
-                                      }
-                                  };
-                              }
-                              return sub;
-                          });
+                  const processComp = (comp: ListComponent): ListComponent => {
+                      const isDirectTarget = targets.some(t => t.uniqueId === comp.uniqueId);
+                      let newContents = comp.contents;
+                      
+                      if (comp.contents) {
+                          const childTargets = targets.filter(t => t.parentId === comp.uniqueId);
+                          if (childTargets.length > 0) {
+                              newContents = comp.contents.map((sub, idx) => {
+                                  if (childTargets.some(t => t.childIdx === idx)) {
+                                      return {
+                                          ...sub,
+                                          warehouseState: {
+                                              ...sub.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                                              ...updates
+                                          }
+                                      };
+                                  }
+                                  return sub;
+                              });
+                          }
                       }
+                      
+                      if (isDirectTarget) {
+                          return {
+                              ...comp,
+                              contents: newContents,
+                              warehouseState: {
+                                  ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                                  ...updates
+                              }
+                          };
+                      } else if (newContents !== comp.contents) {
+                          return { ...comp, contents: newContents };
+                      }
+                      
+                      return comp;
+                  };
+
+                  if (c.type === 'template' && c.templateContents) {
+                      const newTC = c.templateContents.map(processComp);
+                      const templateChanged = newTC.some((tc, idx) => tc !== c.templateContents![idx]);
+                      if (templateChanged) return { ...c, templateContents: newTC };
+                      return c;
                   }
 
-                  if (isDirectTarget) {
-                      return {
-                          ...c,
-                          contents: newContents,
-                          warehouseState: {
-                              ...c.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-                              ...updates
-                          }
-                      };
-                  } else if (newContents !== c.contents) {
-                      return { ...c, contents: newContents };
-                  }
-                  
-                  return c;
+                  return processComp(c);
               })
           }))
       }));
@@ -575,20 +641,45 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                    list.zones.forEach(z => {
                        z.sections.forEach(s => {
                            s.components.forEach(c => {
-                               // Check contents (for BOTH Kits and Items)
-                               if (c.contents && c.contents.length > 0) {
-                                   c.contents.forEach(sub => {
-                                       const ws = sub.warehouseState;
+                               const checkComp = (comp: ListComponent) => {
+
+                                   if (comp.contents && comp.contents.length > 0) {
+
+                                       comp.contents.forEach(sub => {
+
+                                           const ws = sub.warehouseState;
+
+                                           if (!ws?.inDistinta || !ws?.loaded) isFullyLoaded = false;
+
+                                           if (!ws?.returned) isReturned = false;
+
+                                       });
+
+                                   }
+
+                                   
+
+                                   if (comp.type !== 'kit') {
+
+                                       const ws = comp.warehouseState;
+
                                        if (!ws?.inDistinta || !ws?.loaded) isFullyLoaded = false;
+
                                        if (!ws?.returned) isReturned = false;
-                                   });
-                               }
-                               
-                               // Check main item (Ignore for Kits as they are just containers)
-                               if (c.type !== 'kit') {
-                                   const ws = c.warehouseState;
-                                   if (!ws?.inDistinta || !ws?.loaded) isFullyLoaded = false;
-                                   if (!ws?.returned) isReturned = false;
+
+                                   }
+
+                               };
+
+
+                               if (c.type === 'template' && c.templateContents) {
+
+                                   c.templateContents.forEach(checkComp);
+
+                               } else {
+
+                                   checkComp(c);
+
                                }
                            });
                        });
@@ -647,15 +738,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                    >
                        <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold text-lg shrink-0 relative">
                            {list.eventName.charAt(0).toUpperCase()}
-                           {list.version && <div className="absolute -bottom-2 -right-2 bg-slate-950 text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">v{list.version}</div>}
+                           {list.version && <div className="absolute -bottom-2 -right-2 bg-slate-950 text-xs px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 font-mono">v{list.version}</div>}
                        </div>
                        
                        <div className="flex-1 min-w-0">
                            <h3 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors truncate flex items-center gap-3">
                                 {list.eventName}
-                                {list.isArchived && <span className="text-[10px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-bold uppercase">Archiviato</span>}
+                                {list.isArchived && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-bold uppercase">Archiviato</span>}
                                 {!list.isArchived && !list.isCompleted && list.isDraftVisible && (
-                                    <span className="text-[10px] bg-orange-600 text-white px-2 py-0.5 rounded font-bold uppercase ring-2 ring-orange-500/20 animate-pulse">
+                                    <span className="text-xs bg-orange-600 text-white px-2 py-0.5 rounded font-bold uppercase ring-2 ring-orange-500/20 animate-pulse">
                                         BOZZA IN LAVORAZIONE (v{list.version})
                                     </span>
                                 )}
@@ -668,7 +759,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                <span className="flex items-center gap-1"><MapPin size={14}/> {list.location}</span>
                                <span className="flex items-center gap-1"><Calendar size={14}/> {new Date(list.eventDate).toLocaleDateString()}</span>
                                {list.completedAt && (
-                                   <span className="hidden md:flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded text-[10px] font-bold text-slate-400 border border-slate-700/50">
+                                   <span className="hidden md:flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded text-xs font-bold text-slate-400 border border-slate-700/50">
                                        Lista del {new Date(list.completedAt).toLocaleString()}
                                    </span>
                                )}
@@ -884,7 +975,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
       return (
           <label className={`flex flex-col items-center gap-1.5 group ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
-              <span className="text-[10px] sm:text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300 border-b-2 border-transparent group-hover:border-current pb-0.5">
+              <span className="text-xs sm:text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300 border-b-2 border-transparent group-hover:border-current pb-0.5">
                   {type === 'distinta' ? 'Distinta' : type === 'carico' ? 'Carico' : 'Rientro'}
               </span>
               <button 
@@ -947,7 +1038,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       <div className="text-xs text-slate-500 flex items-center gap-2">
                           <span>{activeList?.location}</span> • <span>{new Date(activeList?.eventDate || '').toLocaleDateString()}</span>
                           {activeList?.completedAt && (
-                              <span className="ml-2 hidden md:inline-block bg-slate-800 px-2 py-0.5 rounded text-[10px] text-slate-400 font-bold border border-slate-700/50">
+                              <span className="ml-2 hidden md:inline-block bg-slate-800 px-2 py-0.5 rounded text-xs text-slate-400 font-bold border border-slate-700/50">
                                   LISTA DEL {new Date(activeList.completedAt).toLocaleString().toUpperCase()}
                               </span>
                           )}
@@ -1050,15 +1141,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                     <div className="flex gap-3 text-xs border-l border-blue-400 pl-4">
                                         <div className="flex flex-col items-center leading-none" title="Quantità nei Kit">
                                             <span className="font-bold text-lg">{highlightStats.kit}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Kit</span>
+                                            <span className="opacity-70 text-xs uppercase">Kit</span>
                                         </div>
                                         <div className="flex flex-col items-center leading-none" title="Quantità negli Accessori">
                                             <span className="font-bold text-lg">{highlightStats.accessories}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Acc.</span>
+                                            <span className="opacity-70 text-xs uppercase">Acc.</span>
                                         </div>
                                         <div className="flex flex-col items-center leading-none" title="Quantità Sfusi">
                                             <span className="font-bold text-lg">{highlightStats.loose}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Sfusi</span>
+                                            <span className="opacity-70 text-xs uppercase">Sfusi</span>
                                         </div>
                                     </div>
                                 )}
@@ -1079,7 +1170,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                         <div className="flex items-center gap-2"><AlertCircle size={16} /> MATERIALE RIMOSSO NELL'ULTIMA VERSIONE</div>
                                         <button 
                                             onClick={() => clearDeletedItems(activeZone.name)}
-                                            className="text-[10px] bg-rose-500 text-white px-2 py-1 rounded hover:bg-rose-400 transition-colors"
+                                            className="text-xs bg-rose-500 text-white px-2 py-1 rounded hover:bg-rose-400 transition-colors"
                                         >
                                             NASCONDI SEGNALAZIONI
                                         </button>
@@ -1119,7 +1210,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                     </div>
                                     <div className="divide-y divide-slate-800">
                                         {section.components.length === 0 && <div className="p-4 text-center text-slate-600 text-sm">Nessun materiale in questa sezione.</div>}
-                                        {section.components.map(comp => {
+                                        {section.components.flatMap(comp => {
+                                            if (comp.type === 'template' && comp.templateContents) {
+                                                return comp.templateContents.map(tc => ({
+                                                    ...tc,
+                                                    quantity: tc.quantity * comp.quantity,
+                                                }));
+                                            }
+                                            return [comp];
+                                        }).map((comp, compIdx) => {
                                             const isKit = comp.type === 'kit';
                                             
                                             // IF KIT: Render Header + Contents
@@ -1157,7 +1256,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     {hasChanged && (
                                                                         <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
                                                                             {ws.changeLog?.previousQuantity === 0 
-                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-[10px]" : "text-white/60 font-bold uppercase tracking-wider text-[10px]"}> (NUOVO KIT)</span>
+                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
                                                                                 : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{previousVersion})</span>
                                                                             }
                                                                         </span>
@@ -1226,7 +1325,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                 >
                                                                                     {sub.name}
                                                                                 </span>
-                                                                                <span className={`text-[11px] px-1 py-0.2 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
+                                                                                <span className={`text-xs px-1 py-0.2 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
                                                                                 {hasChanged && (
                                                                                     <span className={`text-xs font-medium ml-2 ${contentWarning ? 'text-amber-400 font-bold' : 'opacity-40'}`}>
                                                                                         {ws.changeLog?.previousQuantity === 0 
@@ -1317,7 +1416,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     onClick={() => handleSetHighlight(highlightedItemName === comp.name ? null : comp.name)}
                                                                 >
                                                                     {comp.name}
-                                                                    {comp.isTemporary && <span className="bg-yellow-400 text-black text-[10px] font-bold px-1.5 py-0.5 rounded ml-2 shrink-0">TEMP</span>}
+                                                                    {comp.isTemporary && <span className="bg-yellow-400 text-black text-xs font-bold px-1.5 py-0.5 rounded ml-2 shrink-0">TEMP</span>}
                                                                 </span>
                                                                 <span className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold shrink-0 ${showChangeWarning ? 'bg-amber-500 text-black' : hasAccessories ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-slate-300'}`}>
                                                                     x{comp.quantity}
@@ -1325,7 +1424,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                 {hasChanged && (
                                                                 <span className={`text-xs font-medium ${showChangeWarning ? 'text-amber-400 font-bold' : 'text-slate-300'}`}>
                                                                     {ws.changeLog?.previousQuantity === 0 
-                                                                        ? <span className="text-emerald-400 font-bold uppercase tracking-wider text-[10px] ml-1"> (NUOVO MATERIALE)</span>
+                                                                        ? <span className="text-emerald-400 font-bold uppercase tracking-wider text-xs ml-1"> (NUOVO MATERIALE)</span>
                                                                         : ` (Era: ${ws.changeLog?.previousQuantity} v${previousVersion})`
                                                                     }
                                                                 </span>
@@ -1385,19 +1484,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     return (
                                                                         <>
                                                                              <label className={`${getMobileClass('distinta')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
                                                                                  <button onClick={() => updateComponentState(comp.uniqueId, { inDistinta: !ws.inDistinta })} disabled={isReadOnly} className={`${ws.inDistinta ? 'text-emerald-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
                                                                                      {ws.inDistinta ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`${getMobileClass('carico')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
                                                                                  <button onClick={() => updateComponentState(comp.uniqueId, { loaded: !ws.loaded })} disabled={isReadOnly} className={`${ws.loaded ? 'text-blue-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
                                                                                      {ws.loaded ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`${getMobileClass('rientro')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-[9px] text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
                                                                                  <button onClick={() => updateComponentState(comp.uniqueId, { returned: !ws.returned })} disabled={isReadOnly} className={`${ws.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
                                                                                      {ws.returned ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
                                                                                  </button>
@@ -1575,15 +1674,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                     <div className="flex gap-3 text-xs border-l border-blue-400 pl-4">
                                         <div className="flex flex-col items-center leading-none" title="Quantità nei Kit">
                                             <span className="font-bold text-lg">{highlightStats.kit}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Kit</span>
+                                            <span className="opacity-70 text-xs uppercase">Kit</span>
                                         </div>
                                         <div className="flex flex-col items-center leading-none" title="Quantità negli Accessori">
                                             <span className="font-bold text-lg">{highlightStats.accessories}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Acc.</span>
+                                            <span className="opacity-70 text-xs uppercase">Acc.</span>
                                         </div>
                                         <div className="flex flex-col items-center leading-none" title="Quantità Sfusi">
                                             <span className="font-bold text-lg">{highlightStats.loose}</span>
-                                            <span className="opacity-70 text-[9px] uppercase">Sfusi</span>
+                                            <span className="opacity-70 text-xs uppercase">Sfusi</span>
                                         </div>
                                     </div>
                                 )}
@@ -1670,7 +1769,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                               {data.aggregatedNotes && data.aggregatedNotes.length > 0 && (
                                                   <div className="mt-1 flex flex-col gap-0.5 pl-2 mb-2">
                                                       {data.aggregatedNotes.map((an: any, i: number) => (
-                                                          <div key={i} className="text-[11px] text-slate-400 font-medium">
+                                                          <div key={i} className="text-xs text-slate-400 font-medium">
                                                               ↳ <span className="text-slate-500">{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
                                                           </div>
                                                       ))}
@@ -1746,7 +1845,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                           {childData.aggregatedNotes && childData.aggregatedNotes.length > 0 && (
                                                               <div className="mt-0.5 flex flex-col gap-0.5 pl-4">
                                                                   {childData.aggregatedNotes.map((an: any, i: number) => (
-                                                                      <div key={i} className="text-[10px] text-slate-500">
+                                                                      <div key={i} className="text-xs text-slate-500">
                                                                           ↳ <span>{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
                                                                       </div>
                                                                   ))}
@@ -1829,7 +1928,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                               onClick={() => handleSetHighlight(highlightedItemName === name ? null : name)}
                                                           >
                                                               {data.name}
-                                                              {data.isTemporary && <span className="bg-yellow-400 text-black text-[10px] font-bold px-1.5 py-0.5 rounded ml-2">TEMP</span>}
+                                                              {data.isTemporary && <span className="bg-yellow-400 text-black text-xs font-bold px-1.5 py-0.5 rounded ml-2">TEMP</span>}
                                                           </span>
                                                           <span className={`px-2 py-0.5 rounded text-base font-mono font-bold shrink-0 ${showWarning ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300'}`}>
                                                               x{data.totalQty}
@@ -1844,7 +1943,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                       {data.aggregatedNotes && data.aggregatedNotes.length > 0 && (
                                                           <div className="mt-1 flex flex-col gap-0.5 pl-2 mb-2">
                                                               {data.aggregatedNotes.map((an: any, i: number) => (
-                                                                  <div key={i} className="text-[11px] text-slate-400 font-medium">
+                                                                  <div key={i} className="text-xs text-slate-400 font-medium">
                                                                       ↳ <span className="text-slate-500">{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
                                                                   </div>
                                                               ))}

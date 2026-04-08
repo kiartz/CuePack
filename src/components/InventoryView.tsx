@@ -4,6 +4,7 @@ import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft,
 import { InventoryItem, Category, PackingList, ListComponent } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
+import { Modal } from './Modal';
 import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS } from '../firebase';
 
 interface InventoryViewProps {
@@ -25,6 +26,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   // Deletion & Action Mode State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [activeInventoryAction, setActiveInventoryAction] = useState<'duplicate' | 'delete' | null>(null);
+  const [viewAccessoriesItem, setViewAccessoriesItem] = useState<InventoryItem | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -336,11 +338,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
           <table className="w-full text-left border-collapse whitespace-nowrap md:whitespace-normal">
             <thead className="bg-slate-800 text-slate-300 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="py-2 px-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Nome</th>
-                <th className="py-2 px-2 font-bold text-[10px] uppercase tracking-wider text-slate-500">Cat.</th>
-                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">kg</th>
-                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">Watt</th>
-                <th className="py-2 px-2 font-bold text-right text-[10px] uppercase tracking-wider text-slate-500">Stock</th>
+                <th className="py-2 px-3 font-bold text-xs uppercase tracking-wider text-slate-500">Nome</th>
+                <th className="py-2 px-2 font-bold text-xs uppercase tracking-wider text-slate-500">Cat.</th>
+                <th className="py-2 px-2 font-bold text-right text-xs uppercase tracking-wider text-slate-500">kg</th>
+                <th className="py-2 px-2 font-bold text-right text-xs uppercase tracking-wider text-slate-500">Watt</th>
+                <th className="py-2 px-2 font-bold text-right text-xs uppercase tracking-wider text-slate-500">Stock</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
@@ -375,17 +377,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                             onClick={(e) => e.stopPropagation()}
                           />
                       ) : (
-                          <div className="flex items-center gap-2 cursor-text" title="Doppio click per rinominare">
+                          <div className="flex items-center gap-2" title="Doppio click per rinominare">
                             <div className="font-medium text-white">{item.name}</div>
                             {item.accessories && item.accessories.length > 0 && (
-                            <span title={`${item.accessories.length} accessori collegati`}>
-                                <Link size={14} className="text-slate-500" />
-                            </span>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setViewAccessoriesItem(item); }}
+                              title={`${item.accessories.length} accessori collegati`}
+                              className="text-slate-500 hover:text-blue-400 hover:bg-slate-800 p-1 rounded transition-colors"
+                            >
+                                <Link size={14} className="fill-current" />
+                            </button>
                             )}
                         </div>
                       )}
                       {(!editingCell || editingCell.itemId !== item.id || editingCell?.field !== 'name') && (
-                          <div className="text-sm text-slate-500 truncate max-w-xs cursor-text" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'description'); }}>
+                          <div className="text-sm text-slate-500 truncate max-w-xs" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'description'); }}>
                               {item.description}
                           </div>
                       )}
@@ -396,7 +402,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                       {editingCell?.itemId === item.id && editingCell?.field === 'category' ? (
                           <select 
                             ref={editInputRef as React.RefObject<HTMLSelectElement>}
-                            className="bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-white outline-none text-[10px]"
+                            className="bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-white outline-none text-xs"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             onBlur={saveInlineEdit}
@@ -406,7 +412,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                              {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                       ) : (
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-bold border cursor-pointer
                             ${item.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
                             item.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
                             item.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
@@ -435,7 +441,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                 onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className="text-slate-300 font-mono text-xs cursor-pointer" title="Doppio click per modificare peso">{item.weight}</span>
+                             <span className="text-slate-300 font-mono text-xs" title="Doppio click per modificare peso">{item.weight}</span>
                         )}
                     </td>
 
@@ -454,7 +460,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                 onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className={`font-mono text-xs cursor-pointer ${(item.powerConsumption || 0) > 0 ? 'text-yellow-400' : 'text-slate-500'}`} title="Doppio click per modificare consumo">
+                             <span className={`font-mono text-xs ${(item.powerConsumption || 0) > 0 ? 'text-yellow-400' : 'text-slate-500'}`} title="Doppio click per modificare consumo">
                                 {item.powerConsumption || 0}
                              </span>
                         )}
@@ -474,7 +480,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                 onClick={(e) => e.stopPropagation()}
                              />
                         ) : (
-                             <span className={`font-mono text-xs font-bold cursor-pointer ${item.inStock > 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Doppio click per modificare stock">
+                             <span className={`font-mono text-xs font-bold ${item.inStock > 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Doppio click per modificare stock">
                                 {item.inStock}
                              </span>
                         )}
@@ -536,6 +542,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         title="Elimina Materiale"
         message="Sei sicuro di voler eliminare questo materiale dall'inventario?"
       />
+      
+      <Modal isOpen={!!viewAccessoriesItem} onClose={() => setViewAccessoriesItem(null)} title={`Accessori di ${viewAccessoriesItem?.name}`} size="md">
+        <div className="space-y-2">
+            {viewAccessoriesItem?.accessories?.map((acc, idx) => {
+                const accItem = items.find(i => i.id === acc.itemId);
+                return (
+                    <div key={idx} className="flex justify-between items-center bg-slate-800 p-3 rounded-lg border border-slate-700">
+                        <div className="flex flex-col">
+                            <span className="text-sm font-bold text-white max-w-[200px] sm:max-w-xs truncate">{accItem ? accItem.name : 'Oggetto Sconosciuto'}</span>
+                            <span className="text-xs text-slate-400">{accItem ? accItem.category : ''}</span>
+                        </div>
+                        <span className="text-sm font-mono font-bold bg-slate-900 border border-slate-600 text-slate-300 px-2 py-1 rounded">x{acc.quantity}</span>
+                    </div>
+                );
+            })}
+        </div>
+      </Modal>
     </div>
   );
 };

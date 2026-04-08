@@ -174,7 +174,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
             <div key={idx} className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-800/50 group">
                 <div className="flex-1 min-w-0 pr-2">
                     <div className="text-sm text-slate-200 truncate">{accName}</div>
-                    <div className="text-[10px] text-slate-500">Accessorio collegato</div>
+                    <div className="text-xs text-slate-500">Accessorio collegato</div>
                 </div>
                 <div className="flex items-center gap-2">
                     <input type="number" min="1" className="w-10 bg-slate-800 border border-slate-700 rounded px-1 py-0.5 text-center text-white text-xs outline-none focus:border-blue-500" value={acc.quantity} onChange={(e) => updateAccessoryQuantity(acc.itemId, parseInt(e.target.value))} />
@@ -213,53 +213,44 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   );
 
   const renderQuickCreateForm = () => (
-      <div className="absolute inset-0 z-20 bg-slate-900 flex flex-col animate-in fade-in zoom-in-95 rounded-xl">
-          <div className="flex justify-between items-center p-6 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                  <button onClick={() => setIsQuickCreateOpen(false)} className="text-slate-400 hover:text-white mr-2"><ArrowLeft size={20} /></button>
-                  <h2 className="text-xl font-bold text-white">Nuovo Accessorio</h2>
-              </div>
-              <button onClick={() => setIsQuickCreateOpen(false)} className="text-slate-400 hover:text-white"><X size={24} /></button>
+    <Modal isOpen={isQuickCreateOpen} onClose={() => setIsQuickCreateOpen(false)} title="Nuovo Accessorio" size="lg">
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome</label>
+          <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickForm.name} onChange={e => setQuickForm({...quickForm, name: e.target.value})} placeholder="Es. Gancio Aliscaf" autoFocus />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Categoria</label>
+            <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickForm.category} onChange={e => setQuickForm({...quickForm, category: e.target.value as Category})}>
+              {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
-          <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
-              <div className="max-w-3xl mx-auto space-y-4">
-                  <div className="space-y-1">
-                      <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome</label>
-                      <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none" value={quickForm.name} onChange={e => setQuickForm({...quickForm, name: e.target.value})} placeholder="Es. Gancio Aliscaf" autoFocus />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Categoria</label>
-                          <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none" value={quickForm.category} onChange={e => setQuickForm({...quickForm, category: e.target.value as Category})}>
-                              {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Stock Totale</label>
-                          <input type="number" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-right" value={quickForm.inStock} onChange={e => setQuickForm({...quickForm, inStock: parseInt(e.target.value) || 0})} />
-                      </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Peso (kg)</label>
-                          <input type="number" step="0.01" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none" value={quickWeightInput} onChange={e => handleNumericInputChange(e, setQuickWeightInput, 'weight', setQuickForm)} />
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Consumo (W)</label>
-                          <input type="number" step="1" min="0" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none" value={quickPowerInput} onChange={e => handleNumericInputChange(e, setQuickPowerInput, 'powerConsumption', setQuickForm)} placeholder="0 se non elettrico" />
-                      </div>
-                  </div>
-                  <div className="space-y-1">
-                      <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Descrizione</label>
-                      <textarea className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none h-24 resize-none" value={quickForm.description} onChange={e => setQuickForm({...quickForm, description: e.target.value})} placeholder="Dettagli aggiuntivi..." />
-                  </div>
-              </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Stock Totale</label>
+            <input type="number" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-right" value={quickForm.inStock} onChange={e => setQuickForm({...quickForm, inStock: parseInt(e.target.value) || 0})} />
           </div>
-          <div className="flex flex-col-reverse md:flex-row justify-end gap-3 p-6 border-t border-slate-800 bg-slate-900 rounded-b-xl">
-              <button onClick={() => setIsQuickCreateOpen(false)} className="w-full md:w-auto px-4 py-3 md:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
-              <button onClick={handleCreateAndAddAccessory} disabled={!quickForm.name} className="w-full md:w-auto px-6 py-3 md:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Crea Accessorio</button>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Peso (kg)</label>
+            <input type="number" step="0.01" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickWeightInput} onChange={e => handleNumericInputChange(e, setQuickWeightInput, 'weight', setQuickForm)} />
           </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Consumo (W)</label>
+            <input type="number" step="1" min="0" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickPowerInput} onChange={e => handleNumericInputChange(e, setQuickPowerInput, 'powerConsumption', setQuickForm)} placeholder="0 se non elettrico" />
+          </div>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Descrizione</label>
+          <textarea className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none h-20 resize-none" value={quickForm.description} onChange={e => setQuickForm({...quickForm, description: e.target.value})} placeholder="Dettagli aggiuntivi..." />
+        </div>
       </div>
+      <div className="flex flex-col-reverse md:flex-row justify-end gap-3 pt-6 border-t border-slate-800 mt-4">
+        <button onClick={() => setIsQuickCreateOpen(false)} className="w-full md:w-auto px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
+        <button onClick={handleCreateAndAddAccessory} disabled={!quickForm.name} className="w-full md:w-auto px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Crea Accessorio</button>
+      </div>
+    </Modal>
   );
 
   return (
@@ -320,14 +311,15 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                 {accessorySearch ? renderAccessorySearch() : renderAccessoryList()}
             </div>
         </div>
-
-        {isQuickCreateOpen && renderQuickCreateForm()}
       </div>
 
       <div className="flex flex-col-reverse md:flex-row justify-end gap-3 pt-6 border-t border-slate-800 mt-2">
         <button onClick={onClose} className="w-full md:w-auto px-4 py-3 md:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
         <button onClick={handleSubmit} disabled={!formData.name} className="w-full md:w-auto px-6 py-3 md:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Salva Materiale</button>
       </div>
+
+      {renderQuickCreateForm()}
     </Modal>
   );
 };
+

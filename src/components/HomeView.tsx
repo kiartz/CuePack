@@ -226,9 +226,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         <div className="text-center space-y-1 pb-8">
             <div className="text-xs text-slate-500 font-medium tracking-wide transition-opacity">
-                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.1</span>
+                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.2</span>
             </div>
-            <div className="text-[10px] text-slate-600 uppercase tracking-widest font-bold">
+            <div className="text-xs text-slate-600 uppercase tracking-widest font-bold">
                 Cloud Sync Active • Warehouse Unified
             </div>
         </div>

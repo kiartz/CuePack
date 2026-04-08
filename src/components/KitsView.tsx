@@ -152,9 +152,9 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
           <table className="w-full text-left border-collapse whitespace-nowrap">
             <thead className="bg-slate-800 text-slate-300 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="py-2 px-3 font-bold text-[10px] uppercase tracking-wider text-slate-500">Nome Kit</th>
-                <th className="py-2 px-2 font-bold text-[10px] uppercase tracking-wider text-slate-500">Categoria</th>
-                <th className="py-2 px-2 font-bold text-center text-[10px] uppercase tracking-wider text-slate-500">Elementi</th>
+                <th className="py-2 px-3 font-bold text-xs uppercase tracking-wider text-slate-500">Nome Kit</th>
+                <th className="py-2 px-2 font-bold text-xs uppercase tracking-wider text-slate-500">Categoria</th>
+                <th className="py-2 px-2 font-bold text-center text-xs uppercase tracking-wider text-slate-500">Elementi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
@@ -182,12 +182,12 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
                             </div>
                             <div className="font-medium text-white">{kit.name}</div>
                         </div>
-                        <div className="hidden md:block text-[10px] text-slate-500 truncate max-w-xs mt-0.5">
+                        <div className="hidden md:block text-xs text-slate-500 truncate max-w-xs mt-0.5">
                             {kit.description || 'Nessuna descrizione.'}
                         </div>
                     </td>
                     <td className="py-2 px-2">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold border uppercase tracking-wider
                           ${kit.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
                             kit.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
                             kit.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
