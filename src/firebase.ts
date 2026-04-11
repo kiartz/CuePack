@@ -40,12 +40,29 @@ export const COLL_CHECKLIST_CONFIG = 'checklist_config';
 // --- Generic Helper Functions ---
 
 /**
+ * Strips 'undefined' values recursively from an object to prevent Firestore errors.
+ */
+const cleanData = (obj: any): any => {
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanData(item));
+  } else if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([_, value]) => value !== undefined)
+        .map(([key, value]) => [key, cleanData(value)])
+    );
+  }
+  return obj;
+};
+
+/**
  * Adds or Overwrites a document in a collection with a specific ID.
  */
 export const addOrUpdateItem = async <T extends { id: string }>(collectionName: string, item: T) => {
   try {
     const docRef = doc(db, collectionName, item.id);
-    await setDoc(docRef, item);
+    const cleaned = cleanData(item);
+    await setDoc(docRef, cleaned);
   } catch (error) {
     console.error(`Error writing to ${collectionName}:`, error);
     throw error;
@@ -58,7 +75,8 @@ export const addOrUpdateItem = async <T extends { id: string }>(collectionName: 
 export const updateItemFields = async <T extends object>(collectionName: string, id: string, fields: Partial<T>) => {
   try {
     const docRef = doc(db, collectionName, id);
-    await updateDoc(docRef, fields as any); // updateDoc requires an object, any is safe here for the fields mapping
+    const cleaned = cleanData(fields);
+    await updateDoc(docRef, cleaned); 
   } catch (error) {
     console.error(`Error updating ${collectionName}:`, error);
     throw error;
@@ -84,7 +102,8 @@ export const batchWriteItems = async <T extends { id: string }>(collectionName: 
     const batch = writeBatch(db);
     items.forEach(item => {
         const docRef = doc(db, collectionName, item.id);
-        batch.set(docRef, item);
+        const cleaned = cleanData(item);
+        batch.set(docRef, cleaned);
     });
     await batch.commit();
 };

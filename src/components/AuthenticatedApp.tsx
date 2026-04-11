@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks } from 'lucide-react';
+import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { TemplatesView } from './TemplatesView';
@@ -9,13 +9,14 @@ import { HomeView } from './HomeView';
 import { ChecklistView } from './ChecklistView';
 import { ChecklistManager } from './ChecklistManager';
 import { PrepMaterialView } from './PrepMaterialView';
+import { CalendarView } from './CalendarView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
 import { InventoryItem, Kit, Template, PackingList, ChecklistCategory } from '../types';
 import { db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, batchWriteItems, addOrUpdateItem } from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
-type View = 'home' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material';
+type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material' | 'logistica-personale' | 'logistica-mezzi' | 'logistica-hotel' | 'utility-calcolo-elettrico' | 'utility-pixelmap' | 'utility-calcolo-ledwall' | 'utility-calcolo-stripled';
 
 export default function AuthenticatedApp() {
   const [currentView, setCurrentView] = useState<View>('home');
@@ -38,6 +39,17 @@ export default function AuthenticatedApp() {
 
   // Mobile menu state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  
+  // Desktop sidebar state
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Auto-collapse sidebar when in builder
+  useEffect(() => {
+    if (currentView === 'lists' && activeListId) {
+      setIsSidebarCollapsed(true);
+    }
+  }, [currentView, activeListId]);
   
   // State for cross-view navigation (e.g. duplicate from archive)
   const [listToOpenInBuilderId, setListToOpenInBuilderId] = useState<string | null>(null);
@@ -136,11 +148,43 @@ export default function AuthenticatedApp() {
 
   const navItems = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'inventory', label: 'Inventario', icon: Layers },
-    { id: 'kits', label: 'Kit Materiale', icon: Package },
-    { id: 'templates', label: 'Template', icon: Blocks },
-    { id: 'lists', label: 'Crea Liste', icon: ClipboardList },
-    { id: 'prep-material', label: 'Magazzino', icon: Truck },
+    { id: 'calendar', label: 'Calendario', icon: Calendar },
+    { 
+       id: 'inventory-group', 
+       label: 'Inventario', 
+       icon: Layers, 
+       isGroup: true,
+       subItems: [
+           { id: 'inventory', label: 'Materiale', icon: Layers },
+           { id: 'kits', label: 'Kit', icon: Package },
+           { id: 'templates', label: 'Template', icon: Blocks }
+       ]
+    },
+    { id: 'lists', label: 'Eventi', icon: ClipboardList },
+    { id: 'prep-material', label: 'Preparazione Eventi', icon: Truck },
+    { 
+       id: 'logistica-group', 
+       label: 'Logistica', 
+       icon: Truck, 
+       isGroup: true,
+       subItems: [
+           { id: 'logistica-personale', label: 'Personale', icon: Users },
+           { id: 'logistica-mezzi', label: 'Mezzi', icon: Truck },
+           { id: 'logistica-hotel', label: 'Hotel', icon: Building }
+       ]
+    },
+    { 
+       id: 'utility-group', 
+       label: 'Utility', 
+       icon: Wrench, 
+       isGroup: true,
+       subItems: [
+           { id: 'utility-calcolo-elettrico', label: 'Calcolo Elettrico', icon: Zap },
+           { id: 'utility-pixelmap', label: 'Pixelmap', icon: Map },
+           { id: 'utility-calcolo-ledwall', label: 'Calcolo Ledwall', icon: Monitor },
+           { id: 'utility-calcolo-stripled', label: 'Calcolo Stripled', icon: Zap }
+       ]
+    },
   ];
 
   const handleLogout = () => {
@@ -284,6 +328,14 @@ export default function AuthenticatedApp() {
             kits={kits} 
             lists={packingLists}
         />;
+      case 'calendar':
+        return <CalendarView 
+            lists={packingLists}
+            onOpenEvent={(id) => {
+               setActiveListId(id);
+               setCurrentView('lists');
+            }}
+        />;
       case 'lists':
         return <PackingListBuilder 
           inventory={inventory} 
@@ -308,6 +360,21 @@ export default function AuthenticatedApp() {
           checklist={masterChecklist}
           onBack={() => setCurrentView('home')}
         />;
+      case 'logistica-personale':
+      case 'logistica-mezzi':
+      case 'logistica-hotel':
+      case 'utility-calcolo-elettrico':
+      case 'utility-pixelmap':
+      case 'utility-calcolo-ledwall':
+      case 'utility-calcolo-stripled':
+        const title = navItems.flatMap(g => g.subItems || []).find(s => s.id === currentView)?.label || 'Pagina in costruzione';
+        return (
+             <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
+                 <Wrench size={48} className="opacity-20" />
+                 <h2 className="text-xl font-bold">{title}</h2>
+                 <p>Contenuto in arrivo...</p>
+             </div>
+        );
       default:
         return <div>Seleziona una voce dal menu</div>;
     }
@@ -316,67 +383,103 @@ export default function AuthenticatedApp() {
   return (
     <div className="flex h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans">
       
-      {/* Sidebar (Desktop) */}
-      <aside className="hidden md:flex w-72 flex-col bg-slate-900 border-r border-slate-800 shrink-0">
+       {/* Sidebar (Desktop) */}
+      <aside className={`hidden md:flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 transition-all duration-300 ${isSidebarCollapsed ? 'w-16' : 'w-72'}`}>
         {/* Header - NANO Compact */}
-        <div className="p-2 px-3 border-b border-slate-800 shrink-0 bg-slate-950/50">
-          <div className="flex items-center gap-1.5">
-             <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-xs">C</div>
-             <h1 className="text-xs font-bold tracking-tight uppercase opacity-80">CuePack</h1>
-          </div>
-          <p className="text-xs text-slate-600 leading-none mt-0.5">Cloud Rental Management</p>
+        <div className="p-2 px-3 border-b border-slate-800 shrink-0 bg-slate-950/50 flex items-center justify-between">
+          {!isSidebarCollapsed && (
+              <div className="flex items-center gap-1.5 overflow-hidden">
+                 <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-xs shrink-0">C</div>
+                 <div className="flex flex-col min-w-0">
+                     <h1 className="text-xs font-bold tracking-tight uppercase opacity-80 truncate">CuePack</h1>
+                     <p className="text-[10px] text-slate-600 leading-none mt-0.5 truncate">Cloud Rental Management</p>
+                 </div>
+              </div>
+          )}
+          <button 
+             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+             className={`p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors ${isSidebarCollapsed ? 'mx-auto' : ''}`}
+             title={isSidebarCollapsed ? "Espandi menu" : "Riduci menu"}
+          >
+             <Menu size={18} />
+          </button>
         </div>
         
         {/* Navigation Menu */}
-        <nav className="p-4 space-y-2 shrink-0">
+        <nav className={`p-4 space-y-2 shrink-0 flex-1 overflow-y-auto custom-scrollbar ${isSidebarCollapsed ? 'px-2' : ''}`}>
           {navItems.map(item => {
+             if (item.isGroup) {
+                 return (
+                   <div key={item.id} className="w-full">
+                     <button
+                       onClick={() => {
+                         if (isSidebarCollapsed) {
+                           setIsSidebarCollapsed(false);
+                           setOpenGroups(prev => ({ ...prev, [item.id]: true }));
+                         } else {
+                           setOpenGroups(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+                         }
+                       }}
+                       className={`w-full flex items-center px-4 py-3 rounded-lg transition-all text-slate-400 hover:bg-slate-800 hover:text-white ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-between'}`}
+                       title={isSidebarCollapsed ? item.label : undefined}
+                     >
+                       <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                         <item.icon size={20} />
+                         {!isSidebarCollapsed && <span className="font-medium">{item.label}</span>}
+                       </div>
+                       {!isSidebarCollapsed && (openGroups[item.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+                     </button>
+                     {openGroups[item.id] && !isSidebarCollapsed && (
+                       <div className="mt-1 ml-4 pl-4 border-l-2 border-slate-800 space-y-1">
+                         {(item.subItems || []).map(sub => {
+                           const SubIcon = sub.icon;
+                           return (
+                             <button
+                               key={sub.id}
+                               onClick={() => setCurrentView(sub.id as View)}
+                               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm
+                                 ${currentView === sub.id 
+                                   ? 'bg-blue-600/20 text-blue-400 font-bold' 
+                                   : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'}`}
+                             >
+                               <SubIcon size={16} />
+                               <span>{sub.label}</span>
+                             </button>
+                           )
+                         })}
+                       </div>
+                     )}
+                   </div>
+                 )
+             }
+
              const Icon = item.icon;
              return (
                <button
                  key={item.id}
                  onClick={() => setCurrentView(item.id as View)}
-                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all
+                 className={`w-full flex items-center px-4 py-3 rounded-lg transition-all ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3'}
                    ${currentView === item.id 
                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30' 
                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                 title={isSidebarCollapsed ? item.label : undefined}
                >
                  <Icon size={20} />
-                 <span className="font-medium">{item.label}</span>
+                 {!isSidebarCollapsed && <span className="font-medium">{item.label}</span>}
                </button>
              )
           })}
         </nav>
 
-        {/* CHECKLIST WIDGET (Scrollable Area) */}
-        {activeList && (
-            <div className="flex-1 overflow-hidden flex flex-col border-t border-slate-800 bg-slate-950/30">
-                <div className="p-3 bg-slate-900/50 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800 flex justify-between items-center">
-                    <span>Checklist: {activeList.eventName.substring(0, 12)}{activeList.eventName.length > 12 ? '...' : ''}</span>
-                    <span className="bg-slate-800 px-1.5 rounded text-slate-400">
-                        {activeList.checklistCheckedItems?.length || 0} OK
-                    </span>
-                </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
-                    <ChecklistView 
-                        activeList={activeList}
-                        checklist={masterChecklist}
-                    />
-                </div>
-            </div>
-        )}
-        {!activeList && (
-            <div className="flex-1 border-t border-slate-800 bg-slate-950/30 flex items-center justify-center text-slate-500 text-xs p-4 text-center">
-                Seleziona un evento per vedere la Checklist
-            </div>
-        )}
-
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex justify-between items-center">
-           <div className="flex flex-col gap-1">
-              <span>© R. Chiartano</span>
-              <span className="opacity-50 text-xs">v0.5.2 (Templates System)</span>
-           </div>
-           <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors" title="Esci">
+        <div className={`p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex items-center transition-all ${isSidebarCollapsed ? 'flex-col gap-3 justify-center' : 'justify-between'}`}>
+           {!isSidebarCollapsed && (
+               <div className="flex flex-col gap-1 overflow-hidden min-w-0">
+                  <span className="truncate">© R. Chiartano</span>
+                  <span className="opacity-50 text-[10px] truncate">v0.5.3 (Skill Sync)</span>
+               </div>
+           )}
+           <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
              <LogOut size={16} />
            </button>
         </div>
@@ -389,22 +492,59 @@ export default function AuthenticatedApp() {
             <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-400 p-1.5 hover:bg-slate-800 rounded-lg transition-colors"><X size={20} /></button>
          </div>
          <nav className="p-6 space-y-4 overflow-y-auto max-h-[calc(100dvh-5rem)] pb-24">
-            {navItems.map(item => (
-                <button
-                    key={item.id}
-                    onClick={() => { setCurrentView(item.id as View); setIsMobileMenuOpen(false); }}
-                    className={`w-full text-left px-4 py-3 rounded-lg text-lg font-medium ${currentView === item.id ? 'bg-blue-600 text-white' : 'text-slate-400'}`}
-                >
-                    {item.label}
-                </button>
-            ))}
+            {navItems.map(item => {
+                if (item.isGroup) {
+                     return (
+                       <div key={item.id} className="w-full">
+                         <button
+                           onClick={() => setOpenGroups(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                           className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-lg font-medium text-slate-400 hover:bg-slate-800 transition-all`}
+                         >
+                           <span className="flex items-center gap-3"><item.icon size={20}/> {item.label}</span>
+                           {openGroups[item.id] ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                         </button>
+                         {openGroups[item.id] && (
+                           <div className="mt-2 ml-4 pl-4 border-l-2 border-slate-800 space-y-2">
+                             {(item.subItems || []).map(sub => {
+                               const SubIcon = sub.icon;
+                               return (
+                                 <button
+                                   key={sub.id}
+                                   onClick={() => { setCurrentView(sub.id as View); setIsMobileMenuOpen(false); }}
+                                   className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-base font-medium
+                                     ${currentView === sub.id 
+                                       ? 'bg-blue-600/20 text-blue-400' 
+                                       : 'text-slate-400 hover:bg-slate-800/50'}`}
+                                 >
+                                   <SubIcon size={18} />
+                                   <span>{sub.label}</span>
+                                 </button>
+                               )
+                             })}
+                           </div>
+                         )}
+                       </div>
+                     )
+                }
+                
+                return (
+                    <button
+                        key={item.id}
+                        onClick={() => { setCurrentView(item.id as View); setIsMobileMenuOpen(false); }}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-lg font-medium ${currentView === item.id ? 'bg-blue-600 text-white' : 'text-slate-400'}`}
+                    >
+                        <item.icon size={20} />
+                        {item.label}
+                    </button>
+                )
+            })}
             <div className="pt-8 border-t border-slate-800">
                 <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg text-lg font-medium text-rose-500 hover:bg-slate-800 flex items-center gap-2">
                     <LogOut size={20} /> Esci
                 </button>
             </div>
             <div className="pt-8 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                CuePack Manager ✨ v0.5.2
+                CuePack Manager ✨ v0.5.3
             </div>
          </nav>
       </div>

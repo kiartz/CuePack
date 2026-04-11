@@ -62,6 +62,9 @@ export interface ListComponent {
   templateContents?: ListComponent[]; // Dedicated field for Templates to hold fully-formed kits/items
   notes?: string;
   warehouseState?: WarehouseState;
+  isExternalRental?: boolean; // Legacy/General flag for overbooked items
+  rentalType?: 'internal_shortage' | 'external_rental'; 
+  externalRentalVendor?: string;
   isTemporary?: boolean;
 }
 
@@ -97,12 +100,26 @@ export interface ListZone {
 
 export interface PackingList {
   id: string;
-  // 'name' removed in favor of eventName to avoid ambiguity
   eventName: string;
   eventDate: string;
+  endDate?: string;
   setupDate?: string;
   location: string;
   customer?: string;
+  personnel?: string[]; // E.g., 'Mario, Luigi (Audio)'
+  
+  // Nelle info aggiunte per logistica:
+  setupCompany?: string;       // Azienda allestitore
+  designAuthor?: string;       // Autore disegno
+  executiveManager?: string;   // Responsabile esecutivo
+  truckLoadDate?: string;      // Data carico camion
+  teardownDate?: string;       // Data smontaggio
+  returnDate?: string;         // Data rientro
+  hotel?: string;              // Hotel
+  technicalDrawingLink?: string; // Link al disegno tecnico
+  personnelPasses?: { name: string; link: string; role?: string }[]; // Link ai pass e ruoli
+  extraDays?: string[];        // Array di ISO Date (YYYY-MM-DD) per giorni viaggio/extra
+
   description?: string;
   creationDate: string;
   zones?: ListZone[]; // New structure
