@@ -476,7 +476,7 @@ export default function AuthenticatedApp() {
            {!isSidebarCollapsed && (
                <div className="flex flex-col gap-1 overflow-hidden min-w-0">
                   <span className="truncate">© R. Chiartano</span>
-                  <span className="opacity-50 text-[10px] truncate">v0.5.3 (Skill Sync)</span>
+                  <span className="opacity-50 text-[10px] truncate">v0.5.4 (Skill Sync)</span>
                </div>
            )}
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
@@ -544,7 +544,7 @@ export default function AuthenticatedApp() {
                 </button>
             </div>
             <div className="pt-8 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                CuePack Manager ✨ v0.5.3
+                 CuePack Manager ✨ v0.5.4
             </div>
          </nav>
       </div>
