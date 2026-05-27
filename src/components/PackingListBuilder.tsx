@@ -93,6 +93,14 @@ const InlineNoteInput: React.FC<{
             onChange={(e) => handleChange(e.target.value)}
             onFocus={() => { isFocused.current = true; }}
             onBlur={handleBlur}
+            draggable={false}
+            onDragStart={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }}
+            onMouseDown={(e) => {
+                e.stopPropagation();
+            }}
         />
     );
 };
