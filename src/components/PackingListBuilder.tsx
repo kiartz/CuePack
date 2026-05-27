@@ -455,6 +455,38 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return total;
   }, [activeList, highlightedItemName]);
 
+  const getSectionHighlightedQty = useCallback((section: ListSection) => {
+    if (!highlightedItemName) return 0;
+    let total = 0;
+    section.components.forEach(comp => {
+      if (comp.name === highlightedItemName) {
+        total += comp.quantity;
+      }
+      comp.contents?.forEach(sub => {
+        if (sub.name === highlightedItemName) {
+          total += (sub.quantity * comp.quantity);
+        }
+      });
+      if (comp.type === 'template' && comp.templateContents) {
+        comp.templateContents.forEach(tc => {
+          if (tc.name === highlightedItemName) {
+            total += (tc.quantity * comp.quantity);
+          }
+        });
+      }
+    });
+    return total;
+  }, [highlightedItemName]);
+
+  const getZoneHighlightedQty = useCallback((zone: ListZone) => {
+    if (!highlightedItemName) return 0;
+    let total = 0;
+    zone.sections.forEach(section => {
+      total += getSectionHighlightedQty(section);
+    });
+    return total;
+  }, [highlightedItemName, getSectionHighlightedQty]);
+
   // --- HIGHLIGHT & WARNING LOGIC (Placed here to access activeZone) ---
 
   // --- Map of Quantities currently in the List (Global) ---
@@ -2452,13 +2484,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         onChange={(e) => setActiveZoneId(e.target.value)}
                         className="flex-1 bg-slate-900 text-emerald-400 font-bold rounded border border-slate-800 px-1 py-1 outline-none min-w-0"
                     >
-                        {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+                        {zones.map(z => {
+                            const label = highlightedItemName 
+                                ? `${z.name} (${getZoneHighlightedQty(z)})` 
+                                : z.name;
+                            return <option key={z.id} value={z.id}>{label}</option>;
+                        })}
                     </select>
                     <button onClick={() => openMgmtModal('zone', 'create')} className="p-1.5 bg-emerald-900/20 rounded text-emerald-500 border border-emerald-900/30"><Plus size={14} /></button>
                 </div>
                 
                 <div className="w-[1px] h-4 bg-slate-800"></div>
-
+ 
                 <div className="flex-1 flex items-center gap-2 min-w-0">
                     <div className="shrink-0 flex items-center gap-1 text-slate-500 font-bold uppercase">
                         <AlignLeft size={14} /> Set.
@@ -2468,7 +2505,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         onChange={(e) => setActiveSectionId(e.target.value)}
                         className="flex-1 bg-slate-900 text-blue-400 font-bold rounded border border-slate-800 px-1 py-1 outline-none min-w-0"
                     >
-                        {sections.map(s => <option key={s.id} value={s.id}>{s.name} ({s.components.length})</option>)}
+                        {sections.map(s => {
+                            const label = highlightedItemName 
+                                ? `${s.name} (${getSectionHighlightedQty(s)})` 
+                                : `${s.name} (${s.components.length})`;
+                            return <option key={s.id} value={s.id}>{label}</option>;
+                        })}
                     </select>
                     {sections.length > 1 && (
                         <div className="flex items-center gap-0.5 shrink-0">
@@ -2526,6 +2568,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         className={`px-4 py-2 rounded-t-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 border-t border-x ${activeZoneId === z.id ? 'bg-slate-900 text-white border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'}`}
                     >
                         {z.name}
+                        {highlightedItemName && (
+                            <span className={`px-1.5 py-0.5 rounded-full text-xs transition-all duration-300 ${
+                                getZoneHighlightedQty(z) > 0 
+                                ? 'bg-blue-950 text-blue-400 border border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-extrabold animate-pulse' 
+                                : 'bg-slate-950 text-slate-600 border border-slate-900'
+                            }`}>
+                                {getZoneHighlightedQty(z)}
+                            </span>
+                        )}
                         {activeZoneId === z.id && (
                             <div className="flex items-center gap-1 ml-2 opacity-50 hover:opacity-100">
                                 <Edit2 size={12} onClick={(e) => { e.stopPropagation(); openMgmtModal('zone', 'rename', z.id, z.name); }} className="hover:text-emerald-400" />
@@ -2563,7 +2614,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-all whitespace-nowrap flex items-center gap-2 group cursor-grab active:cursor-grabbing ${draggedSectionId === s.id ? 'opacity-30 scale-95 border-dashed border-slate-700' : ''} ${activeSectionId === s.id ? 'bg-slate-900 text-white border-t border-x border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'} ${getDragIndicatorClass(s.id)}`}
             >
               {s.name}
-              <span className="bg-slate-950 px-1.5 py-0.5 rounded-full text-xs text-slate-500">{s.components.length}</span>
+              {highlightedItemName ? (
+                  <span className={`px-1.5 py-0.5 rounded-full text-xs transition-all duration-300 ${
+                      getSectionHighlightedQty(s) > 0 
+                      ? 'bg-blue-950 text-blue-400 border border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.3)] font-extrabold animate-pulse' 
+                      : 'bg-slate-950 text-slate-600 border border-slate-900'
+                  }`}>
+                      {getSectionHighlightedQty(s)}
+                  </span>
+              ) : (
+                  <span className="bg-slate-950 px-1.5 py-0.5 rounded-full text-xs text-slate-500">{s.components.length}</span>
+              )}
               {activeSectionId === s.id && (
                   <div className="flex items-center gap-1 ml-1">
                       {sections.indexOf(s) > 0 && (
