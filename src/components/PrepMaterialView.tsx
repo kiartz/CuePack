@@ -983,6 +983,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           {/* Header */}
           <div className="bg-slate-900 border-b border-slate-800 p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto">
+                   {/* Desktop Back Button */}
+                   <button 
+                       onClick={() => { setActiveListId(null); setActiveWarehouseMode(null); }} 
+                       className="hidden lg:flex p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg items-center gap-2 group mr-2" 
+                       title="Torna alle Liste"
+                   >
+                       <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform"/>
+                   </button>
+
                    {/* Desktop-only Direct Mode Switcher */}
                    <div className="hidden lg:flex items-center bg-slate-950 p-1 rounded-xl border border-slate-700 shadow-inner mr-2">
                        <button 

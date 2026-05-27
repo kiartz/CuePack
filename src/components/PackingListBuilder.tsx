@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -29,6 +29,73 @@ interface PackingListBuilderProps {
   listToAutoEditId?: string | null;
   onListAutoEdited?: () => void;
 }
+
+const InlineNoteInput: React.FC<{
+    uniqueId: string;
+    initialValue: string;
+    onSave: (uniqueId: string, note: string) => void;
+    autoFocus?: boolean;
+}> = ({ uniqueId, initialValue, onSave, autoFocus }) => {
+    const [val, setVal] = useState(initialValue);
+    const isFocused = useRef(false);
+    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    // Sync only when NOT focused to avoid cursor reset on async db update
+    useEffect(() => {
+        if (!isFocused.current) {
+            setVal(initialValue);
+        }
+    }, [initialValue]);
+
+    // Focus input and place cursor at the end when autoFocus is true
+    useEffect(() => {
+        if (autoFocus && inputRef.current) {
+            inputRef.current.focus();
+            const length = inputRef.current.value.length;
+            inputRef.current.setSelectionRange(length, length);
+        }
+    }, [autoFocus]);
+
+    // Clear timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        };
+    }, []);
+
+    const handleChange = (newVal: string) => {
+        setVal(newVal);
+        
+        // Debounce database write (e.g. 400ms)
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => {
+            onSave(uniqueId, newVal);
+        }, 400);
+    };
+
+    const handleBlur = () => {
+        isFocused.current = false;
+        // On blur, immediately save any pending changes
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+        }
+        onSave(uniqueId, val);
+    };
+
+    return (
+        <input 
+            ref={inputRef}
+            type="text" 
+            placeholder="Aggiungi una nota..." 
+            className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300" 
+            value={val} 
+            onChange={(e) => handleChange(e.target.value)}
+            onFocus={() => { isFocused.current = true; }}
+            onBlur={handleBlur}
+        />
+    );
+};
 
 export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({ 
   inventory, 
@@ -108,6 +175,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // REPLACEMENT STATE
   const [replacingComponentId, setReplacingComponentId] = useState<string | null>(null);
 
+  // DRAG & DROP FOR SECTIONS
+  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
+  const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null);
+
   // New Item Modal
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
   
@@ -119,6 +190,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       category: '',
       notes: ''
   });
+  const [editingTempItemUniqueId, setEditingTempItemUniqueId] = useState<string | null>(null);
 
   // Mobile Checklist View State
   const [isMobileChecklistOpen, setIsMobileChecklistOpen] = useState(false);
@@ -299,6 +371,23 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       if (kit) {
           setEditingKit(kit);
           setIsEditKitModalOpen(true);
+          return;
+      }
+      
+      // Look for temporary item in active list
+      if (activeList && activeList.zones) {
+          const allComponents = activeList.zones.flatMap(z => z.sections.flatMap(s => s.components));
+          const tempComp = allComponents.find(c => c.isTemporary && c.name === name);
+          if (tempComp) {
+              setTempItemFormData({
+                  name: tempComp.name,
+                  quantity: tempComp.quantity,
+                  category: tempComp.category || '',
+                  notes: tempComp.notes || ''
+              });
+              setEditingTempItemUniqueId(tempComp.uniqueId);
+              setIsTempItemModalOpen(true);
+          }
       }
   };
 
@@ -717,10 +806,90 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
   
   // Helper to update active section (inside active zone)
-  const updateActiveSection = (sectionUpdates: Partial<ListSection>) => {
+   const updateActiveSection = (sectionUpdates: Partial<ListSection>) => {
       if (!activeList || !activeZone || !activeSection) return;
       const newSections = activeZone.sections.map(s => s.id === activeSection.id ? { ...s, ...sectionUpdates } : s);
       updateActiveZone({ sections: newSections });
+  };
+
+  // Helper to move a section (reparto) inside the active zone left or right
+  const handleMoveSection = (sectionId: string, direction: 'left' | 'right') => {
+      if (!activeList || !activeZone) return;
+      const sectionIndex = activeZone.sections.findIndex(s => s.id === sectionId);
+      if (sectionIndex === -1) return;
+      
+      const newIndex = direction === 'left' ? sectionIndex - 1 : sectionIndex + 1;
+      if (newIndex < 0 || newIndex >= activeZone.sections.length) return;
+      
+      const newSections = [...activeZone.sections];
+      // Swap
+      const temp = newSections[sectionIndex];
+      newSections[sectionIndex] = newSections[newIndex];
+      newSections[newIndex] = temp;
+      
+      updateActiveZone({ sections: newSections });
+  };
+
+  // Drag & drop handlers for sections (reparti)
+  const handleSectionDragStart = (e: React.DragEvent, id: string) => {
+      e.dataTransfer.setData('text/plain', id);
+      setDraggedSectionId(id);
+  };
+
+  const handleSectionDragOver = (e: React.DragEvent, id: string) => {
+      e.preventDefault();
+      if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+      }
+      if (dragOverSectionId !== id) {
+          setDragOverSectionId(id);
+      }
+  };
+
+  const handleSectionDragLeave = () => {
+      setDragOverSectionId(null);
+  };
+
+  const handleSectionDragEnd = () => {
+      setDraggedSectionId(null);
+      setDragOverSectionId(null);
+  };
+
+  const handleSectionDrop = (e: React.DragEvent, targetId: string) => {
+      e.preventDefault();
+      const sourceId = e.dataTransfer.getData('text/plain') || draggedSectionId;
+      setDraggedSectionId(null);
+      setDragOverSectionId(null);
+      
+      if (!sourceId || sourceId === targetId || !activeZone || !activeList) return;
+      
+      const newSections = [...activeZone.sections];
+      const sourceIndex = newSections.findIndex(s => s.id === sourceId);
+      const targetIndex = newSections.findIndex(s => s.id === targetId);
+      
+      if (sourceIndex === -1 || targetIndex === -1) return;
+      
+      // Move source to target position
+      const [removed] = newSections.splice(sourceIndex, 1);
+      newSections.splice(targetIndex, 0, removed);
+      
+      updateActiveZone({ sections: newSections });
+  };
+
+  // Helper to determine the drop indicator border class (left or right blue line)
+  const getDragIndicatorClass = (currentSectionId: string) => {
+      if (!draggedSectionId || dragOverSectionId !== currentSectionId || draggedSectionId === currentSectionId) return '';
+      
+      const draggedIndex = sections.findIndex(s => s.id === draggedSectionId);
+      const currentIndex = sections.findIndex(s => s.id === currentSectionId);
+      
+      if (draggedIndex === -1 || currentIndex === -1) return '';
+      
+      if (draggedIndex < currentIndex) {
+          return 'border-r-4 border-r-blue-500 pr-1 transition-all';
+      } else {
+          return 'border-l-4 border-l-blue-500 pl-1 transition-all';
+      }
   };
 
 
@@ -1012,6 +1181,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const handleSaveTempItem = async () => {
       if (!activeSection || !tempItemFormData.name) return;
       
+      if (editingTempItemUniqueId) {
+          // EDIT MODE
+          const newComponents = activeSection.components.map(c => 
+              c.uniqueId === editingTempItemUniqueId ? {
+                  ...c,
+                  name: tempItemFormData.name,
+                  quantity: tempItemFormData.quantity,
+                  category: tempItemFormData.category || Category.OTHER,
+                  notes: tempItemFormData.notes
+              } : c
+          );
+          updateActiveSection({ components: newComponents });
+          setEditingTempItemUniqueId(null);
+          setIsTempItemModalOpen(false);
+          // Highlight again with updated name
+          setHighlightedItemName(tempItemFormData.name);
+          return;
+      }
+      
+      // ADD MODE
       const newComponent: ListComponent = {
           uniqueId: Date.now().toString(),
           type: 'item',
@@ -1030,7 +1219,23 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           }
       };
       
-      updateActiveSection({ components: [...activeSection.components, newComponent] });
+      let newComponents = [...activeSection.components];
+      let lastSelectedIndex = -1;
+      for (let i = activeSection.components.length - 1; i >= 0; i--) {
+          if (selectedIds.has(activeSection.components[i].uniqueId)) {
+              lastSelectedIndex = i;
+              break;
+          }
+      }
+
+      if (lastSelectedIndex !== -1) {
+          newComponents.splice(lastSelectedIndex + 1, 0, newComponent);
+      } else {
+          newComponents.push(newComponent);
+      }
+      
+      updateActiveSection({ components: newComponents });
+      setLastAddedComponentId(newComponent.uniqueId);
       setIsTempItemModalOpen(false);
   };
 
@@ -2257,6 +2462,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     >
                         {sections.map(s => <option key={s.id} value={s.id}>{s.name} ({s.components.length})</option>)}
                     </select>
+                    {sections.length > 1 && (
+                        <div className="flex items-center gap-0.5 shrink-0">
+                            <button 
+                                disabled={sections.findIndex(s => s.id === activeSectionId) === 0}
+                                onClick={() => handleMoveSection(activeSectionId, 'left')} 
+                                className="p-1 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded disabled:opacity-30 disabled:pointer-events-none"
+                                title="Sposta a sinistra"
+                            >
+                                <ChevronLeft size={12} />
+                            </button>
+                            <button 
+                                disabled={sections.findIndex(s => s.id === activeSectionId) === sections.length - 1}
+                                onClick={() => handleMoveSection(activeSectionId, 'right')} 
+                                className="p-1 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded disabled:opacity-30 disabled:pointer-events-none"
+                                title="Sposta a destra"
+                            >
+                                <ChevronRight size={12} />
+                            </button>
+                        </div>
+                    )}
                     <button onClick={() => openMgmtModal('section', 'create')} className="p-1.5 bg-blue-900/20 rounded text-blue-500 border border-blue-900/30"><Plus size={14} /></button>
                 </div>
              </div>
@@ -2321,14 +2546,38 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             <button
               key={s.id}
               onClick={() => setActiveSectionId(s.id)}
-              className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-2 group ${activeSectionId === s.id ? 'bg-slate-900 text-white border-t border-x border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'}`}
+              draggable={true}
+              onDragStart={(e) => handleSectionDragStart(e, s.id)}
+              onDragOver={(e) => handleSectionDragOver(e, s.id)}
+              onDragLeave={handleSectionDragLeave}
+              onDragEnd={handleSectionDragEnd}
+              onDrop={(e) => handleSectionDrop(e, s.id)}
+              className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-all whitespace-nowrap flex items-center gap-2 group cursor-grab active:cursor-grabbing ${draggedSectionId === s.id ? 'opacity-30 scale-95 border-dashed border-slate-700' : ''} ${activeSectionId === s.id ? 'bg-slate-900 text-white border-t border-x border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'} ${getDragIndicatorClass(s.id)}`}
             >
               {s.name}
               <span className="bg-slate-950 px-1.5 py-0.5 rounded-full text-xs text-slate-500">{s.components.length}</span>
               {activeSectionId === s.id && (
                   <div className="flex items-center gap-1 ml-1">
-                      <Edit2 size={12} onClick={(e) => { e.stopPropagation(); openMgmtModal('section', 'rename', s.id, s.name); }} className="hover:text-emerald-400" />
-                      <Trash2 size={12} onClick={(e) => { e.stopPropagation(); setSectionToDelete(s.id); }} className="hover:text-rose-500" />
+                      {sections.indexOf(s) > 0 && (
+                          <button 
+                              onClick={(e) => { e.stopPropagation(); handleMoveSection(s.id, 'left'); }} 
+                              className="text-slate-400 hover:text-blue-400 p-0.5 rounded transition-colors"
+                              title="Sposta a sinistra"
+                          >
+                              <ChevronLeft size={12} />
+                          </button>
+                      )}
+                      <Edit2 size={12} onClick={(e) => { e.stopPropagation(); openMgmtModal('section', 'rename', s.id, s.name); }} className="hover:text-emerald-400 cursor-pointer" />
+                      <Trash2 size={12} onClick={(e) => { e.stopPropagation(); setSectionToDelete(s.id); }} className="hover:text-rose-500 cursor-pointer" />
+                      {sections.indexOf(s) < sections.length - 1 && (
+                          <button 
+                              onClick={(e) => { e.stopPropagation(); handleMoveSection(s.id, 'right'); }} 
+                              className="text-slate-400 hover:text-blue-400 p-0.5 rounded transition-colors"
+                              title="Sposta a destra"
+                          >
+                              <ChevronRight size={12} />
+                          </button>
+                      )}
                   </div>
               )}
             </button>
@@ -2750,7 +2999,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                             ref={el => { qtyInputRefs.current[comp.uniqueId] = el }} 
                                             type="number" 
                                             min="1" 
-                                            className="w-7 h-7 bg-transparent text-center text-white text-xs outline-none appearance-none font-bold" 
+                                            className="w-12 h-7 bg-transparent text-center text-white text-xs outline-none appearance-none font-bold" 
                                             value={comp.quantity} 
                                             onChange={(e) => updateComponentQty(comp.uniqueId, Number(e.target.value))}
                                             onKeyDown={(e) => {
@@ -2789,7 +3038,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
                           {(openNoteIds.has(comp.uniqueId) || comp.notes) && (
                               <div className="mt-1.5 pl-8 pr-16">
-                                  <input type="text" placeholder="Aggiungi una nota..." className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-300" value={comp.notes||''} onChange={(e) => updateComponentNote(comp.uniqueId, e.target.value)} />
+                                  <InlineNoteInput uniqueId={comp.uniqueId} initialValue={comp.notes || ''} onSave={updateComponentNote} autoFocus={openNoteIds.has(comp.uniqueId)} />
                               </div>
                           )}
 
@@ -3039,7 +3288,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       />
 
       {/* Temporary Item Modal */}
-      <Modal isOpen={isTempItemModalOpen} onClose={() => setIsTempItemModalOpen(false)} title="Aggiungi Articolo Temporaneo">
+      <Modal 
+          isOpen={isTempItemModalOpen} 
+          onClose={() => { setIsTempItemModalOpen(false); setEditingTempItemUniqueId(null); }} 
+          title={editingTempItemUniqueId ? "Modifica Articolo Temporaneo" : "Aggiungi Articolo Temporaneo"}
+      >
           <div className="space-y-4">
               <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">Nome</label>
@@ -3085,13 +3338,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   />
               </div>
               <div className="flex justify-end gap-3 pt-4">
-                  <button onClick={() => setIsTempItemModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Annulla</button>
+                  <button onClick={() => { setIsTempItemModalOpen(false); setEditingTempItemUniqueId(null); }} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Annulla</button>
                   <button 
                       onClick={handleSaveTempItem}
                       disabled={!tempItemFormData.name}
                       className="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow-lg shadow-amber-900/20 transition-all active:scale-95 disabled:opacity-50"
                   >
-                      Aggiungi
+                      {editingTempItemUniqueId ? "Salva" : "Aggiungi"}
                   </button>
               </div>
           </div>
