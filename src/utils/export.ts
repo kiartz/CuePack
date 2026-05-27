@@ -81,23 +81,21 @@ export const exportPDF = (activeList: PackingList) => {
       
       let currentY = 25;
       if (zone.notes) {
-          const splitNotes = doc.splitTextToSize(`NOTE: ${zone.notes}`, 174);
-          const boxHeight = (splitNotes.length * 5) + 6;
-          
-          // Background light yellow
-          doc.setFillColor(255, 255, 204);
-          doc.rect(14, currentY, 182, boxHeight, 'F');
-          
-          // Black text
+          const noteText = `NOTE: ${zone.notes}`;
           doc.setFontSize(10);
           doc.setFont("helvetica", "italic");
+          
+          const textWidth = doc.getTextWidth(noteText);
+          
+          // Background highlighter (light yellow)
+          doc.setFillColor(255, 255, 204);
+          doc.rect(14, currentY - 3.5, textWidth + 2, 5, 'F');
+          
+          // Black text
           doc.setTextColor(0, 0, 0);
+          doc.text(noteText, 15, currentY);
           
-          splitNotes.forEach((line: string, i: number) => {
-              doc.text(line, 18, currentY + 5 + (i * 5));
-          });
-          
-          currentY += boxHeight + 5;
+          currentY += 8;
       }
 
       const zoneTotals = calculateZoneTotals(zone);
@@ -118,17 +116,13 @@ export const exportPDF = (activeList: PackingList) => {
               if (comp.isTemporary) nameContent += ' (TEMP)';
               if (comp.type === 'kit') nameContent = `[KIT] ${comp.name}`;
               
+              if (comp.notes) {
+                  nameContent += `\nNOTE: ${comp.notes}`;
+              }
+              
               const zoneTotal = zoneTotals.get(comp.name) || 0;
               
               tableBody.push([nameContent, comp.quantity, zoneTotal, '']);
-              
-              if (comp.notes) {
-                  tableBody.push([{
-                      content: `  ↳ NOTE: ${comp.notes}`,
-                      colSpan: 4,
-                      styles: { fillColor: [255, 255, 204], textColor: [0, 0, 0], fontStyle: 'italic', fontSize: 9 }
-                  }]);
-              }
               
               comp.contents?.forEach(sub => {
                   const subZoneTotal = zoneTotals.get(sub.name) || 0;
@@ -154,6 +148,40 @@ export const exportPDF = (activeList: PackingList) => {
               2: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
               3: { cellWidth: 20 }
           },
+          willDrawCell: (data) => {
+              if (data.column.index === 0 && data.cell.text && data.cell.text.length > 1) {
+                  const cell = data.cell;
+                  const padding = cell.styles.cellPadding;
+                  let paddingTop = 3;
+                  let paddingLeft = 3;
+                  if (typeof padding === 'number') {
+                      paddingTop = padding;
+                      paddingLeft = padding;
+                  } else if (Array.isArray(padding)) {
+                      paddingTop = padding[0] !== undefined ? padding[0] : 3;
+                      paddingLeft = padding[3] !== undefined ? padding[3] : 3;
+                  } else if (padding && typeof padding === 'object') {
+                      const p = padding as any;
+                      paddingTop = p.top !== undefined ? p.top : 3;
+                      paddingLeft = p.left !== undefined ? p.left : 3;
+                  }
+                  const fontSize = cell.styles.fontSize || 11;
+                  
+                  let isNoteLine = false;
+                  cell.text.forEach((line, i) => {
+                      if (line.includes('NOTE:')) {
+                          isNoteLine = true;
+                      }
+                      if (isNoteLine) {
+                          const textWidth = doc.getTextWidth(line);
+                          const yRect = cell.y + paddingTop + (i * fontSize * 1.15) + (fontSize * 0.05);
+                          
+                          doc.setFillColor(255, 255, 204);
+                          doc.rect(cell.x + paddingLeft, yRect, textWidth + 1, fontSize * 0.9, 'F');
+                      }
+                  });
+              }
+          },
           didDrawPage: (data) => {
               printHeader(zone.name, data.pageNumber);
           }
@@ -168,21 +196,21 @@ export const exportPDF = (activeList: PackingList) => {
       doc.setFont("helvetica", "bold");
       doc.text("Note Evento", 14, 30);
       
-      const splitNotes = doc.splitTextToSize(activeList.notes, 174);
-      const boxHeight = (splitNotes.length * 5) + 6;
-      const notesY = 35;
-      
-      // Background light yellow
-      doc.setFillColor(255, 255, 204);
-      doc.rect(14, notesY, 182, boxHeight, 'F');
-      
-      // Black text
-      doc.setFontSize(10);
+      const splitNotes = doc.splitTextToSize(activeList.notes, 180);
+      doc.setFontSize(11);
       doc.setFont("helvetica", "normal");
-      doc.setTextColor(0, 0, 0);
       
       splitNotes.forEach((line: string, i: number) => {
-          doc.text(line, 18, notesY + 5 + (i * 5));
+          const textWidth = doc.getTextWidth(line);
+          const lineY = 40 + (i * 6);
+          
+          // Background highlighter (light yellow)
+          doc.setFillColor(255, 255, 204);
+          doc.rect(14, lineY - 4.5, textWidth + 2, 5.5, 'F');
+          
+          // Black text
+          doc.setTextColor(0, 0, 0);
+          doc.text(line, 15, lineY);
       });
   }
 
@@ -304,8 +332,13 @@ export const exportTotalsPDF = (activeList: PackingList) => {
           }]);
 
           sortedComplex.forEach(([displayName, data]) => {
+              let label = displayName;
+              data.aggregatedNotes.forEach(n => {
+                  label += `\nNOTE: x${n.qty} ${n.text}`;
+              });
+
               tableBody.push([{ 
-                  content: displayName, 
+                  content: label, 
                   styles: { 
                       fontStyle: 'bold',
                       textColor: [0, 0, 0],
@@ -313,20 +346,15 @@ export const exportTotalsPDF = (activeList: PackingList) => {
                   }
               }, data.totalQty, '']);
 
-              data.aggregatedNotes.forEach(n => {
-                  tableBody.push([{
-                      content: `  ↳ NOTE: x${n.qty} ${n.text}`,
-                      colSpan: 3,
-                      styles: { fillColor: [255, 255, 204], textColor: [0, 0, 0], fontStyle: 'italic', fontSize: 9 }
-                  }]);
-              });
-
               const sortedChildren = Array.from(data.children.entries()).sort((a, b) => a[0].localeCompare(b[0]));
               sortedChildren.forEach(([childName, childData]) => {
                   let childLabel = `  - ${childName}`;
                   if (childData.prepNote) {
                       childLabel += ` (Destinazione/Prep: ${childData.prepNote})`;
                   }
+                  childData.aggregatedNotes.forEach(n => {
+                      childLabel += `\nNOTE: x${n.qty} ${n.text}`;
+                  });
 
                   tableBody.push([{ 
                       content: childLabel, 
@@ -335,14 +363,6 @@ export const exportTotalsPDF = (activeList: PackingList) => {
                           fontSize: 10 
                       }
                   }, childData.qty, '']);
-
-                  childData.aggregatedNotes.forEach(n => {
-                      tableBody.push([{
-                          content: `    ↳ NOTE: x${n.qty} ${n.text}`,
-                          colSpan: 3,
-                          styles: { fillColor: [255, 255, 204], textColor: [0, 0, 0], fontStyle: 'italic', fontSize: 9 }
-                      }]);
-                  });
               });
           });
       }
@@ -358,6 +378,9 @@ export const exportTotalsPDF = (activeList: PackingList) => {
 
           sortedSimple.forEach(([name, data]) => {
               let simpleLabel = data.isTemporary ? `${name} (TEMP)` : name;
+              data.aggregatedNotes.forEach(n => {
+                  simpleLabel += `\nNOTE: x${n.qty} ${n.text}`;
+              });
 
               tableBody.push([{
                   content: simpleLabel,
@@ -365,14 +388,6 @@ export const exportTotalsPDF = (activeList: PackingList) => {
                       fontSize: 11
                   }
               }, data.totalQty, '']);
-
-              data.aggregatedNotes.forEach(n => {
-                  tableBody.push([{
-                      content: `  ↳ NOTE: x${n.qty} ${n.text}`,
-                      colSpan: 3,
-                      styles: { fillColor: [255, 255, 204], textColor: [0, 0, 0], fontStyle: 'italic', fontSize: 9 }
-                  }]);
-              });
           });
       }
 
@@ -388,6 +403,40 @@ export const exportTotalsPDF = (activeList: PackingList) => {
               0: { cellWidth: 'auto' }, 
               1: { cellWidth: 40, halign: 'center', fontStyle: 'bold' },
               2: { cellWidth: 20 }
+          },
+          willDrawCell: (data) => {
+              if (data.column.index === 0 && data.cell.text && data.cell.text.length > 1) {
+                  const cell = data.cell;
+                  const padding = cell.styles.cellPadding;
+                  let paddingTop = 3;
+                  let paddingLeft = 3;
+                  if (typeof padding === 'number') {
+                      paddingTop = padding;
+                      paddingLeft = padding;
+                  } else if (Array.isArray(padding)) {
+                      paddingTop = padding[0] !== undefined ? padding[0] : 3;
+                      paddingLeft = padding[3] !== undefined ? padding[3] : 3;
+                  } else if (padding && typeof padding === 'object') {
+                      const p = padding as any;
+                      paddingTop = p.top !== undefined ? p.top : 3;
+                      paddingLeft = p.left !== undefined ? p.left : 3;
+                  }
+                  const fontSize = cell.styles.fontSize || 11;
+                  
+                  let isNoteLine = false;
+                  cell.text.forEach((line, i) => {
+                      if (line.includes('NOTE:')) {
+                          isNoteLine = true;
+                      }
+                      if (isNoteLine) {
+                          const textWidth = doc.getTextWidth(line);
+                          const yRect = cell.y + paddingTop + (i * fontSize * 1.15) + (fontSize * 0.05);
+                          
+                          doc.setFillColor(255, 255, 204);
+                          doc.rect(cell.x + paddingLeft, yRect, textWidth + 1, fontSize * 0.9, 'F');
+                      }
+                  });
+              }
           },
           didDrawPage: (data) => {
               printHeader(zone.name, data.pageNumber);
@@ -484,23 +533,21 @@ export const exportSectionPDF = (activeList: PackingList, zoneId: string, sectio
 
   let currentY = 25;
   if (zone.notes) {
-      const splitNotes = doc.splitTextToSize(`NOTE ZONA: ${zone.notes}`, 174);
-      const boxHeight = (splitNotes.length * 5) + 6;
-      
-      // Background light yellow
-      doc.setFillColor(255, 255, 204);
-      doc.rect(14, currentY, 182, boxHeight, 'F');
-      
-      // Black text
+      const noteText = `NOTE ZONA: ${zone.notes}`;
       doc.setFontSize(10);
       doc.setFont("helvetica", "italic");
+      
+      const textWidth = doc.getTextWidth(noteText);
+      
+      // Background highlighter (light yellow)
+      doc.setFillColor(255, 255, 204);
+      doc.rect(14, currentY - 3.5, textWidth + 2, 5, 'F');
+      
+      // Black text
       doc.setTextColor(0, 0, 0);
+      doc.text(noteText, 15, currentY);
       
-      splitNotes.forEach((line: string, i: number) => {
-          doc.text(line, 18, currentY + 5 + (i * 5));
-      });
-      
-      currentY += boxHeight + 5;
+      currentY += 8;
   }
 
   const zoneTotals = calculateZoneTotals(zone);
@@ -519,24 +566,20 @@ export const exportSectionPDF = (activeList: PackingList, zoneId: string, sectio
           if (comp.isTemporary) nameContent += ' (TEMP)';
           if (comp.type === 'kit') nameContent = `[KIT] ${comp.name}`;
           
+          if (comp.notes) {
+              nameContent += `\nNOTE: ${comp.notes}`;
+          }
+          
           const zoneTotal = zoneTotals.get(comp.name) || 0;
           
           tableBody.push([nameContent, comp.quantity, zoneTotal, '']);
-          
-          if (comp.notes) {
-              tableBody.push([{
-                  content: `  ↳ NOTE: ${comp.notes}`,
-                  colSpan: 4,
-                  styles: { fillColor: [255, 255, 204], textColor: [0, 0, 0], fontStyle: 'italic', fontSize: 9 }
-              }]);
-          }
           
           comp.contents?.forEach(sub => {
               const subZoneTotal = zoneTotals.get(sub.name) || 0;
               tableBody.push([{ 
                   content: `  - ${sub.name}`, 
                   styles: { fontSize: 10, textColor: [80, 80, 80] } 
-              }, sub.quantity * comp.quantity, subZoneTotal, '']);
+                  }, sub.quantity * comp.quantity, subZoneTotal, '']);
           });
       });
   }
@@ -554,6 +597,40 @@ export const exportSectionPDF = (activeList: PackingList, zoneId: string, sectio
           1: { cellWidth: 20, halign: 'center' }, 
           2: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
           3: { cellWidth: 20 }
+      },
+      willDrawCell: (data) => {
+          if (data.column.index === 0 && data.cell.text && data.cell.text.length > 1) {
+              const cell = data.cell;
+              const padding = cell.styles.cellPadding;
+              let paddingTop = 3;
+              let paddingLeft = 3;
+              if (typeof padding === 'number') {
+                  paddingTop = padding;
+                  paddingLeft = padding;
+              } else if (Array.isArray(padding)) {
+                  paddingTop = padding[0] !== undefined ? padding[0] : 3;
+                  paddingLeft = padding[3] !== undefined ? padding[3] : 3;
+              } else if (padding && typeof padding === 'object') {
+                  const p = padding as any;
+                  paddingTop = p.top !== undefined ? p.top : 3;
+                  paddingLeft = p.left !== undefined ? p.left : 3;
+              }
+              const fontSize = cell.styles.fontSize || 11;
+              
+              let isNoteLine = false;
+              cell.text.forEach((line, i) => {
+                  if (line.includes('NOTE:')) {
+                      isNoteLine = true;
+                  }
+                  if (isNoteLine) {
+                      const textWidth = doc.getTextWidth(line);
+                      const yRect = cell.y + paddingTop + (i * fontSize * 1.15) + (fontSize * 0.05);
+                      
+                      doc.setFillColor(255, 255, 204);
+                      doc.rect(cell.x + paddingLeft, yRect, textWidth + 1, fontSize * 0.9, 'F');
+                  }
+              });
+          }
       },
       didDrawPage: (data) => {
           printHeader(zone.name, section.name, data.pageNumber);
