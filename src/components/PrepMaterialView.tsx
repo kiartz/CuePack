@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2 } from 'lucide-react';
+import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, FileText, ClipboardList, FileDown } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection } from '../types';
 import { addOrUpdateItem, deleteItem, COLL_LISTS } from '../firebase';
 import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
+import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
 
 interface PrepMaterialViewProps {
   lists: PackingList[];
@@ -31,6 +32,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   // Detail View State
   const [activeZoneId, setActiveZoneId] = useState<string>('');
   const [viewMode, setViewMode] = useState<'zones' | 'totals'>('zones');
+  const [exportList, setExportList] = useState<PackingList | null>(null);
   const [showOnlyChanges, setShowOnlyChanges] = useState(false);
   
   // Highlight State (Totals View)
@@ -790,6 +792,18 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                            <button 
                                 onClick={(e) => {
                                     e.stopPropagation();
+                                    setExportList(list);
+                                }}
+                                className="p-3 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-blue-900/20 flex items-center justify-center gap-1.5"
+                                title="Export Lista"
+                           >
+                               <Share size={18} />
+                               <span className="text-xs font-bold uppercase tracking-tight hidden lg:inline">Export</span>
+                           </button>
+
+                           <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
                                     setArchiveConfirm({
                                         isOpen: true,
                                         listId: list.id,
@@ -890,6 +904,106 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
             confirmText="Elimina Ora"
             variant="danger"
         />
+
+        {/* Export Options Modal for List View */}
+        <Modal 
+            isOpen={!!exportList} 
+            onClose={() => setExportList(null)} 
+            title="Export Lista Materiale"
+            size="md"
+        >
+            <div className="space-y-4">
+                <p className="text-sm text-slate-400">
+                    Seleziona il formato in cui desideri esportare la lista per l'evento <strong>{exportList?.eventName}</strong>:
+                </p>
+                
+                <div className="grid grid-cols-1 gap-3">
+                    {/* OPTION 1: PDF LISTA */}
+                    <button 
+                        onClick={() => { if (exportList) { exportPDF(exportList); setExportList(null); } }}
+                        className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-blue-500/50 rounded-xl text-left transition-all duration-200 group"
+                    >
+                        <div className="p-3 bg-blue-900/30 text-blue-400 rounded-lg group-hover:scale-110 transition-transform">
+                            <FileText size={24} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <h4 className="font-bold text-white text-sm">Lista Materiale (PDF)</h4>
+                            <p className="text-xs text-slate-400 mt-0.5">Ordinata per zone e reparti con caselle di spunta (check-list).</p>
+                        </div>
+                    </button>
+
+                    {/* OPTION 2: PDF TOTALI */}
+                    <button 
+                        onClick={() => { if (exportList) { exportTotalsPDF(exportList); setExportList(null); } }}
+                        className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-purple-500/50 rounded-xl text-left transition-all duration-200 group"
+                    >
+                        <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg group-hover:scale-110 transition-transform">
+                            <ClipboardList size={24} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <h4 className="font-bold text-white text-sm">Riepilogo Totali (PDF)</h4>
+                            <p className="text-xs text-slate-400 mt-0.5">Raggruppamento globale dei totali divisi tra Kit e materiale sfuso.</p>
+                        </div>
+                    </button>
+
+                    {/* OPTION 3: CSV EXCEL */}
+                    <button 
+                        onClick={() => { if (exportList) { exportCSV(exportList); setExportList(null); } }}
+                        className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-left transition-all duration-200 group"
+                    >
+                        <div className="p-3 bg-emerald-900/30 text-emerald-400 rounded-lg group-hover:scale-110 transition-transform">
+                            <FileDown size={24} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <h4 className="font-bold text-white text-sm">Export in CSV (Excel)</h4>
+                            <p className="text-xs text-slate-400 mt-0.5">Scarica un file CSV tabellare compatibile con Excel o altri gestionali.</p>
+                        </div>
+                    </button>
+                </div>
+
+                {/* ALL OTHER DEPARTMENTS SELECTOR */}
+                {exportList && exportList.zones && exportList.zones.length > 0 && (
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center gap-4 text-left transition-all duration-200">
+                            <div className="p-2.5 bg-slate-800 text-slate-400 rounded-lg border border-slate-700/50">
+                                <Layers size={18} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <h4 className="font-bold text-white text-xs uppercase tracking-wider opacity-80">Seleziona un singolo Reparto</h4>
+                                <p className="text-[11px] text-slate-500 mt-0.5">Esporta solo il PDF di uno dei reparti configurati:</p>
+                            </div>
+                        </div>
+                        <div className="space-y-2.5 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                            {exportList.zones.map(zone => (
+                                <div key={zone.id} className="space-y-1">
+                                    <div className="text-[10px] uppercase font-extrabold text-slate-500 tracking-widest pl-1">{zone.name}</div>
+                                    <div className="flex flex-wrap gap-1.5 pl-2 pb-1">
+                                        {zone.sections?.map(section => (
+                                            <button
+                                                key={section.id}
+                                                onClick={() => { exportSectionPDF(exportList, zone.id, section.id); setExportList(null); }}
+                                                className="px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200 text-[11px] font-bold rounded transition-colors"
+                                            >
+                                                {section.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex justify-end pt-2 border-t border-slate-800">
+                    <button 
+                        onClick={() => setExportList(null)}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                    >
+                        Annulla
+                    </button>
+                </div>
+            </div>
+        </Modal>
       </div>
     );
   }
@@ -1040,21 +1154,32 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       </div>
                   </div>
 
-                  {/* VIEW SWITCHER (Optimized for Mobile) */}
-                  <div className="flex items-center bg-slate-800 rounded-lg p-1 shrink-0">
+                  {/* VIEW SWITCHER AND EXPORT BUTTON */}
+                  <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center bg-slate-800 rounded-lg p-1">
+                          <button 
+                              onClick={() => setViewMode('zones')}
+                              className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'zones' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                              title="Vista Reparti"
+                          >
+                              <Layers size={18} /> <span className="hidden sm:inline">Reparti</span>
+                          </button>
+                          <button 
+                              onClick={() => setViewMode('totals')}
+                              className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'totals' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                              title="Vista Totali"
+                          >
+                              <LayoutList size={18} /> <span className="hidden sm:inline">Totali</span>
+                          </button>
+                      </div>
+
                       <button 
-                          onClick={() => setViewMode('zones')}
-                          className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'zones' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                          title="Vista Reparti"
+                          onClick={() => setExportList(activeList || null)} 
+                          title="Export Lista" 
+                          className="flex items-center gap-1.5 p-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors border border-slate-800 bg-slate-900/30 text-sm font-bold shadow-sm"
                       >
-                          <Layers size={18} /> <span className="hidden sm:inline">Reparti</span>
-                      </button>
-                      <button 
-                          onClick={() => setViewMode('totals')}
-                          className={`flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'totals' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                          title="Vista Totali"
-                      >
-                          <LayoutList size={18} /> <span className="hidden sm:inline">Totali</span>
+                          <Share size={18}/> 
+                          <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Export</span>
                       </button>
                   </div>
 
@@ -2040,6 +2165,108 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
               </div>
           </Modal>
 
+          {/* Export Options Modal */}
+          <Modal 
+              isOpen={!!exportList} 
+              onClose={() => setExportList(null)} 
+              title="Export Lista Materiale"
+              size="md"
+          >
+              <div className="space-y-4">
+                  <p className="text-sm text-slate-400">
+                      Seleziona il formato in cui desideri esportare la lista per l'evento <strong>{exportList?.eventName}</strong>:
+                  </p>
+                  
+                  <div className="grid grid-cols-1 gap-3">
+                      {/* OPTION 1: PDF LISTA */}
+                      <button 
+                          onClick={() => { if (exportList) { exportPDF(exportList); setExportList(null); } }}
+                          className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-blue-500/50 rounded-xl text-left transition-all duration-200 group"
+                      >
+                          <div className="p-3 bg-blue-900/30 text-blue-400 rounded-lg group-hover:scale-110 transition-transform">
+                              <FileText size={24} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-white text-sm">Lista Materiale (PDF)</h4>
+                              <p className="text-xs text-slate-400 mt-0.5">Ordinata per zone e reparti con caselle di spunta (check-list).</p>
+                          </div>
+                      </button>
+
+                      {/* OPTION 2: PDF TOTALI */}
+                      <button 
+                          onClick={() => { if (exportList) { exportTotalsPDF(exportList); setExportList(null); } }}
+                          className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-purple-500/50 rounded-xl text-left transition-all duration-200 group"
+                      >
+                          <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg group-hover:scale-110 transition-transform">
+                              <ClipboardList size={24} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-white text-sm">Riepilogo Totali (PDF)</h4>
+                              <p className="text-xs text-slate-400 mt-0.5">Raggruppamento globale dei totali divisi tra Kit e materiale sfuso.</p>
+                          </div>
+                      </button>
+
+                      {/* OPTION 3: CSV EXCEL */}
+                      <button 
+                          onClick={() => { if (exportList) { exportCSV(exportList); setExportList(null); } }}
+                          className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-left transition-all duration-200 group"
+                      >
+                          <div className="p-3 bg-emerald-900/30 text-emerald-400 rounded-lg group-hover:scale-110 transition-transform">
+                              <FileDown size={24} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-white text-sm">Export in CSV (Excel)</h4>
+                              <p className="text-xs text-slate-400 mt-0.5">Scarica un file CSV tabellare compatibile con Excel o altri gestionali.</p>
+                          </div>
+                      </button>
+                  </div>
+
+                  {/* ALL OTHER DEPARTMENTS SELECTOR */}
+                  {exportList && exportList.zones && exportList.zones.length > 0 && (
+                      <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3">
+                          <div className="flex items-center gap-4 text-left transition-all duration-200">
+                              <div className="p-2.5 bg-slate-800 text-slate-400 rounded-lg border border-slate-700/50">
+                                  <Layers size={18} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                  <h4 className="font-bold text-white text-xs uppercase tracking-wider opacity-80">Seleziona un singolo Reparto</h4>
+                                  <p className="text-[11px] text-slate-500 mt-0.5">Esporta solo il PDF di uno dei reparti configurati:</p>
+                              </div>
+                          </div>
+                          <div className="space-y-2.5 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                              {exportList.zones.map(zone => (
+                                  <div key={zone.id} className="space-y-1">
+                                      <div className="text-[10px] uppercase font-extrabold text-slate-500 tracking-widest pl-1">{zone.name}</div>
+                                      <div className="flex flex-wrap gap-1.5 pl-2 pb-1">
+                                          {zone.sections?.map(section => {
+                                              const isActive = activeZoneId && zone.id === activeZoneId; // highlight if matching currently active zone
+                                              return (
+                                                  <button
+                                                      key={section.id}
+                                                      onClick={() => { exportSectionPDF(exportList, zone.id, section.id); setExportList(null); }}
+                                                      className={`px-2 py-1 text-[11px] font-bold rounded border transition-all ${isActive ? 'bg-slate-950 hover:bg-slate-800 border-blue-500/50 text-blue-400 hover:text-white' : 'bg-slate-950 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'}`}
+                                                  >
+                                                      {section.name}
+                                                  </button>
+                                              );
+                                          })}
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </div>
+                  )}
+
+                  <div className="flex justify-end pt-2 border-t border-slate-800">
+                      <button 
+                          onClick={() => setExportList(null)}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                      >
+                          Annulla
+                      </button>
+                  </div>
+              </div>
+          </Modal>
 
       </div>
   );

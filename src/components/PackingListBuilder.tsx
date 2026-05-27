@@ -14,6 +14,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY } from '../firebase';
+import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
 import { calculateAvailableQuantity } from '../utils/availability';
 
 interface PackingListBuilderProps {
@@ -278,6 +279,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // Versioning/Feedback Modal State
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [draftVersionInput, setDraftVersionInput] = useState('');
   const [versionError, setVersionError] = useState<string | null>(null);
   const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean, title: string, message: string, type?: 'success' | 'info' | 'error' } | null>(null);
@@ -1747,473 +1749,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             });
         }
     });
-  };
-
-
-  // --- EXPORT ---
-  const flattenComponents = (components: ListComponent[]) => {
-    const flat: ListComponent[] = [];
-    components.forEach(c => {
-      if (c.type === 'template' && c.templateContents) {
-        c.templateContents.forEach(tc => {
-          const existing = flat.find(f => f.type === tc.type && f.referenceId === tc.referenceId);
-          if (existing) {
-            existing.quantity += (tc.quantity * c.quantity);
-          } else {
-            flat.push({
-              ...tc,
-              uniqueId: generateId(),
-              quantity: tc.quantity * c.quantity
-            } as ListComponent);
-          }
-        });
-      } else {
-        const existing = flat.find(f => f.type === c.type && f.referenceId === c.referenceId);
-        if (existing) {
-          existing.quantity += c.quantity;
-        } else {
-          flat.push({ ...c });
-        }
-      }
-    });
-    return flat;
-  };
-
-  const calculateZoneTotals = (zone: ListZone) => {
-    const totalsMap = new Map<string, number>();
-    const flatComps = flattenComponents(zone.sections.flatMap(s => s.components));
-    
-    flatComps.forEach(c => {
-        totalsMap.set(c.name, (totalsMap.get(c.name) || 0) + c.quantity);
-        c.contents?.forEach(sub => totalsMap.set(sub.name, (totalsMap.get(sub.name) || 0) + (sub.quantity * c.quantity)));
-    });
-    return totalsMap;
-  };
-
-  const exportPDF = () => {
-    if (!activeList || !activeList.zones) return;
-    
-    const doc = new jsPDF();
-    
-    // Helper to print header on every page
-    const printHeader = (zoneName: string, pageNumber: number) => {
-        const pageWidth = doc.internal.pageSize.getWidth();
-        
-        // Line 1: Event Name (Big & Bold)
-        doc.setFontSize(16);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0);
-        const eventName = activeList.eventName.toUpperCase();
-        doc.text(eventName, 14, 12);
-
-        // Version Info
-        const versionText = activeList.version ? `v${activeList.version}` : 'LISTA NON PRONTA';
-        const titleWidth = doc.getTextWidth(eventName);
-        doc.setFontSize(10);
-        if (!activeList.version) doc.setTextColor(220, 0, 0);
-        else doc.setTextColor(100);
-        doc.text(versionText, 14 + titleWidth + 3, 12);
-        
-        // Top Right: Date & Page
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(100);
-        doc.text(`${activeList.eventDate}  |  Pagina ${pageNumber}`, pageWidth - 14, 12, { align: 'right' });
-
-        // Line 2: Zone Info (Smaller than event name, Bold)
-        doc.setFontSize(13);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0);
-        doc.text(`ZONA: ${zoneName.toUpperCase()}`, 14, 20);
-    };
-
-    activeList.zones.forEach((zone, index) => {
-        if (index > 0) doc.addPage(); // Explicit new page for new zone
-        
-        let currentY = 25;
-        if (zone.notes) {
-            doc.setFontSize(10);
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(50);
-            
-            // Handle multiline text
-            const splitNotes = doc.splitTextToSize(`NOTE: ${zone.notes}`, 180);
-            doc.text(splitNotes, 14, currentY);
-            
-            currentY += (splitNotes.length * 5) + 5;
-        }
-
-        // Calculate totals just for this zone
-        const zoneTotals = calculateZoneTotals(zone);
-
-        // Prepare Table Body
-        const tableBody: any[] = [];
-
-        zone.sections.forEach(section => {
-            const flatComponents = flattenComponents(section.components);
-            if (flatComponents.length === 0) return;
-
-            // Section Header Row
-            tableBody.push([{ 
-                content: section.name.toUpperCase(), 
-                colSpan: 4, 
-                styles: { fillColor: [230, 230, 230], fontStyle: 'bold', textColor: [0, 0, 0] } 
-            }]);
-
-            // Items
-            flatComponents.forEach(comp => {
-                let nameContent = comp.name;
-                if (comp.isTemporary) nameContent += ' (TEMP)';
-                if (comp.type === 'kit') nameContent = `[KIT] ${comp.name}`;
-                if (comp.notes) nameContent += `\nNOTE: ${comp.notes}`;
-                
-                const zoneTotal = zoneTotals.get(comp.name) || 0;
-                
-                tableBody.push([nameContent, comp.quantity, zoneTotal, '']);
-                
-                // Sub-contents
-                comp.contents?.forEach(sub => {
-                    const subZoneTotal = zoneTotals.get(sub.name) || 0;
-                    tableBody.push([{ 
-                        content: `  - ${sub.name}`, 
-                        styles: { fontSize: 10, textColor: [80, 80, 80] } 
-                    }, sub.quantity * comp.quantity, subZoneTotal, '']);
-                });
-            });
-        });
-
-        // Generate Table
-        autoTable(doc, {
-            head: [['Materiale', 'Qta', 'Totale Zona', 'Check']],
-            body: tableBody,
-            startY: currentY, 
-            margin: { top: 25 }, // Critical: reserves space for header on ALL pages
-            theme: 'grid',
-            headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
-            styles: { fontSize: 11, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
-            columnStyles: { 
-                0: { cellWidth: 'auto' }, 
-                1: { cellWidth: 20, halign: 'center' }, 
-                2: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
-                3: { cellWidth: 20 }
-            },
-            didDrawPage: (data) => {
-                printHeader(zone.name, data.pageNumber);
-            }
-        });
-    });
-    
-    // Notes page
-    if (activeList.notes) {
-        doc.addPage();
-        printHeader("Note Generali", doc.getNumberOfPages());
-        doc.setFontSize(14);
-        doc.text("Note Evento", 14, 30);
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "normal");
-        doc.text(activeList.notes, 14, 40);
-    }
-
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const safeName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
-    doc.save(`${safeName}_${year}-${month}-${day}_${hours}-${minutes}.pdf`);
-  };
-
-  const exportTotalsPDF = () => {
-    if (!activeList || !activeList.zones) return;
-    
-    const doc = new jsPDF();
-    
-    const printHeader = (zoneName: string, pageNumber: number) => {
-        const pageWidth = doc.internal.pageSize.getWidth();
-        
-        // Line 1: Event Name (Big & Bold)
-        doc.setFontSize(16);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0);
-        const eventName = activeList.eventName.toUpperCase();
-        doc.text(eventName, 14, 12);
-
-        // Version Info
-        const versionText = activeList.version ? `v${activeList.version}` : 'LISTA NON PRONTA';
-        const titleWidth = doc.getTextWidth(eventName);
-        doc.setFontSize(10);
-        if (!activeList.version) doc.setTextColor(220, 0, 0);
-        else doc.setTextColor(100);
-        doc.text(versionText, 14 + titleWidth + 3, 12);
-        
-        // Top Right: Page
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(100);
-        doc.text(`Pagina ${pageNumber}`, pageWidth - 14, 12, { align: 'right' });
-
-        // Line 2: Recap Materiale (Bold, smaller than title)
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(80);
-        doc.text("RECAP TOTALI MATERIALE", 14, 18);
-
-        // Line 3: Zone (Smaller than event name, Bold)
-        doc.setFontSize(13);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(0);
-        doc.text(`ZONA: ${zoneName.toUpperCase()}`, 14, 26);
-    };
-
-    activeList.zones.forEach((zone, index) => {
-        if (index > 0) doc.addPage();
-        
-        // --- HYBRID NESTED LOGIC ---
-        
-        // Map for Section A: Kit & Assembled Machines (Parent -> Children)
-        // Key: Item Name -> Value: { totalQty: number, aggregatedNotes: { qty: number, text: string }[], children: Map<childName, { qty: number, prepNote: string, aggregatedNotes: { qty: number, text: string }[] }> }
-        const complexItemsMap = new Map<string, { totalQty: number, aggregatedNotes: { qty: number, text: string }[], children: Map<string, { qty: number, prepNote: string, aggregatedNotes: { qty: number, text: string }[] }> }>();
-
-        // Map for Section B: Bulk/Loose Items
-        // Key: Item Name -> Value: { totalQty: number, isTemporary: boolean, aggregatedNotes: { qty: number, text: string }[] }
-        const simpleItemsMap = new Map<string, { totalQty: number, isTemporary: boolean, aggregatedNotes: { qty: number, text: string }[] }>();
-
-        const addAggregatedNote = (notesArr: { qty: number, text: string }[], qty: number, text?: string) => {
-            if (!text) return;
-            const existing = notesArr.find(n => n.text === text);
-            if (existing) {
-                existing.qty += qty;
-            } else {
-                notesArr.push({ qty, text });
-            }
-        };
-
-        zone.sections.forEach(section => {
-            const flatComponents = flattenComponents(section.components);
-            flatComponents.forEach(comp => {
-                const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
-                const note = comp.warehouseState?.warehouseNote;
-
-                if (isComplex) {
-                    // --- SECTION A AGGREGATION ---
-                    const displayName = comp.type === 'kit' ? `KIT-${comp.name}` : comp.name;
-                    
-                    if (!complexItemsMap.has(displayName)) {
-                        complexItemsMap.set(displayName, { totalQty: 0, aggregatedNotes: [], children: new Map() });
-                    }
-                    const parent = complexItemsMap.get(displayName)!;
-                    parent.totalQty += comp.quantity;
-                    
-                    // Aggrego note di produzione e di magazzino
-                    if (comp.notes) addAggregatedNote(parent.aggregatedNotes, comp.quantity, comp.notes);
-                    if (comp.warehouseState?.warehouseNote) addAggregatedNote(parent.aggregatedNotes, comp.quantity, comp.warehouseState.warehouseNote);
-
-                    // Aggregate Children
-                    comp.contents?.forEach(sub => {
-                        if (!parent.children.has(sub.name)) {
-                            parent.children.set(sub.name, { qty: 0, prepNote: sub.prepNote || '', aggregatedNotes: [] });
-                        }
-                        const child = parent.children.get(sub.name)!;
-                        child.qty += (sub.quantity * comp.quantity);
-                        // Update note if present (last one wins or we could concat, simple overwrite for now)
-                        if (sub.prepNote) child.prepNote = sub.prepNote;
-                        
-                        const subWs = sub.warehouseState;
-                        // Aggrego note di produzione (prepNote) e di magazzino
-                        if (sub.prepNote) addAggregatedNote(child.aggregatedNotes, sub.quantity * comp.quantity, sub.prepNote);
-                        if (subWs?.warehouseNote) addAggregatedNote(child.aggregatedNotes, sub.quantity * comp.quantity, subWs.warehouseNote);
-                    });
-
-                } else {
-                    // --- SECTION B AGGREGATION ---
-                    if (!simpleItemsMap.has(comp.name)) {
-                        simpleItemsMap.set(comp.name, { totalQty: 0, isTemporary: !!comp.isTemporary, aggregatedNotes: [] });
-                    }
-                    const item = simpleItemsMap.get(comp.name)!;
-                    item.totalQty += comp.quantity;
-                    
-                    // Aggrego note di produzione e di magazzino
-                    if (comp.notes) addAggregatedNote(item.aggregatedNotes, comp.quantity, comp.notes);
-                    if (comp.warehouseState?.warehouseNote) addAggregatedNote(item.aggregatedNotes, comp.quantity, comp.warehouseState.warehouseNote);
-                }
-            });
-        });
-
-        // --- MAP ITEMS TO PARENTS (To detect duplicates across kits/accessories) ---
-        // Key: Child Item Name -> Value: Set of Parent Names containing it
-        const itemKitParents = new Map<string, Set<string>>();
-        const itemAccessoryParents = new Map<string, Set<string>>();
-        
-        complexItemsMap.forEach((data, parentName) => {
-            const isKit = parentName.startsWith('KIT-');
-            data.children.forEach((_, childName) => {
-                const mapToUse = isKit ? itemKitParents : itemAccessoryParents;
-                if (!mapToUse.has(childName)) {
-                    mapToUse.set(childName, new Set());
-                }
-                mapToUse.get(childName)!.add(parentName);
-            });
-        });
-
-        const tableBody: any[] = [];
-
-        // --- RENDER SECTION A: KITS & ASSEMBLED ---
-        const sortedComplex = Array.from(complexItemsMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-        
-        if (sortedComplex.length > 0) {
-            tableBody.push([{ 
-                content: 'KIT & MACCHINE (Assemblati)', 
-                colSpan: 3,
-                styles: { fontStyle: 'bold', fillColor: [220, 220, 240], textColor: [0, 0, 50], halign: 'left', fontSize: 10 } 
-            }]);
-
-            sortedComplex.forEach(([displayName, data]) => {
-                // Check if Parent exists in Loose items
-                // Note: displayName includes "KIT-" prefix for kits, but loose map uses raw name.
-                // We need to strip prefix for check if it's a kit, or use name if it's a machine.
-                const rawName = displayName.startsWith('KIT-') ? displayName.replace('KIT-', '') : displayName;
-                const isParentInLoose = simpleItemsMap.has(rawName);
-                
-                // Parent Row
-                let parentLabel = displayName;
-                if (data.aggregatedNotes.length > 0) {
-                    parentLabel += '\n' + data.aggregatedNotes.map(n => `> x${n.qty} ${n.text}`).join('\n');
-                }
-
-                tableBody.push([{ 
-                    content: parentLabel, 
-                    styles: { 
-                        fontStyle: 'bold', // Keeping structural bold for Parent
-                        textColor: [0, 0, 0],
-                        fontSize: data.aggregatedNotes.length > 0 ? 9 : 11
-                    },
-                    _warning: null
-                }, data.totalQty, '']);
-
-                // Children Rows (Indented)
-                const sortedChildren = Array.from(data.children.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-                sortedChildren.forEach(([childName, childData]) => {
-                    let childLabel = `  - ${childName}`;
-                    
-                    // Add Prep Note column logic
-                    if (childData.prepNote) {
-                        childLabel += ` [${childData.prepNote.toUpperCase()}]`;
-                    }
-
-                    if (childData.aggregatedNotes.length > 0) {
-                        childLabel += '\n    ' + childData.aggregatedNotes.map(n => `> x${n.qty} ${n.text}`).join('\n    ');
-                    }
-                    
-                    tableBody.push([{ 
-                        content: childLabel, 
-                        styles: { 
-                            fontSize: (childData.aggregatedNotes.length > 0) ? 8 : 10, 
-                            textColor: [80, 80, 80],
-                            fontStyle: 'normal'
-                        },
-                        _warning: null
-                    }, childData.qty, '']);
-                });
-            });
-        }
-
-        // --- RENDER SECTION B: BULK / LOOSE ---
-        const sortedSimple = Array.from(simpleItemsMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-
-        if (sortedSimple.length > 0) {
-            // Spacer row if needed
-            if (sortedComplex.length > 0) {
-                tableBody.push([{ content: '', colSpan: 3, styles: { cellPadding: 1, fillColor: [255, 255, 255] } }]); 
-            }
-
-            tableBody.push([{ 
-                content: 'MATERIALE SFUSO (Totali Unificati)', 
-                colSpan: 3,
-                styles: { fontStyle: 'bold', fillColor: [230, 230, 230], textColor: [50, 50, 50], halign: 'left', fontSize: 10 } 
-            }]);
-
-            sortedSimple.forEach(([name, data]) => {
-                let simpleLabel = data.isTemporary ? `${name} (TEMP)` : name;
-                if (data.aggregatedNotes.length > 0) {
-                    simpleLabel += '\n' + data.aggregatedNotes.map(n => `> x${n.qty} ${n.text}`).join('\n');
-                }
-
-                tableBody.push([{
-                    content: simpleLabel,
-                    styles: {
-                        fontSize: data.aggregatedNotes.length > 0 ? 9 : 11
-                    }
-                }, data.totalQty, '']);
-            });
-        }
-
-        autoTable(doc, {
-            head: [['Materiale', 'Qta', 'Check']],
-            body: tableBody,
-            startY: 32,
-            margin: { top: 32 },
-            theme: 'grid',
-            headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
-            styles: { fontSize: 11, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
-            columnStyles: { 
-                0: { cellWidth: 'auto' }, 
-                1: { cellWidth: 40, halign: 'center', fontStyle: 'bold' },
-                2: { cellWidth: 20 }
-            },
-            didDrawPage: (data) => {
-                printHeader(zone.name, data.pageNumber);
-            }
-        });
-    });
-
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const safeName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
-    doc.save(`TOTALI_${safeName}_${day}-${month}-${now.getFullYear()}.pdf`);
-  };
-
-  const exportCSV = () => {
-    if (!activeList || !activeList.zones) return;
-    
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Zona,Sezione,Tipo,Nome,Quantità,Totale Zona,Note,Contenuto Kit/Accessori\n";
-    
-    activeList.zones.forEach(z => {
-        const zoneTotals = calculateZoneTotals(z);
-        
-        z.sections.forEach(s => {
-            s.components.forEach(c => {
-                const note = c.notes ? c.notes.replace(/"/g, '""') : '';
-                const typeLabel = c.type === 'kit' ? 'KIT' : 'Singolo';
-                const zoneTotal = zoneTotals.get(c.name) || 0;
-                const displayName = c.isTemporary ? `${c.name} (TEMP)` : c.name;
-                
-                csvContent += `"${z.name}","${s.name}",${typeLabel},"${displayName}",${c.quantity},${zoneTotal},"${note}",""\n`;
-                
-                c.contents?.forEach(sub => {
-                    const subZoneTotal = zoneTotals.get(sub.name) || 0;
-                    csvContent += `"${z.name}","${s.name}",${c.type === 'kit'?'Parte Kit':'Accessorio'},"${sub.name}",${sub.quantity*c.quantity},${subZoneTotal},"","Appartiene a: ${c.name}"\n`;
-                });
-            });
-        });
-    });
-    
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const safeName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
-    link.setAttribute("download", `${safeName}_${year}-${month}-${day}_${hours}-${minutes}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+   // --- EXPORT (Extracted to utils/export.ts) ---
   };
 
 
@@ -2448,12 +1984,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     </div>
                 )}
 
-                {/* LOGO-TYPE EXPORT BUTTONS (Only Icons on Mobile) */}
-                <div className="flex items-center gap-1">
-                    <button onClick={exportPDF} title="Esporta PDF" className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><FileText size={18}/> <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">PDF</span></button>
-                    <button onClick={exportTotalsPDF} title="PDF Totali" className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><ClipboardList size={18}/> <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Totali</span></button>
-                    <button onClick={exportCSV} title="Esporta CSV" className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><FileDown size={18}/> <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">CSV</span></button>
-                </div>
+                {/* SINGLE EXPORT BUTTON */}
+                <button 
+                    onClick={() => setIsExportModalOpen(true)} 
+                    title="Export Lista" 
+                    className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
+                >
+                    <Share size={18}/> 
+                    <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Export</span>
+                </button>
 
                 <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block"></div>
 
@@ -3312,6 +2851,126 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           confirmText={genericConfirm?.confirmText}
           variant={genericConfirm?.variant}
       />
+
+      {/* Export Options Modal */}
+      <Modal 
+          isOpen={isExportModalOpen} 
+          onClose={() => setIsExportModalOpen(false)} 
+          title="Export Lista Materiale"
+          size="md"
+      >
+          <div className="space-y-4">
+              <p className="text-sm text-slate-400">
+                  Seleziona il formato in cui desideri esportare la lista per l'evento <strong>{activeList?.eventName}</strong>:
+              </p>
+              
+              <div className="grid grid-cols-1 gap-3">
+                  {/* OPTION 1: PDF LISTA */}
+                  <button 
+                      onClick={() => { exportPDF(activeList!); setIsExportModalOpen(false); }}
+                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-blue-500/50 rounded-xl text-left transition-all duration-200 group"
+                  >
+                      <div className="p-3 bg-blue-900/30 text-blue-400 rounded-lg group-hover:scale-110 transition-transform">
+                          <FileText size={24} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                          <h4 className="font-bold text-white text-sm">Lista Materiale (PDF)</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">Ordinata per zone e reparti con caselle di spunta (check-list).</p>
+                      </div>
+                  </button>
+
+                  {/* OPTION 2: PDF TOTALI */}
+                  <button 
+                      onClick={() => { exportTotalsPDF(activeList!); setIsExportModalOpen(false); }}
+                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-purple-500/50 rounded-xl text-left transition-all duration-200 group"
+                  >
+                      <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg group-hover:scale-110 transition-transform">
+                          <ClipboardList size={24} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                          <h4 className="font-bold text-white text-sm">Riepilogo Totali (PDF)</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">Raggruppamento globale dei totali divisi tra Kit e materiale sfuso.</p>
+                      </div>
+                  </button>
+
+                  {/* OPTION 3: CSV EXCEL */}
+                  <button 
+                      onClick={() => { exportCSV(activeList!); setIsExportModalOpen(false); }}
+                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-left transition-all duration-200 group"
+                  >
+                      <div className="p-3 bg-emerald-900/30 text-emerald-400 rounded-lg group-hover:scale-110 transition-transform">
+                          <FileDown size={24} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                          <h4 className="font-bold text-white text-sm">Export in CSV (Excel)</h4>
+                          <p className="text-xs text-slate-400 mt-0.5">Scarica un file CSV tabellare compatibile con Excel o altri gestionali.</p>
+                      </div>
+                  </button>
+
+                  {/* OPTION 4: PDF SINGOLO REPARTO (Active) */}
+                  {activeZone && activeSection && (
+                      <button 
+                          onClick={() => { exportSectionPDF(activeList!, activeZone.id, activeSection.id); setIsExportModalOpen(false); }}
+                          className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl text-left transition-all duration-200 group border-dashed"
+                      >
+                          <div className="p-3 bg-amber-900/30 text-amber-500 rounded-lg group-hover:scale-110 transition-transform">
+                              <Layers size={24} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-white text-sm">Reparto Attivo: "{activeSection.name}" (PDF)</h4>
+                              <p className="text-xs text-slate-400 mt-0.5">Esporta solo il reparto "{activeSection.name}" della zona "{activeZone.name}".</p>
+                          </div>
+                      </button>
+                  )}
+              </div>
+
+              {/* ALL OTHER DEPARTMENTS SELECTOR */}
+              {activeList && activeList.zones && activeList.zones.length > 0 && (
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-4 text-left transition-all duration-200">
+                          <div className="p-2.5 bg-slate-800 text-slate-400 rounded-lg border border-slate-700/50">
+                              <Layers size={18} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-white text-xs uppercase tracking-wider opacity-80">Seleziona un singolo Reparto</h4>
+                              <p className="text-[11px] text-slate-500 mt-0.5">Esporta solo il PDF di uno dei reparti configurati:</p>
+                          </div>
+                      </div>
+                      <div className="space-y-2.5 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                          {activeList.zones.map(zone => (
+                              <div key={zone.id} className="space-y-1">
+                                  <div className="text-[10px] uppercase font-extrabold text-slate-500 tracking-widest pl-1">{zone.name}</div>
+                                  <div className="flex flex-wrap gap-1.5 pl-2 pb-1">
+                                      {zone.sections?.map(section => {
+                                          const isActive = zone.id === activeZone?.id && section.id === activeSection?.id;
+                                          return (
+                                              <button
+                                                  key={section.id}
+                                                  disabled={isActive}
+                                                  onClick={() => { exportSectionPDF(activeList, zone.id, section.id); setIsExportModalOpen(false); }}
+                                                  className={`px-2 py-1 text-[11px] font-bold rounded border transition-all ${isActive ? 'bg-amber-600/20 border-amber-500/30 text-amber-400 cursor-not-allowed' : 'bg-slate-950 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'}`}
+                                              >
+                                                  {section.name}
+                                              </button>
+                                          );
+                                      })}
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              )}
+
+              <div className="flex justify-end pt-2 border-t border-slate-800">
+                  <button 
+                      onClick={() => setIsExportModalOpen(false)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                  >
+                      Annulla
+                  </button>
+              </div>
+          </div>
+      </Modal>
 
       {/* Versioning Modal */}
       <Modal 
