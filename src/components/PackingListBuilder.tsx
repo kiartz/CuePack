@@ -244,6 +244,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // HIGHLIGHT & WARNING STATE
   const [highlightedItemName, setHighlightedItemName] = useState<string | null>(null);
+  const [lastClickedComponentId, setLastClickedComponentId] = useState<string | null>(null);
 
   // Picker Hover State & Logic
   const [isPickerHovered, setIsPickerHovered] = useState(false);
@@ -486,6 +487,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     });
     return total;
   }, [highlightedItemName, getSectionHighlightedQty]);
+
+  // Effect to scroll the last highlighted item back into view when exiting highlight mode
+  useEffect(() => {
+    if (!highlightedItemName && lastClickedComponentId) {
+      const timer = setTimeout(() => {
+        const element = document.getElementById(`comp-row-${lastClickedComponentId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        setLastClickedComponentId(null);
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedItemName, lastClickedComponentId]);
 
   // --- HIGHLIGHT & WARNING LOGIC (Placed here to access activeZone) ---
 
@@ -2896,6 +2911,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   return (
                       <div 
                            key={comp.uniqueId} 
+                           id={`comp-row-${comp.uniqueId}`}
                            className="relative py-1"
                            onDragEnter={(e) => handleDragEnter(e, activeSection.id, idx)}
                            onDragOver={e => e.preventDefault()}
@@ -2940,7 +2956,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                       <div className="min-w-0">
                                           <div 
                                               className={`font-medium text-sm truncate flex items-center gap-2 cursor-pointer hover:underline ${isMainMatch ? 'text-blue-400 font-bold scale-105 origin-left' : 'text-slate-200'}`}
-                                              onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === comp.name ? null : comp.name); }}
+                                              onClick={(e) => {
+                                                   e.stopPropagation();
+                                                   if (highlightedItemName === comp.name) {
+                                                       setHighlightedItemName(null);
+                                                   } else {
+                                                       setHighlightedItemName(comp.name);
+                                                       setLastClickedComponentId(comp.uniqueId);
+                                                   }
+                                               }}
                                               title="Clicca per evidenziare ovunque"
                                           >
                                               {comp.name} 
@@ -3127,7 +3151,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                 )}
                                                 <span 
                                                     className={`truncate cursor-pointer hover:underline ${isAccMissing ? 'text-rose-900 line-through decoration-rose-500/50' : ''} ${isChildMatch ? 'font-bold underline' : ''}`}
-                                                    onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === c.name ? null : c.name); }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (highlightedItemName === c.name) {
+                                                            setHighlightedItemName(null);
+                                                        } else {
+                                                            setHighlightedItemName(c.name);
+                                                            setLastClickedComponentId(comp.uniqueId);
+                                                        }
+                                                    }}
                                                 >
                                                     {c.name}
                                                 </span>
@@ -3148,7 +3180,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                 <span className="flex items-center gap-1 min-w-0">
                                                     <span 
                                                         className={`truncate cursor-pointer hover:underline font-medium ${isChildMatch ? 'font-bold underline text-blue-400' : ''}`}
-                                                        onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === tc.name ? null : tc.name); }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (highlightedItemName === tc.name) {
+                                                                setHighlightedItemName(null);
+                                                            } else {
+                                                                setHighlightedItemName(tc.name);
+                                                                setLastClickedComponentId(comp.uniqueId);
+                                                            }
+                                                        }}
                                                     >
                                                         {tc.name}
                                                     </span>
@@ -3166,7 +3206,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                             <div key={si} className={`text-xs flex justify-between w-full max-w-sm leading-tight ${isSubMatch ? 'text-blue-400 font-bold' : 'text-slate-500'}`}>
                                                                 <span 
                                                                     className="truncate cursor-pointer hover:underline"
-                                                                    onClick={(e) => { e.stopPropagation(); setHighlightedItemName(highlightedItemName === sub.name ? null : sub.name); }}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (highlightedItemName === sub.name) {
+                                                                            setHighlightedItemName(null);
+                                                                        } else {
+                                                                            setHighlightedItemName(sub.name);
+                                                                            setLastClickedComponentId(comp.uniqueId);
+                                                                        }
+                                                                    }}
                                                                 >
                                                                     - {sub.name}
                                                                 </span>
