@@ -476,7 +476,7 @@ export default function AuthenticatedApp() {
            {!isSidebarCollapsed && (
                <div className="flex flex-col gap-1 overflow-hidden min-w-0">
                   <span className="truncate">© R. Chiartano</span>
-                  <span className="opacity-50 text-[10px] truncate">v0.5.5 (DB Setup Ready)</span>
+                  <span className="opacity-50 text-[10px] truncate">v0.5.5</span>
                </div>
            )}
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
