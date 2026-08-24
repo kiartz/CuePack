@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map } from 'lucide-react';
+import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map, Database } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { TemplatesView } from './TemplatesView';
@@ -11,8 +11,12 @@ import { ChecklistManager } from './ChecklistManager';
 import { PrepMaterialView } from './PrepMaterialView';
 import { CalendarView } from './CalendarView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
-import { InventoryItem, Kit, Template, PackingList, ChecklistCategory } from '../types';
-import { db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, batchWriteItems, addOrUpdateItem } from '../firebase';
+import { InventoryItem, Kit, Template, PackingList, ChecklistCategory, InventoryDatabase } from '../types';
+import { 
+  db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, 
+  COLL_DATABASES, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection, getTemplatesCollection, 
+  batchWriteItems, addOrUpdateItem 
+} from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
@@ -21,6 +25,12 @@ type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' |
 export default function AuthenticatedApp() {
   const [currentView, setCurrentView] = useState<View>('home');
   
+  // --- MULTI-DATABASE STATE ---
+  const [databases, setDatabases] = useState<InventoryDatabase[]>([]);
+  const [activeDatabaseId, setActiveDatabaseId] = useState<string>(() => {
+      return localStorage.getItem('cuepack_active_db_id') || DEFAULT_DATABASE_ID;
+  });
+
   // --- REAL-TIME DATA STATE ---
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [kits, setKits] = useState<Kit[]>([]);
@@ -36,6 +46,13 @@ export default function AuthenticatedApp() {
   const [activeListId, setActiveListId] = useState<string>(() => {
       return localStorage.getItem('cuepack_active_list_id') || '';
   });
+
+  // Persist Active Database Selection
+  useEffect(() => {
+    if (activeDatabaseId) {
+      localStorage.setItem('cuepack_active_db_id', activeDatabaseId);
+    }
+  }, [activeDatabaseId]);
 
   // Mobile menu state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -62,47 +79,98 @@ export default function AuthenticatedApp() {
   // --- FIRESTORE SUBSCRIPTIONS --- 
   const hasAttemptedSeeding = useRef<{ [key: string]: boolean }>({});
 
+  // 1. Databases Metadata Listener
   useEffect(() => {
-    setLoading(true);
+    const unsubDatabases = onSnapshot(collection(db, COLL_DATABASES), (snapshot) => {
+      const dbs: InventoryDatabase[] = [];
+      snapshot.forEach(doc => dbs.push(doc.data() as InventoryDatabase));
 
-    // 1. Inventory Listener
-    const unsubInventory = onSnapshot(collection(db, COLL_INVENTORY), (snapshot) => {
+      if (dbs.length === 0) {
+        const defaultDbObj: InventoryDatabase = {
+          id: DEFAULT_DATABASE_ID,
+          name: 'Database Principale',
+          description: 'Database predefinito di produzione',
+          isDefault: true,
+          createdAt: new Date().toISOString()
+        };
+        addOrUpdateItem(COLL_DATABASES, defaultDbObj);
+        setDatabases([defaultDbObj]);
+      } else {
+        if (!dbs.some(d => d.id === DEFAULT_DATABASE_ID)) {
+          const defaultDbObj: InventoryDatabase = {
+            id: DEFAULT_DATABASE_ID,
+            name: 'Database Principale',
+            description: 'Database predefinito di produzione',
+            isDefault: !dbs.some(d => d.isDefault),
+            createdAt: new Date().toISOString()
+          };
+          addOrUpdateItem(COLL_DATABASES, defaultDbObj);
+          dbs.unshift(defaultDbObj);
+        }
+        setDatabases(dbs);
+      }
+    }, (error) => {
+      console.error("Databases Sync Error:", error);
+    });
+
+    return () => unsubDatabases();
+  }, []);
+
+  // 2. Dynamic Inventory, Kits, Templates Listener for Active Database
+  useEffect(() => {
+    const inventoryCol = getInventoryCollection(activeDatabaseId);
+    const kitsCol = getKitsCollection(activeDatabaseId);
+    const templatesCol = getTemplatesCollection(activeDatabaseId);
+
+    // 2.1 Inventory Listener
+    const unsubInventory = onSnapshot(collection(db, inventoryCol), (snapshot) => {
         const items: InventoryItem[] = [];
         snapshot.forEach(doc => items.push(doc.data() as InventoryItem));
         setInventory(items);
         
-        // SEEDING: If DB is empty, load initial data (only once)
-        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_INVENTORY]) {
+        // SEEDING: only for default DB if completely empty
+        if (activeDatabaseId === DEFAULT_DATABASE_ID && snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[inventoryCol]) {
              console.log("Seeding Database with Initial Inventory...");
-             hasAttemptedSeeding.current[COLL_INVENTORY] = true;
-             batchWriteItems(COLL_INVENTORY, INITIAL_INVENTORY);
+             hasAttemptedSeeding.current[inventoryCol] = true;
+             batchWriteItems(inventoryCol, INITIAL_INVENTORY);
         }
     }, (error) => {
-        console.error("Inventory Sync Error:", error);
+        console.error(`Inventory Sync Error (${inventoryCol}):`, error);
         setDbError("Errore di connessione al Database.");
     });
 
-    // 2. Kits Listener
-    const unsubKits = onSnapshot(collection(db, COLL_KITS), (snapshot) => {
+    // 2.2 Kits Listener
+    const unsubKits = onSnapshot(collection(db, kitsCol), (snapshot) => {
         const items: Kit[] = [];
         snapshot.forEach(doc => items.push(doc.data() as Kit));
         setKits(items);
 
-        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_KITS]) {
+        if (activeDatabaseId === DEFAULT_DATABASE_ID && snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[kitsCol]) {
              console.log("Seeding Database with Initial Kits...");
-             hasAttemptedSeeding.current[COLL_KITS] = true;
-             batchWriteItems(COLL_KITS, INITIAL_KITS);
+             hasAttemptedSeeding.current[kitsCol] = true;
+             batchWriteItems(kitsCol, INITIAL_KITS);
         }
-    }, (error) => console.error("Kits Sync Error:", error));
+    }, (error) => console.error(`Kits Sync Error (${kitsCol}):`, error));
 
-    // 2.5 Templates Listener
-    const unsubTemplates = onSnapshot(collection(db, COLL_TEMPLATES), (snapshot) => {
+    // 2.3 Templates Listener
+    const unsubTemplates = onSnapshot(collection(db, templatesCol), (snapshot) => {
         const items: Template[] = [];
         snapshot.forEach(doc => items.push(doc.data() as Template));
         setTemplates(items);
-    }, (error) => console.error("Templates Sync Error:", error));
+    }, (error) => console.error(`Templates Sync Error (${templatesCol}):`, error));
 
-    // 3. Lists Listener
+    return () => {
+        unsubInventory();
+        unsubKits();
+        unsubTemplates();
+    };
+  }, [activeDatabaseId]);
+
+  // 3. Lists and Master Checklist (Global)
+  useEffect(() => {
+    setLoading(true);
+
+    // Lists Listener
     const unsubLists = onSnapshot(collection(db, COLL_LISTS), (snapshot) => {
         const items: PackingList[] = [];
         snapshot.forEach(doc => items.push(doc.data() as PackingList));
@@ -111,7 +179,7 @@ export default function AuthenticatedApp() {
         console.error("Lists Sync Error:", error);
     });
 
-    // 4. Master Checklist Listener
+    // Master Checklist Listener
     const unsubChecklist = onSnapshot(doc(db, COLL_CHECKLIST_CONFIG, 'master'), (docSnap) => {
         if (docSnap.exists()) {
             setMasterChecklist(docSnap.data().categories as ChecklistCategory[]);
@@ -127,9 +195,6 @@ export default function AuthenticatedApp() {
     });
 
     return () => {
-        unsubInventory();
-        unsubKits();
-        unsubTemplates();
         unsubLists();
         unsubChecklist();
     };
@@ -310,16 +375,21 @@ export default function AuthenticatedApp() {
             lists={packingLists} 
             setActiveListId={setActiveListId}
             onNavigateToChecklist={() => setCurrentView('checklist-manager')}
+            databases={databases}
+            activeDatabaseId={activeDatabaseId}
+            setActiveDatabaseId={setActiveDatabaseId}
         />;
       case 'inventory':
         return <InventoryView 
             items={inventory} 
             packingLists={packingLists}
+            activeDatabaseId={activeDatabaseId}
         />;
       case 'kits':
         return <KitsView 
             kits={kits} 
             inventory={inventory} 
+            activeDatabaseId={activeDatabaseId}
         />;
       case 'templates':
         return <TemplatesView 
@@ -327,6 +397,7 @@ export default function AuthenticatedApp() {
             inventory={inventory} 
             kits={kits} 
             lists={packingLists}
+            activeDatabaseId={activeDatabaseId}
         />;
       case 'calendar':
         return <CalendarView 
@@ -349,6 +420,9 @@ export default function AuthenticatedApp() {
           onListOpenedInBuilder={() => setListToOpenInBuilderId(null)}
           listToAutoEditId={listToAutoEditId}
           onListAutoEdited={() => setListToAutoEditId(null)}
+          databases={databases}
+          activeDatabaseId={activeDatabaseId}
+          setActiveDatabaseId={setActiveDatabaseId}
         />;
       case 'prep-material':
         return <PrepMaterialView 
@@ -405,6 +479,32 @@ export default function AuthenticatedApp() {
           </button>
         </div>
         
+        {/* Active Database Mini Bar */}
+        {!isSidebarCollapsed ? (
+          <div className="px-3 py-2 bg-slate-950/80 border-b border-slate-800/80 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Database size={14} className="text-emerald-400 shrink-0" />
+              <div className="truncate text-xs">
+                <span className="text-[9px] uppercase font-bold text-slate-500 block leading-none">DB ATTIVO</span>
+                <span className="font-bold text-slate-200 truncate block text-xs mt-0.5">{databases.find(d => d.id === activeDatabaseId)?.name || 'Principale'}</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => setCurrentView('home')}
+              className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/40 shrink-0 hover:bg-blue-900/60 transition-colors"
+              title="Gestisci Database nella Home"
+            >
+              Cambia
+            </button>
+          </div>
+        ) : (
+          <div className="p-2 border-b border-slate-800/80 flex justify-center shrink-0" title={`DB: ${databases.find(d => d.id === activeDatabaseId)?.name || 'Principale'}`}>
+            <button onClick={() => setCurrentView('home')} className="p-1.5 rounded bg-slate-950 text-emerald-400 hover:text-white border border-slate-800" title="Vai alla gestione Database">
+              <Database size={15} />
+            </button>
+          </div>
+        )}
+
         {/* Navigation Menu */}
         <nav className={`p-4 space-y-2 shrink-0 flex-1 overflow-y-auto custom-scrollbar ${isSidebarCollapsed ? 'px-2' : ''}`}>
           {navItems.map(item => {
@@ -476,7 +576,7 @@ export default function AuthenticatedApp() {
            {!isSidebarCollapsed && (
                <div className="flex flex-col gap-1 overflow-hidden min-w-0">
                   <span className="truncate">© R. Chiartano</span>
-                  <span className="opacity-50 text-[10px] truncate">v0.5.5</span>
+                  <span className="opacity-50 text-[10px] truncate">v0.5.6</span>
                </div>
            )}
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
@@ -544,7 +644,7 @@ export default function AuthenticatedApp() {
                 </button>
             </div>
             <div className="pt-8 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                 CuePack Manager ✨ v0.5.5
+                 CuePack Manager ✨ v0.5.6
             </div>
          </nav>
       </div>

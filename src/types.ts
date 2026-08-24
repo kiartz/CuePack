@@ -10,15 +10,25 @@ export enum Category {
   OTHER = 'Altro'
 }
 
+export interface ItemInstance {
+  id: string; // Codice Univoco / QR Code del Seriale (a 7 cifre 1000001+ o custom, stampabile)
+  serialNumber?: string; // Serial Number del costruttore (SN)
+  notes?: string;
+}
+
 export interface InventoryItem {
   id: string;
   name: string;
+  productCode?: string; // Codice Prodotto (parte da 1 in avanti, es. 1, 2, 067, NON stampato)
+  qrCode?: string; // Codice QR / Barcode del Prodotto (a 7 cifre 1000001+, stampabile)
   category: Category;
   weight?: number; // in kg
   powerConsumption?: number; // in Watt (0 for non-electrical items)
   description?: string;
   inStock: number;
   accessories?: { itemId: string; quantity: number; prepNote?: string }[]; // Linked items (e.g., cables for a light)
+  reminders?: string[];
+  instances?: ItemInstance[];
 }
 
 export interface KitComponent {
@@ -106,6 +116,7 @@ export interface PackingList {
   setupDate?: string;
   location: string;
   customer?: string;
+  databaseId?: string; // ID del database di inventario a cui appartiene la lista (default: 'default')
   personnel?: string[]; // E.g., 'Mario, Luigi (Audio)'
   
   // Nelle info aggiunte per logistica:
@@ -162,4 +173,15 @@ export interface ChecklistCategory {
   title: string;
   subtitle: string;
   groups: ChecklistGroup[];
+}
+
+// --- MULTI-DATABASE TYPES ---
+export interface InventoryDatabase {
+  id: string; // 'default' o id univoco (es. 'db_rentman')
+  name: string; // Nome del database (es. "Database Principale", "Rentman Import")
+  description?: string;
+  isDefault?: boolean;
+  createdAt: string;
+  itemCount?: number;
+  kitCount?: number;
 }

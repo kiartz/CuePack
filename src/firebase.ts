@@ -36,6 +36,24 @@ export const COLL_KITS = 'kits';
 export const COLL_TEMPLATES = 'templates';
 export const COLL_LISTS = 'packing_lists';
 export const COLL_CHECKLIST_CONFIG = 'checklist_config';
+export const COLL_DATABASES = 'databases_meta';
+
+export const DEFAULT_DATABASE_ID = 'default';
+
+export const getInventoryCollection = (dbId?: string): string => {
+  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_INVENTORY;
+  return `${COLL_INVENTORY}_${dbId}`;
+};
+
+export const getKitsCollection = (dbId?: string): string => {
+  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_KITS;
+  return `${COLL_KITS}_${dbId}`;
+};
+
+export const getTemplatesCollection = (dbId?: string): string => {
+  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_TEMPLATES;
+  return `${COLL_TEMPLATES}_${dbId}`;
+};
 
 // --- Generic Helper Functions ---
 

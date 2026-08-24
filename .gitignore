@@ -51,3 +51,10 @@ thumbs.db
 # Project Context
 PROJECT_CONTEXT.md
 
+# Python & Backups
+__pycache__/
+*.pyc
+backup_*.json
+firebase_migration.py
+
+

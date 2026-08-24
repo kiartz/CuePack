@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template } from '../types';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database } from 'lucide-react';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
 import { ChecklistView } from './ChecklistView';
@@ -13,7 +13,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY } from '../firebase';
+import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
 import { calculateAvailableQuantity } from '../utils/availability';
 
@@ -29,6 +29,9 @@ interface PackingListBuilderProps {
   onListOpenedInBuilder?: () => void;
   listToAutoEditId?: string | null;
   onListAutoEdited?: () => void;
+  databases?: InventoryDatabase[];
+  activeDatabaseId?: string;
+  setActiveDatabaseId?: (dbId: string) => void;
 }
 
 const InlineNoteInput: React.FC<{
@@ -117,7 +120,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   listToOpenInBuilderId,
   onListOpenedInBuilder,
   listToAutoEditId,
-  onListAutoEdited
+  onListAutoEdited,
+  databases = [],
+  activeDatabaseId = DEFAULT_DATABASE_ID,
+  setActiveDatabaseId
 }) => { // --- HELPERS ---
   const createDefaultSections = (): ListSection[] => [
     { id: generateId(), name: 'Audio', components: [] },
@@ -145,10 +151,68 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   
   // LIST LOCAL SEARCH STATE
   const [listSearch, setListSearch] = useState('');
+  
+  // QTY EDITING STATE
+  const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
+  const [editingQtyValue, setEditingQtyValue] = useState<string>('');
 
   // REMINDERS STATE
   const [activeRemindersListId, setActiveRemindersListId] = useState<string | null>(null);
-  const [openRemindersIds, setOpenRemindersIds] = useState<Set<string>>(new Set());
+  
+  // Keep track of reminders that user has manually closed. 
+  // By default, if an item has reminders, it is OPEN.
+  const [closedRemindersIds, setClosedRemindersIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('closedRemindersIds');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('closedRemindersIds', JSON.stringify(Array.from(closedRemindersIds)));
+  }, [closedRemindersIds]);
+
+  // --- DERIVED STATE & MIGRATION ON THE FLY ---
+  const rawActiveList = useMemo(() => {
+    const rawList = lists.find(l => l.id === activeListId);
+    if (rawList && (!rawList.zones || rawList.zones.length === 0)) {
+        // Backward compatibility: create a default zone if old format or empty
+        const defaultSections: ListSection[] = [];
+        if (rawList.sections && rawList.sections.length > 0) {
+             rawList.sections.forEach((sec: any) => {
+                 defaultSections.push({ ...sec, id: sec.id || generateId() });
+             });
+        } else {
+             defaultSections.push(...createDefaultSections());
+        }
+        
+        return {
+            ...rawList,
+            zones: [{
+                id: 'default-zone',
+                name: 'Zona Principale',
+                sections: defaultSections
+            }]
+        } as PackingList;
+    }
+    return rawList;
+  }, [lists, activeListId]);
+
+  // Refs for tracking changes
+  const activeListRef = useRef<PackingList | null>(null);
+  
+  const [localList, setLocalList] = useState<PackingList | null>(null);
+  const activeList = (localList && localList.id === activeListId) ? localList : rawActiveList;
+  const pendingWritesRef = useRef(0);
+
+  // Clear local optimistic cache whenever activeListId changes
+  useEffect(() => {
+    setLocalList(null);
+    activeListRef.current = null;
+  }, [activeListId]);
+
   const [overbookedModal, setOverbookedModal] = useState<{
       isOpen: boolean;
       item: InventoryItem | Kit | Template;
@@ -402,28 +466,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       }
   };
 
-  // --- DERIVED STATE & MIGRATION ON THE FLY ---
-  const activeList = useMemo(() => {
-    const rawList = lists.find(l => l.id === activeListId);
-    if (!rawList) return undefined;
 
-    // Backward Compatibility / Migration Logic
-    if (!rawList.zones || rawList.zones.length === 0) {
-        const defaultSections = rawList.sections && rawList.sections.length > 0 
-            ? rawList.sections 
-            : createDefaultSections();
-            
-        return {
-            ...rawList,
-            zones: [{
-                id: 'default-zone',
-                name: 'Zona Principale',
-                sections: defaultSections
-            }]
-        } as PackingList;
-    }
-    return rawList;
-  }, [lists, activeListId]);
+
+  useEffect(() => {
+      // Clear the optimistic ref when switching lists to avoid cross-contamination
+      activeListRef.current = null;
+  }, [activeListId]);
 
   const zones = activeList?.zones || [];
   const activeZone = zones.find(z => z.id === activeZoneId);
@@ -534,48 +582,53 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       }
 
       return inventory.map(item => {
-            const name = (item.name || '').toLowerCase();
-            const category = (item.category || '').toLowerCase();
-            const desc = (item.description || '').toLowerCase();
-            
-            // Create tokens from item name for exact matching
-            // We split by spaces, dashes, slashes, parens. 
-            // We intentionally keep '.' and ',' attached to numbers/words to treat "2.5mt" as a distinct token from "5mt"
-            const nameTokens = name.split(/[\s\-_/()]+/); 
+             const name = (item.name || '').toLowerCase();
+             const category = (item.category || '').toLowerCase();
+             const desc = (item.description || '').toLowerCase();
+             const pcode = (item.productCode || '').toLowerCase();
+             const icodes = (item.instances || []).map(inst => inst.id.toLowerCase()).join(' ');
+             
+             // Create tokens from item name for exact matching
+             const nameTokens = name.split(/[\s\-_/()]+/); 
+ 
+             // 1. Strict Filter: Must contain all search terms somewhere
+             const combined = `${name} ${category} ${desc} ${pcode} ${icodes}`;
+             if (!searchTerms.every(term => combined.includes(term))) {
+                 return { item, score: -1 };
+             }
+             
+             if (selectedCategory !== 'All' && item.category !== selectedCategory) return { item, score: -1 };
+ 
+             // 2. Scoring Logic
+             let score = 0;
+             
+             searchTerms.forEach(term => {
+                 // A. Exact Name Match (The whole name is the search term)
+                 if (name === term) score += 10000;
+ 
+                 // B. Exact Token Match (e.g. "5mt" matches "5mt" but not "15mt")
+                 if (nameTokens.includes(term)) {
+                     score += 1000;
+                 } 
+                 // C. Starts With Token (e.g. "mic" matches "microfono")
+                 else if (nameTokens.some(t => t.startsWith(term))) {
+                     score += 500;
+                 }
+                 // D. Contained in Name (e.g. "5mt" inside "15mt")
+                 else if (name.includes(term)) {
+                     score += 100;
+                 }
+                 
+                 // E. Category Match
+                 if (category.includes(term)) score += 50;
 
-            // 1. Strict Filter: Must contain all search terms somewhere
-            const combined = `${name} ${category} ${desc}`;
-            if (!searchTerms.every(term => combined.includes(term))) {
-                return { item, score: -1 };
-            }
-            
-            if (selectedCategory !== 'All' && item.category !== selectedCategory) return { item, score: -1 };
-
-            // 2. Scoring Logic
-            let score = 0;
-            
-            searchTerms.forEach(term => {
-                // A. Exact Name Match (The whole name is the search term)
-                if (name === term) score += 10000;
-
-                // B. Exact Token Match (e.g. "5mt" matches "5mt" but not "15mt")
-                if (nameTokens.includes(term)) {
-                    score += 1000;
-                } 
-                // C. Starts With Token (e.g. "mic" matches "microfono")
-                else if (nameTokens.some(t => t.startsWith(term))) {
-                    score += 500;
-                }
-                // D. Contained in Name (e.g. "5mt" inside "15mt")
-                else if (name.includes(term)) {
-                    score += 100;
-                }
-                
-                // E. Category Match
-                if (category.includes(term)) score += 50;
-            });
-
-            return { item, score };
+                 // F. Product Code / Serial Match
+                 if (pcode === term) score += 8000;
+                 else if (pcode.includes(term)) score += 4000;
+                 if (icodes.includes(term)) score += 5000;
+             });
+ 
+             return { item, score };
         })
         .filter(x => x.score > -1)
         .sort((a, b) => {
@@ -629,12 +682,57 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return filtered.sort((a, b) => new Date(b.eventDate || 0).getTime() - new Date(a.eventDate || 0).getTime());
   }, [lists, listFilter]);
 
+  // Database Mismatch State
+  const [dbMismatchList, setDbMismatchList] = useState<{ list: PackingList; targetDbId: string; targetDbName: string } | null>(null);
+
+  // Detect database mismatch when activeList changes or is loaded
+  useEffect(() => {
+    if (activeListId && rawActiveList && viewMode === 'edit') {
+      const listDbId = rawActiveList.databaseId || DEFAULT_DATABASE_ID;
+      const currentDbId = activeDatabaseId || DEFAULT_DATABASE_ID;
+
+      if (listDbId !== currentDbId) {
+        const targetDb = (databases || []).find(d => d.id === listDbId) || { 
+          id: listDbId, 
+          name: listDbId === DEFAULT_DATABASE_ID ? 'Database Principale' : listDbId 
+        };
+        setDbMismatchList({
+          list: rawActiveList,
+          targetDbId: listDbId,
+          targetDbName: targetDb.name
+        });
+      } else {
+        setDbMismatchList(null);
+      }
+    } else {
+      setDbMismatchList(null);
+    }
+  }, [activeListId, rawActiveList?.databaseId, activeDatabaseId, databases, viewMode]);
+
+  const handleConfirmDbSwitch = () => {
+    if (dbMismatchList && setActiveDatabaseId) {
+      setLocalList(null);
+      activeListRef.current = null;
+      setActiveDatabaseId(dbMismatchList.targetDbId);
+      setDbMismatchList(null);
+    }
+  };
+
+  const handleCancelDbSwitch = () => {
+    setDbMismatchList(null);
+    handleBackToList();
+  };
+
   const handleListSelect = (listId: string) => {
+    setLocalList(null);
+    activeListRef.current = null;
     setActiveListId(listId);
     setViewMode('edit');
   };
 
   const handleBackToList = () => {
+    setLocalList(null);
+    activeListRef.current = null;
     setViewMode('list');
     setActiveListId('');
   };
@@ -769,7 +867,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           const nameChanged = comp.name !== master.name;
 
                           // 2. Check Contents (Quantity and Item ID)
-                          const masterItems = master.items.sort((a, b) => a.itemId.localeCompare(b.itemId));
+                          const masterItems = (master.items || []).map(k => ({ itemId: k.itemId, quantity: k.quantity })).sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
                           const currentItems = (comp.contents || [])
                               .map(c => ({ itemId: c.itemId, quantity: c.quantity }))
                               .filter(c => c.itemId) // Ensure we have ID
@@ -803,7 +901,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           
                           const masterAcc = (master.accessories || [])
                               .map(a => ({ itemId: a.itemId, quantity: a.quantity, prepNote: a.prepNote || '' }))
-                              .sort((a, b) => a.itemId.localeCompare(b.itemId));
+                              .sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
                           
                           const currentAcc = (comp.contents || [])
                               .map(c => ({ itemId: c.itemId, quantity: c.quantity, prepNote: c.prepNote || '' }))
@@ -823,7 +921,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                       name: inv?.name || '?',
                                       quantity: acc.quantity,
                                       category: inv?.category || 'Altro',
-                                      prepNote: acc.prepNote
+                                      prepNote: acc.prepNote || ''
                                   };
                               });
 
@@ -841,31 +939,63 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       }
   }, [activeListId, kits, inventory, activeList]); // Trigger when any relevant data changes
 
-  // --- FIRESTORE WRAPPER ---
+  // --- FIRESTORE WRAPPER ---  // Helper to update the entire list
+  const dbQueueRef = useRef<Promise<void>>(Promise.resolve());
+
   const updateActiveList = async (updates: Partial<PackingList>) => {
-      if (!activeList) return;
-      // We need to be careful: activeList here might contain the migration "default-zone".
-      // We must ensure we save this migrated structure back to DB if we touch it.
+      const baseList = activeListRef.current || activeList;
+      if (!baseList) return;
       
-      const updatedList = { ...activeList, ...updates };
-      // Remove legacy 'sections' if we are saving 'zones'
-      if (updatedList.zones && updatedList.zones.length > 0) {
-          delete updatedList.sections; 
-      }
-      await addOrUpdateItem(COLL_LISTS, updatedList);
+      const updatedList = { ...baseList, ...updates };
+      activeListRef.current = updatedList as PackingList; // Optimistic sync
+      setLocalList(updatedList as PackingList); // Update UI instantly
+
+      pendingWritesRef.current++;
+
+      return new Promise<void>((resolve) => {
+          dbQueueRef.current = dbQueueRef.current.then(async () => {
+              try {
+                  await updateItemFields(COLL_LISTS, baseList.id, updates);
+              } catch (e) {
+                  console.error("Error in queued update:", e);
+              } finally {
+                  pendingWritesRef.current--;
+                  // If queue is empty, clear optimistic state to fall back to latest DB state
+                  if (pendingWritesRef.current === 0) {
+                     setLocalList(null);
+                     activeListRef.current = null;
+                  }
+                  resolve();
+              }
+          });
+      });
   };
 
   // Helper to update active zone
   const updateActiveZone = (zoneUpdates: Partial<ListZone>) => {
-      if (!activeList || !activeZone) return;
-      const newZones = activeList.zones!.map(z => z.id === activeZone.id ? { ...z, ...zoneUpdates } : z);
+      const baseList = activeListRef.current || activeList;
+      if (!baseList || !baseList.zones || !activeZoneId) return;
+      const zId = activeZone?.id || activeZoneId;
+      const newZones = baseList.zones.map(z => z.id === zId ? { ...z, ...zoneUpdates } : z);
       updateActiveList({ zones: newZones });
   };
   
   // Helper to update active section (inside active zone)
-   const updateActiveSection = (sectionUpdates: Partial<ListSection>) => {
-      if (!activeList || !activeZone || !activeSection) return;
-      const newSections = activeZone.sections.map(s => s.id === activeSection.id ? { ...s, ...sectionUpdates } : s);
+   const updateActiveSection = (sectionUpdates: Partial<ListSection> | ((prev: ListSection) => Partial<ListSection>)) => {
+      const baseList = activeListRef.current || activeList;
+      if (!baseList || !baseList.zones || !activeZoneId || !activeSectionId) return;
+      
+      const zId = activeZone?.id || activeZoneId;
+      const currentZone = baseList.zones.find(z => z.id === zId);
+      if (!currentZone) return;
+
+      const sId = activeSection?.id || activeSectionId;
+      const currentSection = currentZone.sections.find(s => s.id === sId);
+      if (!currentSection) return;
+
+      const resolvedUpdates = typeof sectionUpdates === 'function' ? sectionUpdates(currentSection) : sectionUpdates;
+
+      const newSections = currentZone.sections.map(s => s.id === sId ? { ...s, ...resolvedUpdates } : s);
       updateActiveZone({ sections: newSections });
   };
 
@@ -958,9 +1088,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const openEventModal = (list?: PackingList, e?: React.MouseEvent) => {
       if (e) e.stopPropagation();
       if (list) {
-          setEventFormData({...list});
+          setEventFormData({
+            databaseId: list.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID,
+            ...list
+          });
       } else {
           setEventFormData({
+              databaseId: activeDatabaseId || DEFAULT_DATABASE_ID,
               eventName: '',
               location: '',
               eventDate: '',
@@ -981,6 +1115,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       if (!dataToSave.eventName) return;
       
       const listToSave = {
+          databaseId: dataToSave.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID,
           ...dataToSave,
           id: dataToSave.id || generateId(),
           creationDate: dataToSave.creationDate || new Date().toISOString()
@@ -1356,7 +1491,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           type: 'item', referenceId: i.id, name: i.name, category: i.category,
           contents: (i.accessories || []).map(acc => {
               const invItem = inventory.find(inv => inv.id === acc.itemId);
-              return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro' };
+              return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro', prepNote: acc.prepNote || '' };
           })
         };
       }
@@ -1369,111 +1504,90 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       rentalType?: 'internal_shortage' | 'external_rental',
       vendor?: string
   ) => {
-      if (!activeSection) return;
-      
-      // Check for replacement
-      if (replacingComponentId) {
-          // Logic for replacement (swap item, keep qty)
-           const newBase = generateComponentFromItem(item, type);
+      updateActiveSection(currentSection => {
+          // Check for replacement
+          if (replacingComponentId) {
+              const newBase = generateComponentFromItem(item, type);
+              const newComponents = currentSection.components.map(c => 
+                  c.uniqueId === replacingComponentId ? { 
+                      ...c, 
+                      ...newBase, 
+                      isExternalRental,
+                      rentalType,
+                      externalRentalVendor: vendor
+                  } : c
+              );
+              setReplacingComponentId(null);
+              return { components: newComponents };
+          }
 
-           // Automatically open reminders for Kits during replacement
-           if (type === 'kit') {
-               const k = item as Kit;
-               if (k.reminders && k.reminders.length > 0) {
-                   setOpenRemindersIds(prev => new Set(prev).add(replacingComponentId));
-               }
-           }
-
-           const newComponents = activeSection.components.map(c => 
-              c.uniqueId === replacingComponentId ? { 
+          const existing = currentSection.components.find(c => c.type === type && c.referenceId === item.id);
+          if (existing) {
+              const newComps = currentSection.components.map(c => c.uniqueId === existing.uniqueId ? { 
                   ...c, 
-                  ...newBase, 
-                  isExternalRental,
-                  rentalType,
-                  externalRentalVendor: vendor
-              } : c
-           );
-           updateActiveSection({ components: newComponents });
-           setReplacingComponentId(null);
-           return;
-      }
-
-      const existing = activeSection.components.find(c => c.type === type && c.referenceId === item.id);
-      if (existing) {
-          const newComps = activeSection.components.map(c => c.uniqueId === existing.uniqueId ? { 
-              ...c, 
-              quantity: c.quantity + 1, 
-              isExternalRental: c.isExternalRental || isExternalRental,
-              rentalType: c.rentalType || rentalType,
-              externalRentalVendor: c.externalRentalVendor || vendor
-          } : c);
-          updateActiveSection({ components: newComps });
-          setLastAddedComponentId(existing.uniqueId);
-
-          // If it's a kit, ensure reminders are open when re-adding
-          if (type === 'kit') {
-              const k = item as Kit;
-              if (k.reminders && k.reminders.length > 0) {
-                  setOpenRemindersIds(prev => new Set(prev).add(existing.uniqueId));
-              }
-          }
-      } else {
-          const newId = generateId();
-          const newComp: ListComponent = { 
-              uniqueId: newId, 
-              quantity: 1, 
-              notes: '', 
-              isExternalRental, 
-              rentalType,
-              externalRentalVendor: vendor,
-              ...generateComponentFromItem(item, type) 
-          };
-          
-          // Automatically open reminders for Kits
-          if (type === 'kit') {
-              const k = item as Kit;
-              if (k.reminders && k.reminders.length > 0) {
-                  setOpenRemindersIds(prev => new Set(prev).add(newId));
-              }
-          }
-
-          // INSERTION LOGIC: Add under the last selected item
-          let newComponents = [...activeSection.components];
-          let lastSelectedIndex = -1;
-          for (let i = activeSection.components.length - 1; i >= 0; i--) {
-              if (selectedIds.has(activeSection.components[i].uniqueId)) {
-                  lastSelectedIndex = i;
-                  break;
-              }
-          }
-
-          if (lastSelectedIndex !== -1) {
-              newComponents.splice(lastSelectedIndex + 1, 0, newComp);
+                  quantity: c.quantity + 1, 
+                  isExternalRental: c.isExternalRental || isExternalRental,
+                  rentalType: c.rentalType || rentalType,
+                  externalRentalVendor: c.externalRentalVendor || vendor
+              } : c);
+              setLastAddedComponentId(existing.uniqueId);
+              return { components: newComps };
           } else {
-              newComponents.push(newComp);
-          }
+              const newId = generateId();
+              const newComp: ListComponent = { 
+                  uniqueId: newId, 
+                  quantity: 1, 
+                  notes: '', 
+                  isExternalRental, 
+                  rentalType,
+                  externalRentalVendor: vendor,
+                  ...generateComponentFromItem(item, type) 
+              };
 
-          updateActiveSection({ components: newComponents });
-          setLastAddedComponentId(newId);
-      }
+              let newComponents = [...currentSection.components];
+              let lastSelectedIndex = -1;
+              for (let i = currentSection.components.length - 1; i >= 0; i--) {
+                  if (selectedIds.has(currentSection.components[i].uniqueId)) {
+                      lastSelectedIndex = i;
+                      break;
+                  }
+              }
+
+              if (lastSelectedIndex !== -1) {
+                  newComponents.splice(lastSelectedIndex + 1, 0, newComp);
+              } else {
+                  newComponents.push(newComp);
+              }
+
+              setLastAddedComponentId(newId);
+              return { components: newComponents };
+          }
+      });
   };
 
-  const updateComponentQty = (uniqueId: string, qty: number) => {
-      if (!activeSection || qty < 1) return;
-      const newComps = activeSection.components.map(c => c.uniqueId === uniqueId ? { ...c, quantity: qty } : c);
-      updateActiveSection({ components: newComps });
+  const updateComponentQty = (uniqueId: string, qtyOrUpdater: number | ((prev: number) => number)) => {
+      updateActiveSection(currentSection => ({
+          components: currentSection.components.map(c => {
+              if (c.uniqueId === uniqueId) {
+                  const newQty = typeof qtyOrUpdater === 'function' ? qtyOrUpdater(c.quantity) : qtyOrUpdater;
+                  if (newQty < 0) return c;
+                  return { ...c, quantity: newQty };
+              }
+              return c;
+          })
+      }));
   };
   
   const updateComponentNote = (uniqueId: string, note: string) => {
-      if (!activeSection) return;
-      const newComps = activeSection.components.map(c => c.uniqueId === uniqueId ? { ...c, notes: note } : c);
-      updateActiveSection({ components: newComps });
+      updateActiveSection(currentSection => ({
+          components: currentSection.components.map(c => c.uniqueId === uniqueId ? { ...c, notes: note } : c)
+      }));
   };
 
   const removeComponent = (uniqueId: string) => {
-      if (!activeSection) return;
-      const newComps = activeSection.components.filter(c => c.uniqueId !== uniqueId);
-      updateActiveSection({ components: newComps });
+      updateActiveSection(currentSection => ({
+          components: currentSection.components.filter(c => c.uniqueId !== uniqueId)
+      }));
   };
 
   const handleDragStart = (e: React.DragEvent, sectionId: string, index: number, uniqueId: string) => {
@@ -1542,7 +1656,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   const handleUpdateReminders = async (newReminders: Reminder[]) => {
     if (!remindersList) return;
-    await addOrUpdateItem(COLL_LISTS, { ...remindersList, reminders: newReminders });
+    await updateItemFields(COLL_LISTS, remindersList.id, { reminders: newReminders });
   };
   
   // --- VERSIONING & COMPLETION ---
@@ -1805,6 +1919,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 >
                                   <Lightbulb size={20} className={list.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
                                 </button>
+                                {list.databaseId && list.databaseId !== 'default' && (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950/70 border border-blue-800/50 text-blue-300 flex items-center gap-1 shrink-0" title={`Database: ${databases?.find(d => d.id === list.databaseId)?.name || list.databaseId}`}>
+                                    <Database size={11} className="text-blue-400" />
+                                    <span>{databases?.find(d => d.id === list.databaseId)?.name || list.databaseId}</span>
+                                  </span>
+                                )}
                                 {list.version && <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono shrink-0">v{list.version}</span>}
                              </div>
                              <div className="hidden md:flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-1 text-sm text-slate-400 mt-1">
@@ -1847,6 +1967,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             isOpen={isEventModalOpen} 
             onClose={() => setIsEventModalOpen(false)} 
             initialData={eventFormData}
+            databases={databases}
+            activeDatabaseId={activeDatabaseId}
             onSave={(data) => {
                 setEventFormData(data);
                 setTimeout(() => handleSaveEvent(data), 0);
@@ -2431,9 +2553,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                       !kits.some(k => k.id === comp.referenceId)
                   );
 
-                  // Retrieve Kit Reminders if applicable
+                  // Retrieve Reminders if applicable
                   const originalKit = comp.type === 'kit' ? kits.find(k => k.id === comp.referenceId) : null;
-                  const hasKitReminders = originalKit?.reminders && originalKit.reminders.length > 0;
+                  const originalItem = comp.type === 'item' ? inventory.find(i => i.id === comp.referenceId) : null;
+                  const itemReminders = originalKit?.reminders || originalItem?.reminders || [];
+                  const hasReminders = itemReminders.length > 0;
 
                   // Highlight Logic
                   const isMainMatch = comp.name === highlightedItemName;
@@ -2557,19 +2681,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                               {comp.type === 'template' && <span className="text-xs bg-emerald-900 text-emerald-200 px-1 rounded align-middle no-underline font-bold">Tmpl</span>}
                                               {comp.type === 'kit' && <span className="text-xs bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">Kit</span>}
                                               {comp.type === 'item' && hasAccessories && <span className="text-xs bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">Con accessori</span>}
-                                              {hasKitReminders && (
+                                              {hasReminders && (
                                                   <button 
                                                     onClick={(e) => { 
                                                         e.stopPropagation(); 
-                                                        const newSet = new Set(openRemindersIds);
+                                                        const newSet = new Set(closedRemindersIds);
                                                         if (newSet.has(comp.uniqueId)) newSet.delete(comp.uniqueId);
                                                         else newSet.add(comp.uniqueId);
-                                                        setOpenRemindersIds(newSet);
+                                                        setClosedRemindersIds(newSet);
                                                     }}
-                                                    className={`p-0.5 rounded-full ${openRemindersIds.has(comp.uniqueId) ? 'bg-yellow-500 text-black' : 'text-yellow-500 hover:bg-yellow-900/30'} transition-colors`}
-                                                    title="Ci sono cose da ricordare per questo kit!"
+                                                    className={`p-0.5 rounded-full ${!closedRemindersIds.has(comp.uniqueId) ? 'bg-yellow-500 text-black' : 'text-yellow-500 hover:bg-yellow-900/30'} transition-colors`}
+                                                    title={!closedRemindersIds.has(comp.uniqueId) ? "Chiudi promemoria" : "Ci sono cose da ricordare!"}
                                                   >
-                                                      <Lightbulb size={12} className={openRemindersIds.has(comp.uniqueId) ? "fill-current" : ""} />
+                                                      <Lightbulb size={12} className={!closedRemindersIds.has(comp.uniqueId) ? "fill-current" : ""} />
                                                   </button>
                                               )}
                                           </div>
@@ -2622,27 +2746,51 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                     {/* QTY CONTROLS - ULTRA COMPACT */}
                                     <div className="flex items-center bg-slate-950 border border-slate-700 rounded-lg overflow-hidden ml-1 sm:ml-2">
                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); updateComponentQty(comp.uniqueId, Math.max(1, comp.quantity - 1)); }} 
+                                            onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                setEditingQtyId(null);
+                                                updateComponentQty(comp.uniqueId, prev => Math.max(1, prev - 1)); 
+                                            }} 
                                             className="p-1 px-1.5 text-slate-500 hover:text-white hover:bg-slate-800 transition-colors border-r border-slate-800"
                                         >
                                             <Minus size={14} />
                                         </button>
                                         <input 
                                             ref={el => { qtyInputRefs.current[comp.uniqueId] = el }} 
-                                            type="number" 
-                                            min="1" 
+                                            type="text" 
+                                            inputMode="numeric"
+                                            pattern="[0-9]*"
                                             className="w-12 h-7 bg-transparent text-center text-white text-xs outline-none appearance-none font-bold" 
-                                            value={comp.quantity} 
-                                            onChange={(e) => updateComponentQty(comp.uniqueId, Number(e.target.value))}
+                                            value={editingQtyId === comp.uniqueId ? editingQtyValue : comp.quantity} 
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setEditingQtyId(comp.uniqueId);
+                                                setEditingQtyValue(val);
+                                                if (val.trim() !== '') {
+                                                    const num = parseInt(val, 10);
+                                                    if (!isNaN(num) && num > 0) {
+                                                        updateComponentQty(comp.uniqueId, num);
+                                                    }
+                                                }
+                                            }}
+                                            onBlur={() => {
+                                                setEditingQtyId(null);
+                                                setEditingQtyValue('');
+                                            }}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter') {
+                                                    e.currentTarget.blur();
                                                     pickerInputRef.current?.focus();
                                                     pickerInputRef.current?.select();
                                                 }
                                             }}
                                         />
                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); updateComponentQty(comp.uniqueId, comp.quantity + 1); }} 
+                                            onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                setEditingQtyId(null);
+                                                updateComponentQty(comp.uniqueId, prev => prev + 1); 
+                                            }} 
                                             className="p-1 px-1.5 text-slate-500 hover:text-white hover:bg-slate-800 transition-colors border-l border-slate-800"
                                         >
                                             <Plus size={14} />
@@ -2651,14 +2799,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                </div>
                           </div>
                           
-                          {/* KIT REMINDERS PANEL */}
-                          {openRemindersIds.has(comp.uniqueId) && hasKitReminders && (
+                          {/* REMINDERS PANEL */}
+                          {!closedRemindersIds.has(comp.uniqueId) && hasReminders && (
                               <div className="mt-2 mx-2 bg-yellow-900/20 border border-yellow-700/30 rounded p-3 animate-in slide-in-from-top-2 fade-in duration-200">
                                   <div className="text-xs font-bold text-yellow-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-                                      <Lightbulb size={12} className="fill-current"/> Cose da ricordare per questo Kit:
+                                      <Lightbulb size={12} className="fill-current"/> Cose da ricordare:
                                   </div>
                                   <ul className="space-y-1">
-                                      {originalKit?.reminders?.map((rem, ridx) => (
+                                      {itemReminders.map((rem, ridx) => (
                                           <li key={ridx} className="text-xs text-yellow-100 flex items-start gap-2">
                                               <span className="mt-1 w-1 h-1 rounded-full bg-yellow-500 shrink-0"/>
                                               {rem}
@@ -3131,6 +3279,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           isOpen={isEventModalOpen} 
           onClose={() => setIsEventModalOpen(false)} 
           initialData={eventFormData}
+          databases={databases}
+          activeDatabaseId={activeDatabaseId}
           onSave={(data) => {
               setEventFormData(data);
               // Wait for React to apply state, then call save. Or modify handleSaveEvent to accept data.
@@ -3138,6 +3288,47 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               setTimeout(() => handleSaveEvent(data), 0);
           }}
       />
+
+      {/* Database Mismatch Modal */}
+      {dbMismatchList && (
+        <Modal 
+          isOpen={true} 
+          onClose={handleCancelDbSwitch} 
+          title="Cambio Database Richiesto" 
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-start gap-3">
+              <Database className="text-amber-400 shrink-0 mt-0.5" size={24} />
+              <div className="text-sm text-slate-300 space-y-1">
+                <p>
+                  Questa lista (<strong className="text-white">{dbMismatchList.list.eventName}</strong>) è stata creata con il database <strong className="text-amber-300">{dbMismatchList.targetDbName}</strong>.
+                </p>
+                <p className="text-xs text-slate-400">
+                  Attualmente è attivo il database <strong className="text-slate-200">{(databases || []).find(d => d.id === (activeDatabaseId || DEFAULT_DATABASE_ID))?.name || 'Database Principale'}</strong>, quindi l'elenco materiali potrebbe risultare vuoto o incompleto. Vuoi passare a <strong className="text-amber-300">{dbMismatchList.targetDbName}</strong>?
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button 
+                type="button" 
+                onClick={handleCancelDbSwitch}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-sm transition-colors"
+              >
+                No, Torna agli Eventi
+              </button>
+              <button 
+                type="button" 
+                onClick={handleConfirmDbSwitch}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm shadow-lg shadow-blue-900/30 transition-all"
+              >
+                Sì, Passa a {dbMismatchList.targetDbName}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Paste Confirm */}
       <Modal isOpen={showPasteConfirm} onClose={() => setShowPasteConfirm(false)} title="Incolla di nuovo">

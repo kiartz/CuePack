@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent } from '../types';
-import { ItemFormModal } from './ItemFormModal';
+import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
+import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
-import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS } from '../firebase';
+import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
 
 interface InventoryViewProps {
   items: InventoryItem[];
   packingLists: PackingList[];
+  activeDatabaseId?: string;
 }
 
-export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists }) => {
+export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -27,6 +29,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [activeInventoryAction, setActiveInventoryAction] = useState<'duplicate' | 'delete' | null>(null);
   const [viewAccessoriesItem, setViewAccessoriesItem] = useState<InventoryItem | null>(null);
+  const [previewCodeItem, setPreviewCodeItem] = useState<{ code: string; name: string } | null>(null);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -43,8 +46,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         const name = (item.name || '').toLowerCase();
         const cat = (item.category || '').toLowerCase();
         const desc = (item.description || '').toLowerCase();
+        const pcode = (item.productCode || '').toLowerCase();
+        const icodes = (item.instances || []).map(inst => inst.id.toLowerCase()).join(' ');
         
-        const combinedText = `${name} ${cat} ${desc}`;
+        const combinedText = `${name} ${cat} ${desc} ${pcode} ${icodes}`;
         const isMatch = searchTokens.every(token => combinedText.includes(token));
         
         if (!isMatch) return { item, score: -1, nameMatches: 0 }; 
@@ -66,6 +71,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                 }
                 if (cat.includes(token)) score += 10;
                 if (desc.includes(token)) score += 1;
+                if (pcode === token) score += 2000;
+                else if (pcode.includes(token)) score += 1000;
+                if (icodes.includes(token)) score += 800;
             });
         }
 
@@ -213,7 +221,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       newItem = { ...itemData, id };
     }
 
-    await addOrUpdateItem(COLL_INVENTORY, newItem);
+    const inventoryCol = getInventoryCollection(activeDatabaseId);
+    await addOrUpdateItem(inventoryCol, newItem);
     await propagateUpdates(newItem);
     setIsModalOpen(false);
   };
@@ -238,7 +247,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         const updatedItem = { ...item, [field]: editValue };
         // Sanitize: remove undefined values which Firestore hates
         const sanitizedItem = JSON.parse(JSON.stringify(updatedItem));
-        await addOrUpdateItem(COLL_INVENTORY, sanitizedItem);
+        const inventoryCol = getInventoryCollection(activeDatabaseId);
+        await addOrUpdateItem(inventoryCol, sanitizedItem);
         // Only propagate if name or category changed, as these are cached in lists.
         // Also if technically accessories were editable inline (not currently), we'd propagate.
         if (field === 'name' || field === 'category') {
@@ -259,68 +269,120 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
 
   const confirmDelete = async () => {
     if (itemToDelete) {
-      await deleteItem(COLL_INVENTORY, itemToDelete);
+      const inventoryCol = getInventoryCollection(activeDatabaseId);
+      await deleteItem(inventoryCol, itemToDelete);
       setItemToDelete(null);
     }
   };
 
+  const [isAssigningCodes, setIsAssigningCodes] = useState(false);
+
+  const handleAutoAssignMissingCodes = async () => {
+    const unassigned = items.filter(i => (!i.productCode || !i.productCode.trim()) || (!i.qrCode || !i.qrCode.trim()));
+    if (unassigned.length === 0) {
+      alert("Tutti gli articoli in inventario hanno già sia il codice prodotto che il codice QR assegnati!");
+      return;
+    }
+    if (confirm(`Vuoi generare e salvare automaticamente i codici mancanti per i ${unassigned.length} articoli senza codice?`)) {
+      setIsAssigningCodes(true);
+      try {
+        const inventoryCol = getInventoryCollection(activeDatabaseId);
+        const updatedList: InventoryItem[] = [];
+        let runningItems = [...items];
+        for (const item of unassigned) {
+          const prodCode = item.productCode && item.productCode.trim() ? item.productCode : generateProductCode(runningItems, item.id);
+          const qr = item.qrCode && item.qrCode.trim() ? item.qrCode : generateProductQrCode(runningItems, item.id);
+          const updated = { ...item, productCode: prodCode, qrCode: qr };
+          runningItems = runningItems.map(i => i.id === item.id ? updated : i);
+          updatedList.push(updated);
+        }
+        await Promise.all(updatedList.map(u => addOrUpdateItem(inventoryCol, u)));
+        alert(`Salvati con successo i codici per ${updatedList.length} articoli!`);
+      } catch (err) {
+        console.error("Errore durante l'assegnazione automatica dei codici:", err);
+        alert("Si è verificato un errore durante il salvataggio dei codici.");
+      } finally {
+        setIsAssigningCodes(false);
+      }
+    }
+  };
+
   const handleDuplicate = async (item: InventoryItem) => {
+    const inventoryCol = getInventoryCollection(activeDatabaseId);
     const newItem = { ...item, id: generateId(), name: `${item.name} (Copia)` };
-    await addOrUpdateItem(COLL_INVENTORY, newItem);
+    await addOrUpdateItem(inventoryCol, newItem);
     handleOpenModal(newItem);
   };
 
   return (
-    <div className="h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-2">
-        <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario</h1>
-        
-        <div className="flex flex-nowrap items-center gap-2 w-full xl:w-auto">
-          {/* Search Bar - Grows */}
-          <div className="relative flex-1 min-w-0 md:w-64">
-            <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
+    <div className="space-y-4 max-w-[1600px] mx-auto p-4 md:p-6 flex flex-col min-h-[calc(100vh-4rem)]">
+      {/* Top Header / Actions */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-sm">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Inventario Materiali</h1>
+          <p className="text-sm text-slate-400 mt-0.5">Gestisci e cataloga le attrezzature, accessori e disponibilità</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {/* Category Filter */}
+          <div className="relative flex-1 sm:flex-none">
+             <Filter className="absolute left-3 top-3 text-slate-500" size={16} />
+             <select 
+               className="bg-slate-950 border border-slate-700 text-slate-300 pl-9 pr-8 py-2.5 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
+               value={selectedCategory}
+               onChange={(e) => setSelectedCategory(e.target.value)}
+             >
+               <option value="All">Tutte le Categorie ({items.length})</option>
+               {Object.values(Category).map(c => {
+                 const count = items.filter(i => i.category === c).length;
+                 return <option key={c} value={c}>{c} ({count})</option>;
+               })}
+             </select>
+          </div>
+
+          {/* Search Bar */}
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-3 text-slate-500" size={16} />
             <input 
-              type="text"
-              placeholder="Cerca..."
-              className="w-full bg-slate-800 border border-slate-700 text-white pl-9 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all"
+              type="text" 
+              placeholder="Cerca materiale o codice..." 
+              className="bg-slate-950 border border-slate-700 text-white pl-9 pr-4 py-2.5 rounded-lg text-sm w-full outline-none focus:border-blue-500 placeholder-slate-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-             {/* Square Category Filter */}
-             <div className="relative group/filter">
-                <div className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${selectedCategory !== 'All' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
-                    <Filter size={18} />
-                </div>
-                <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    title="Filtra per categoria"
-                >
-                    <option value="All">Tutto</option>
-                    {Object.values(Category).map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                </select>
-             </div>
+          {/* Actions Button Group */}
+          <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+             <button 
+                onClick={() => setActiveInventoryAction(activeInventoryAction === 'duplicate' ? null : 'duplicate')}
+                className={`p-2.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold ${activeInventoryAction === 'duplicate' ? 'bg-amber-600 text-white border-amber-500 shadow-lg shadow-amber-900/30' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white hover:bg-slate-700'}`}
+                title="Attiva modalità duplicazione (clicca su un articolo per duplicarlo)"
+             >
+                <Copy size={16} />
+                <span className="hidden lg:inline">Duplica</span>
+             </button>
 
              <button 
-                onClick={() => setActiveInventoryAction(p => p === 'duplicate' ? null : 'duplicate')}
-                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'duplicate' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                title="Attiva Duplicazione rapida"
+                onClick={() => setActiveInventoryAction(activeInventoryAction === 'delete' ? null : 'delete')}
+                className={`p-2.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-900/30' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-rose-400 hover:bg-slate-700'}`}
+                title="Attiva modalità eliminazione (clicca su un articolo per rimuoverlo)"
              >
-                <Copy size={18} />
+                <Trash2 size={16} />
+                <span className="hidden lg:inline">Elimina</span>
              </button>
-             <button 
-                onClick={() => setActiveInventoryAction(p => p === 'delete' ? null : 'delete')}
-                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                title="Attiva Eliminazione rapida"
-             >
-                <Trash2 size={18} />
-             </button>
+
+             {items.some(i => (!i.productCode || !i.productCode.trim()) || (!i.qrCode || !i.qrCode.trim())) && (
+                <button 
+                  onClick={handleAutoAssignMissingCodes}
+                  disabled={isAssigningCodes}
+                  className="bg-slate-800 hover:bg-slate-700 text-purple-400 border border-purple-900/40 p-2.5 sm:px-3 sm:py-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-sm active:scale-95"
+                  title="Genera e memorizza automaticamente i codici prodotto e QR mancanti per tutti gli articoli dell'inventario"
+                >
+                  <Barcode size={18} />
+                  <span className="hidden md:inline">{isAssigningCodes ? 'Salvataggio...' : 'Genera Mancanti'}</span>
+                </button>
+              )}
 
              <button 
                 onClick={() => handleOpenModal()}
@@ -339,6 +401,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             <thead className="bg-slate-800 text-slate-300 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="py-2 px-3 font-bold text-xs uppercase tracking-wider text-slate-500">Nome</th>
+                <th className="py-2 px-2 font-bold text-xs uppercase tracking-wider text-slate-500">Cod. Prod.</th>
+                <th className="py-2 px-2 font-bold text-xs uppercase tracking-wider text-slate-500">QR Code / Barcode</th>
                 <th className="py-2 px-2 font-bold text-xs uppercase tracking-wider text-slate-500">Cat.</th>
                 <th className="py-2 px-2 font-bold text-right text-xs uppercase tracking-wider text-slate-500">kg</th>
                 <th className="py-2 px-2 font-bold text-right text-xs uppercase tracking-wider text-slate-500">Watt</th>
@@ -348,12 +412,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             <tbody className="divide-y divide-slate-800">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">
+                  <td colSpan={7} className="p-8 text-center text-slate-500">
                     Nessun materiale trovato.
                   </td>
                 </tr>
               ) : (
-                paginatedItems.map(item => (
+                paginatedItems.map(item => {
+                  const effectiveProductCode = item.productCode || generateProductCode(items, item.id);
+                  const effectiveQrCode = item.qrCode || generateProductQrCode(items, item.id);
+                  
+                  return (
                   <tr 
                     key={item.id}  
                     className={`hover:bg-slate-800/50 transition-colors group cursor-pointer ${activeInventoryAction ? 'bg-blue-900/10' : ''}`}
@@ -391,10 +459,69 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                         </div>
                       )}
                       {(!editingCell || editingCell.itemId !== item.id || editingCell?.field !== 'name') && (
-                          <div className="text-sm text-slate-500 truncate max-w-xs" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'description'); }}>
-                              {item.description}
+                          <div className="flex flex-col gap-0.5 mt-0.5">
+                              {item.description && (
+                                  <div className="text-sm text-slate-500 truncate max-w-xs" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'description'); }}>
+                                      {item.description}
+                                  </div>
+                              )}
+                              {item.instances && item.instances.length > 0 && (
+                                <div className="flex items-center gap-2 text-xs font-mono">
+                                    <span className="text-emerald-400/80 bg-emerald-900/20 px-1 py-0.5 rounded">{item.instances.length} SERIALI</span>
+                                </div>
+                              )}
                           </div>
                       )}
+                    </td>
+
+                    {/* PRODUCT CODE COLUMN (NON-PRINTED IDENTIFIER) */}
+                    <td className="py-2 px-2 font-mono text-xs" onClick={(e) => e.stopPropagation()}>
+                      <span 
+                        className={`px-1.5 py-0.5 rounded cursor-pointer ${item.productCode ? 'text-blue-400 bg-blue-900/20 border border-blue-800/40 font-semibold' : 'text-slate-500 italic'}`}
+                        title="Codice identificativo prodotto (No Stampa)"
+                        onClick={() => handleOpenModal(item)}
+                      >
+                        {item.productCode ? `#${item.productCode}` : `#${effectiveProductCode}`}
+                      </span>
+                    </td>
+
+                    {/* QR CODE / BARCODE COLUMN (PRINTABLE TAG) */}
+                    <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5 font-mono text-xs">
+                        <span 
+                          className={`px-1.5 py-0.5 rounded cursor-pointer ${item.qrCode ? 'text-purple-300 bg-purple-900/30 border border-purple-800/50 font-bold' : 'text-slate-400 bg-slate-800/40 border border-slate-700/50 italic'}`}
+                          title={item.qrCode ? "QR Code Prodotto salvato" : "QR Code Prodotto suggerito"}
+                          onClick={() => handleOpenModal(item)}
+                        >
+                          [{effectiveQrCode}]
+                        </span>
+                        <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            type="button" 
+                            onClick={() => setPreviewCodeItem({ code: effectiveQrCode, name: item.name })} 
+                            className="p-1 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
+                            title="Visualizza QR Code e Barcode"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => printBarcode(effectiveQrCode, item.name)} 
+                            className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition-colors"
+                            title="Stampa Codice a Barre"
+                          >
+                            <Barcode size={14} />
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => printQRCode(effectiveQrCode, item.name)} 
+                            className="p-1 text-slate-400 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"
+                            title="Stampa QR Code"
+                          >
+                            <QrCode size={14} />
+                          </button>
+                        </div>
+                      </div>
                     </td>
 
                     {/* CATEGORY COLUMN */}
@@ -487,7 +614,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     </td>
 
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -533,6 +661,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         inventory={items} // Pass full inventory for accessories selection
         onCreateAccessory={handleCreateAccessory}
         title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"}
+        activeDatabaseId={activeDatabaseId}
       />
       
       <ConfirmationModal
@@ -558,6 +687,57 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                 );
             })}
         </div>
+      </Modal>
+
+      {/* CODE PREVIEW & PRINT MODAL */}
+      <Modal isOpen={!!previewCodeItem} onClose={() => setPreviewCodeItem(null)} title={`Codici Prodotto: ${previewCodeItem?.code || ''}`} size="md">
+        {previewCodeItem && (
+          <div className="space-y-6 text-center p-1">
+            {previewCodeItem.name && (
+              <div className="text-sm font-semibold text-white truncate max-w-sm mx-auto">
+                {previewCodeItem.name}
+              </div>
+            )}
+            
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Codice a Barre (Code 128)</div>
+              <div 
+                className="bg-white p-3 rounded-lg flex items-center justify-center overflow-x-auto max-w-full inline-block mx-auto shadow-md" 
+                dangerouslySetInnerHTML={{ __html: generateBarcodeSVG(previewCodeItem.code, 60, 2) }} 
+              />
+              <div>
+                <button 
+                  type="button" 
+                  onClick={() => printBarcode(previewCodeItem.code, previewCodeItem.name)} 
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 mx-auto transition-all shadow-lg shadow-emerald-900/30 active:scale-95"
+                >
+                  <Printer size={15} /> Stampa Barcode
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">QR Code</div>
+              <div 
+                className="bg-white p-3 rounded-lg flex items-center justify-center overflow-hidden inline-block mx-auto shadow-md" 
+                dangerouslySetInnerHTML={{ __html: generateQRCodeSVG(previewCodeItem.code, 160) }} 
+              />
+              <div>
+                <button 
+                  type="button" 
+                  onClick={() => printQRCode(previewCodeItem.code, previewCodeItem.name)} 
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 mx-auto transition-all shadow-lg shadow-purple-900/30 active:scale-95"
+                >
+                  <Printer size={15} /> Stampa QR Code
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button type="button" onClick={() => setPreviewCodeItem(null)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm transition-colors">Chiudi</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

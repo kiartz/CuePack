@@ -4,16 +4,17 @@ import { Plus, Search, Trash2, Copy, Blocks, ChevronLeft, ChevronRight } from 'l
 import { InventoryItem, Kit, Template, Category, PackingList } from '../types';
 import { TemplateFormModal } from './TemplateFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
-import { addOrUpdateItem, deleteItem, COLL_TEMPLATES } from '../firebase';
+import { addOrUpdateItem, deleteItem, COLL_TEMPLATES, getTemplatesCollection } from '../firebase';
 
 interface TemplatesViewProps {
   templates: Template[];
   inventory: InventoryItem[];
   kits: Kit[];
   lists: PackingList[];
+  activeDatabaseId?: string;
 }
 
-export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, inventory, kits, lists }) => {
+export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, inventory, kits, lists, activeDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -85,20 +86,23 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, invento
   };
 
   const handleSave = async (template: Template) => {
-    await addOrUpdateItem(COLL_TEMPLATES, template);
+    const templatesCol = getTemplatesCollection(activeDatabaseId);
+    await addOrUpdateItem(templatesCol, template);
     setIsModalOpen(false);
   };
 
   const confirmDelete = async () => {
     if (templateToDelete) {
-      await deleteItem(COLL_TEMPLATES, templateToDelete);
+      const templatesCol = getTemplatesCollection(activeDatabaseId);
+      await deleteItem(templatesCol, templateToDelete);
       setTemplateToDelete(null);
     }
   };
 
   const handleDuplicate = async (template: Template) => {
+    const templatesCol = getTemplatesCollection(activeDatabaseId);
     const newTemplate = { ...template, id: generateId(), name: `${template.name} (Copia)` };
-    await addOrUpdateItem(COLL_TEMPLATES, newTemplate);
+    await addOrUpdateItem(templatesCol, newTemplate);
   };
 
   const activeListsWithTemplate = useMemo(() => {

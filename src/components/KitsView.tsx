@@ -4,14 +4,15 @@ import { Plus, Search, Edit2, Trash2, Copy, Package, Filter, ChevronLeft, Chevro
 import { InventoryItem, Kit, Category } from '../types';
 import { KitFormModal } from './KitFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
-import { addOrUpdateItem, deleteItem, COLL_KITS } from '../firebase';
+import { addOrUpdateItem, deleteItem, COLL_KITS, getKitsCollection } from '../firebase';
 
 interface KitsViewProps {
   kits: Kit[];
   inventory: InventoryItem[];
+  activeDatabaseId?: string;
 }
 
-export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
+export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory, activeDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -84,20 +85,23 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory }) => {
   };
 
   const handleSave = async (kit: Kit) => {
-    await addOrUpdateItem(COLL_KITS, kit);
+    const kitsCol = getKitsCollection(activeDatabaseId);
+    await addOrUpdateItem(kitsCol, kit);
     setIsModalOpen(false);
   };
 
   const confirmDelete = async () => {
     if (kitToDelete) {
-      await deleteItem(COLL_KITS, kitToDelete);
+      const kitsCol = getKitsCollection(activeDatabaseId);
+      await deleteItem(kitsCol, kitToDelete);
       setKitToDelete(null);
     }
   };
 
   const handleDuplicate = async (kit: Kit) => {
+    const kitsCol = getKitsCollection(activeDatabaseId);
     const newKit = { ...kit, id: generateId(), name: `${kit.name} (Copia)` };
-    await addOrUpdateItem(COLL_KITS, newKit);
+    await addOrUpdateItem(kitsCol, newKit);
   };
 
   const getInventoryName = (id: string) => inventory.find(i => i.id === id)?.name || 'Unknown Item';

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { PackingList } from '../types';
+import { PackingList, InventoryDatabase } from '../types';
+import { DEFAULT_DATABASE_ID } from '../firebase';
 import { Modal } from './Modal';
-import { MapPin, Calendar } from 'lucide-react';
+import { MapPin, Calendar, Database } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 
@@ -10,21 +11,28 @@ interface EventFormModalProps {
   onClose: () => void;
   onSave: (data: Partial<PackingList>) => void;
   initialData?: Partial<PackingList>;
+  databases?: InventoryDatabase[];
+  activeDatabaseId?: string;
 }
 
 export const EventFormModal: React.FC<EventFormModalProps> = ({ 
   isOpen, 
   onClose, 
   onSave, 
-  initialData = {} 
+  initialData = {},
+  databases = [],
+  activeDatabaseId = DEFAULT_DATABASE_ID
 }) => {
   const [formData, setFormData] = useState<Partial<PackingList>>(initialData);
 
   useEffect(() => {
     if (isOpen) {
-      setFormData(initialData);
+      setFormData({
+        databaseId: activeDatabaseId,
+        ...initialData
+      });
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, activeDatabaseId]);
 
   const handleSave = () => {
     onSave(formData);
@@ -39,7 +47,7 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-700/50 pb-2">Informazioni Generali</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="col-span-full">
-                        <label className="block text-sm font-medium text-slate-400 mb-1">Nome Evento</label>
+                        <label className="block text-sm font-medium text-slate-400 mb-1">Nome Evento *</label>
                         <input 
                             type="text" 
                             className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-emerald-500 outline-none"
@@ -49,6 +57,24 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             autoFocus
                         />
                     </div>
+                    {databases && databases.length > 1 && (
+                        <div className="col-span-full">
+                            <label className="block text-sm font-medium text-slate-400 mb-1 flex items-center gap-1.5">
+                                <Database size={15} className="text-blue-400" /> Database Materiali
+                            </label>
+                            <select 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-emerald-500 outline-none"
+                                value={formData.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID}
+                                onChange={e => setFormData(prev => ({ ...prev, databaseId: e.target.value }))}
+                            >
+                                {databases.map(d => (
+                                    <option key={d.id} value={d.id}>
+                                        {d.name} {d.isDefault ? '(Default)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     <div className="col-span-full">
                         <label className="block text-sm font-medium text-slate-400 mb-1">Location / Luogo</label>
                         <div className="relative">

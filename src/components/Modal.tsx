@@ -7,9 +7,10 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  hideCloseButton?: boolean;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md' }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md', hideCloseButton = false }) => {
   if (!isOpen) return null;
 
   const sizeClasses = {
@@ -27,9 +28,11 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
           <h2 className={`font-bold text-white truncate pr-4 ${size === 'full' ? 'text-sm uppercase tracking-wider text-slate-400' : 'text-xl'}`}>
             {title}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors shrink-0">
-            <X size={size === 'full' ? 20 : 24} />
-          </button>
+          {!hideCloseButton && (
+            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors shrink-0">
+              <X size={size === 'full' ? 20 : 24} />
+            </button>
+          )}
         </div>
         <div className={`flex-1 overflow-y-auto custom-scrollbar ${size === 'full' ? 'p-0' : 'p-6'}`}>
           {children}
