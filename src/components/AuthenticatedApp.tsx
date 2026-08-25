@@ -86,9 +86,7 @@ export default function AuthenticatedApp() {
       
       setActiveListId(targetId);
       setCurrentView(targetView);
-      if (targetView === 'lists') {
-        setListToOpenInBuilderId(targetId);
-      } else {
+      if (targetView === 'prep-material') {
         setPrepMaterialListToOpenId(targetId);
       }
     }
