@@ -16,6 +16,12 @@ export interface ItemInstance {
   notes?: string;
 }
 
+export interface ItemDocument {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface InventoryItem {
   id: string;
   name: string;
@@ -28,6 +34,7 @@ export interface InventoryItem {
   inStock: number;
   accessories?: { itemId: string; quantity: number; prepNote?: string }[]; // Linked items (e.g., cables for a light)
   reminders?: string[];
+  documents?: ItemDocument[];
   instances?: ItemInstance[];
 }
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Layers, Package, ClipboardList, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map, Database } from 'lucide-react';
+import { Layers, Package, ClipboardList, ClipboardCheck, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map, Database } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { TemplatesView } from './TemplatesView';
@@ -19,6 +19,7 @@ import {
 } from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
+import { getShareUrlParams } from '../utils/share';
 
 type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material' | 'logistica-personale' | 'logistica-mezzi' | 'logistica-hotel' | 'utility-calcolo-elettrico' | 'utility-pixelmap' | 'utility-calcolo-ledwall' | 'utility-calcolo-stripled';
 
@@ -68,9 +69,40 @@ export default function AuthenticatedApp() {
     }
   }, [currentView, activeListId]);
   
-  // State for cross-view navigation (e.g. duplicate from archive)
+  // State for cross-view navigation (e.g. duplicate from archive, deep linking)
   const [listToOpenInBuilderId, setListToOpenInBuilderId] = useState<string | null>(null);
   const [listToAutoEditId, setListToAutoEditId] = useState<string | null>(null);
+  const [prepMaterialListToOpenId, setPrepMaterialListToOpenId] = useState<string | null>(null);
+  const hasProcessedDeepLink = useRef(false);
+
+  // --- DEEP LINKING EFFECT ---
+  useEffect(() => {
+    if (hasProcessedDeepLink.current) return;
+    const shareParams = getShareUrlParams();
+    if (shareParams && shareParams.listId) {
+      hasProcessedDeepLink.current = true;
+      const targetId = shareParams.listId;
+      const targetView = shareParams.view === 'prep-material' ? 'prep-material' : 'lists';
+      
+      setActiveListId(targetId);
+      setCurrentView(targetView);
+      if (targetView === 'lists') {
+        setListToOpenInBuilderId(targetId);
+      } else {
+        setPrepMaterialListToOpenId(targetId);
+      }
+    }
+  }, []);
+
+  // Sync Database when active list changes (e.g. via deep link)
+  useEffect(() => {
+    if (activeListId && packingLists.length > 0) {
+      const targetList = packingLists.find(l => l.id === activeListId);
+      if (targetList && targetList.databaseId && targetList.databaseId !== activeDatabaseId) {
+        setActiveDatabaseId(targetList.databaseId);
+      }
+    }
+  }, [activeListId, packingLists]);
 
   // --- NEW PROJECT FROM ARCHIVE STATE ---
   const [isNewProjectFromArchiveOpen, setIsNewProjectFromArchiveOpen] = useState(false);
@@ -225,8 +257,8 @@ export default function AuthenticatedApp() {
            { id: 'templates', label: 'Template', icon: Blocks }
        ]
     },
-    { id: 'lists', label: 'Eventi', icon: ClipboardList },
-    { id: 'prep-material', label: 'Preparazione Eventi', icon: Truck },
+    { id: 'lists', label: 'Crea Eventi', icon: ClipboardList },
+    { id: 'prep-material', label: 'Preparazione Eventi', icon: ClipboardCheck },
     { 
        id: 'logistica-group', 
        label: 'Logistica', 
@@ -428,6 +460,8 @@ export default function AuthenticatedApp() {
         return <PrepMaterialView 
             lists={packingLists} 
             onOpenTemplateModal={handleOpenNewProjectModal}
+            initialListId={prepMaterialListToOpenId}
+            onListOpened={() => setPrepMaterialListToOpenId(null)}
         />;
       case 'checklist-manager':
         return <ChecklistManager 
@@ -576,7 +610,7 @@ export default function AuthenticatedApp() {
            {!isSidebarCollapsed && (
                <div className="flex flex-col gap-1 overflow-hidden min-w-0">
                   <span className="truncate">© R. Chiartano</span>
-                  <span className="opacity-50 text-[10px] truncate">v0.5.6</span>
+                  <span className="opacity-50 text-[10px] truncate">v0.5.7</span>
                </div>
            )}
            <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">

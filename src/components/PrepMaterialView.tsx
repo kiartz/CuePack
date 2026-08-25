@@ -1,31 +1,57 @@
-import React, { useState, useMemo } from 'react';
-import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, FileText, ClipboardList, FileDown } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection } from '../types';
 import { addOrUpdateItem, deleteItem, COLL_LISTS } from '../firebase';
 import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
+import { ShareEventModal } from './ShareEventModal';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
 
 interface PrepMaterialViewProps {
   lists: PackingList[];
   onDuplicateFromArchive?: (list: PackingList) => void;
   onOpenTemplateModal?: (list: PackingList) => void;
+  initialListId?: string | null;
+  onListOpened?: () => void;
 }
 
 export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ 
     lists, 
     onDuplicateFromArchive,
-    onOpenTemplateModal
+    onOpenTemplateModal,
+    initialListId,
+    onListOpened
 }) => {
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeListAction, setActiveListAction] = useState<'archive' | 'restore' | 'delete' | 'duplicate' | null>(null);
-  const [activeWarehouseMode, setActiveWarehouseMode] = useState<'distinta' | 'carico' | 'rientro' | null>(null);
+  const [activeWarehouseMode, setActiveWarehouseMode] = useState<'distinta' | 'carico' | 'rientro' | null>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
+      return 'carico';
+    }
+    return null;
+  });
+  const [listToShare, setListToShare] = useState<PackingList | null>(null);
 
-  // Auto-select 'distinta' on Desktop if no mode is selected
+  // Handle initial list from deep link
+  useEffect(() => {
+    if (initialListId) {
+      setActiveListId(initialListId);
+      if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
+        setActiveWarehouseMode('carico');
+      }
+      const target = lists.find(l => l.id === initialListId);
+      if (target?.zones?.[0]?.id) {
+        setActiveZoneId(target.zones[0].id);
+      }
+      onListOpened?.();
+    }
+  }, [initialListId, lists]);
+
+  // Auto-select 'carico' on Desktop if no mode is selected
   React.useEffect(() => {
     if (activeListId && !activeWarehouseMode && typeof window !== 'undefined' && window.innerWidth >= 1024) {
-      setActiveWarehouseMode('distinta');
+      setActiveWarehouseMode('carico');
     }
   }, [activeListId, activeWarehouseMode]);
   
@@ -570,8 +596,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       <div className="h-full flex flex-col p-2 sm:p-4 bg-slate-950 overflow-hidden">
         <div className="mb-3">
           <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90 flex items-center gap-2">
-              <Truck className="text-blue-500" size={20} />
-              Magazzino
+              <ClipboardCheck className="text-blue-500" size={20} />
+              Preparazione Eventi
           </h1>
           <p className="text-xs text-slate-500 leading-none">Gestione carichi, scarichi e segnalazioni</p>
         </div>
@@ -733,7 +759,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                             } else if (activeListAction === 'delete') {
                                 if (list.isArchived) { setDeleteConfirm({ isOpen: true, listId: list.id, listName: list.eventName }); setActiveListAction(null); }
                             } else if (!activeListAction) {
-                                setActiveListId(list.id); setActiveZoneId(list.zones?.[0]?.id || '');
+                                setActiveListId(list.id); 
+                                setActiveZoneId(list.zones?.[0]?.id || '');
+                                if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
+                                    setActiveWarehouseMode('carico');
+                                }
                             }
                         }}
                         className={`border rounded-xl p-4 hover:border-slate-500 transition-all flex items-center gap-4 group cursor-pointer relative ${activeListAction ? 'ring-4 ring-transparent hover:ring-emerald-500/20' : ''} ${borderColor} ${bgColor}`}
@@ -789,17 +819,29 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                </button>
                            )}
 
-                           <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    setExportList(list);
-                                }}
-                                className="p-3 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-blue-900/20 flex items-center justify-center gap-1.5"
-                                title="Export Lista"
-                           >
-                               <Share size={18} />
-                               <span className="text-xs font-bold uppercase tracking-tight hidden lg:inline">Export</span>
-                           </button>
+                            <button 
+                                 onClick={(e) => {
+                                     e.stopPropagation();
+                                     setListToShare(list);
+                                 }}
+                                 className="p-3 bg-slate-800 hover:bg-emerald-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-emerald-900/20 flex items-center justify-center gap-1.5"
+                                 title="Condividi Evento"
+                            >
+                                <Share2 size={18} />
+                                <span className="text-xs font-bold uppercase tracking-tight hidden lg:inline">Condividi</span>
+                            </button>
+
+                            <button 
+                                 onClick={(e) => {
+                                     e.stopPropagation();
+                                     setExportList(list);
+                                 }}
+                                 className="p-3 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-blue-900/20 flex items-center justify-center gap-1.5"
+                                 title="Export Lista"
+                            >
+                                <Share size={18} />
+                                <span className="text-xs font-bold uppercase tracking-tight hidden lg:inline">Export</span>
+                            </button>
 
                            <button 
                                 onClick={(e) => {
@@ -1004,6 +1046,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                 </div>
             </div>
         </Modal>
+
+        {/* SHARE EVENT MODAL (LIST VIEW) */}
+        <ShareEventModal 
+            isOpen={!!listToShare}
+            onClose={() => setListToShare(null)}
+            list={listToShare}
+        />
       </div>
     );
   }
@@ -1013,7 +1062,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const zoneDeletedItems = activeList?.deletedItems?.filter(d => d.zoneName === activeZone?.name);
 
   // --- RENDER: MODE SELECTOR (Only for Mobile/Tablet) ---
-  if (activeListId && activeList && !activeWarehouseMode) {
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+  if (activeListId && activeList && !activeWarehouseMode && !isDesktop) {
       return (
           <div className="h-full flex flex-col p-6 bg-slate-950 items-center justify-center animate-in zoom-in-95 duration-300">
               <div className="max-w-md w-full bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl p-8 relative overflow-hidden">
@@ -1172,6 +1222,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                               <LayoutList size={18} /> <span className="hidden sm:inline">Totali</span>
                           </button>
                       </div>
+
+                      <button 
+                          onClick={() => setListToShare(activeList || null)} 
+                          title="Condividi Evento" 
+                          className="flex items-center gap-1.5 p-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors border border-slate-800 bg-slate-900/30 text-sm font-bold shadow-sm"
+                      >
+                          <Share2 size={18}/> 
+                          <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Condividi</span>
+                      </button>
 
                       <button 
                           onClick={() => setExportList(activeList || null)} 
@@ -2267,6 +2326,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                   </div>
               </div>
           </Modal>
+
+          {/* SHARE EVENT MODAL */}
+          <ShareEventModal 
+              isOpen={!!listToShare}
+              onClose={() => setListToShare(null)}
+              list={listToShare}
+          />
 
       </div>
   );

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -9,6 +9,7 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { EventFormModal } from './EventFormModal';
 import { RemindersModal } from './RemindersModal';
+import { ShareEventModal } from './ShareEventModal';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
@@ -16,6 +17,7 @@ import autoTable from 'jspdf-autotable';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
 import { calculateAvailableQuantity } from '../utils/availability';
+import { openDocumentInBrowser } from '../utils/documentViewer';
 
 interface PackingListBuilderProps {
   inventory: InventoryItem[];
@@ -159,6 +161,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // REMINDERS STATE
   const [activeRemindersListId, setActiveRemindersListId] = useState<string | null>(null);
   
+  // SHARE MODAL STATE
+  const [listToShare, setListToShare] = useState<PackingList | null>(null);
+  
   // Keep track of reminders that user has manually closed. 
   // By default, if an item has reminders, it is OPEN.
   const [closedRemindersIds, setClosedRemindersIds] = useState<Set<string>>(() => {
@@ -243,6 +248,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [isEditItemModalOpen, setIsEditItemModalOpen] = useState(false);
   const [editingKit, setEditingKit] = useState<Kit | null>(null);
+  const [viewDocsItem, setViewDocsItem] = useState<InventoryItem | null>(null);
   const [isEditKitModalOpen, setIsEditKitModalOpen] = useState(false);
 
   // REPLACEMENT STATE
@@ -265,9 +271,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   });
   const [editingTempItemUniqueId, setEditingTempItemUniqueId] = useState<string | null>(null);
 
-  // Mobile Checklist View State
+  // Mobile/Desktop Checklist View State
   const [isMobileChecklistOpen, setIsMobileChecklistOpen] = useState(false);
-  const [isDesktopChecklistOpen, setIsDesktopChecklistOpen] = useState(true);
+  const [isDesktopChecklistOpen, setIsDesktopChecklistOpen] = useState(false);
 
 
   // Section/Zone Management Modal State
@@ -1873,7 +1879,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       return (
       <div className="h-full flex flex-col p-4 sm:p-6 bg-slate-950 overflow-x-hidden">
         <div className="mb-4 sm:mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2 uppercase tracking-tighter">Liste Eventi</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2 uppercase tracking-tighter">Crea Eventi</h1>
         </div>
         <div className="flex flex-col xl:flex-row gap-4 mb-6">
           <div className="relative flex-1 max-w-xl w-full">
@@ -1918,6 +1924,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                   title="Note & Promemoria"
                                 >
                                   <Lightbulb size={20} className={list.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setListToShare(list); }}
+                                  className="p-1.5 rounded-full hover:bg-slate-700 text-slate-400 hover:text-blue-400 transition-colors shrink-0"
+                                  title="Condividi Evento"
+                                >
+                                  <Share2 size={18} />
                                 </button>
                                 {list.databaseId && list.databaseId !== 'default' && (
                                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950/70 border border-blue-800/50 text-blue-300 flex items-center gap-1 shrink-0" title={`Database: ${databases?.find(d => d.id === list.databaseId)?.name || list.databaseId}`}>
@@ -2011,6 +2024,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             onUpdate={handleUpdateReminders}
             title={remindersList?.eventName || 'Note Evento'}
         />
+
+        {/* SHARE EVENT MODAL (LIST VIEW) */}
+        <ShareEventModal 
+            isOpen={!!listToShare}
+            onClose={() => setListToShare(null)}
+            list={listToShare}
+        />
       </div>
     );
   }
@@ -2027,10 +2047,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 <button 
                   onClick={handleBackToList} 
                   className="p-1.5 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-2"
-                  title="Eventi"
+                  title="Crea Eventi"
                 >
                   <List size={18} />
-                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider text-white">Eventi</span>
+                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider text-white">Crea Eventi</span>
                 </button>
 
                 {/* Mobile-only Checklist Shortcut */}
@@ -2105,6 +2125,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         )}
                     </div>
                 )}
+
+                {/* SHARE BUTTON */}
+                <button 
+                    onClick={() => setListToShare(activeList || null)} 
+                    title="Condividi Evento" 
+                    className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
+                >
+                    <Share2 size={18}/> 
+                    <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Condividi</span>
+                </button>
 
                 {/* SINGLE EXPORT BUTTON */}
                 <button 
@@ -2372,23 +2402,58 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           const isOverbooked = avail.available <= 0;
 
                           return (
-                          <button key={template.id} onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item: template, type: 'template', avail: avail.available, total: avail.total }); } else { addToSection(template, 'template'); } }} className="w-full text-left px-4 py-3 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group">
-                            <div>
-                                <div className="text-sm text-white flex items-center gap-2">
-                                    <Blocks size={14} className="text-emerald-400" />
-                                    {template.name}
+                          <div 
+                            key={template.id} 
+                            onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item: template, type: 'template', avail: avail.available, total: avail.total }); } else { addToSection(template, 'template'); } }} 
+                            className="w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group cursor-pointer transition-colors"
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                                <div className="text-sm text-white flex items-center gap-2 truncate">
+                                    <Blocks size={14} className="text-emerald-400 shrink-0" />
+                                    <span className="truncate">{template.name}</span>
                                     {qtyInZone > 0 && (
-                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold">
+                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold shrink-0">
                                             x{qtyInZone}
                                         </span>
                                     )}
                                 </div>
-                                <div className="text-xs text-slate-500 pl-6 mt-0.5">
+                                <div className="text-xs text-slate-500 pl-6 mt-0.5 truncate">
                                     {template.items.length} componenti base • <span className={isOverbooked ? 'text-rose-500 font-bold' : 'text-slate-400'}>Disponibili: {avail.available}</span> / {avail.total}
                                 </div>
                             </div>
-                            <Plus size={16} className={`${isOverbooked ? 'text-rose-500' : 'text-slate-600 group-hover:text-emerald-500'} transition-colors`}/>
-                          </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setHighlightedItemName(template.name);
+                                  setPickerSearch('');
+                                  setIsPickerHovered(false);
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-blue-900/30 rounded-lg transition-colors"
+                                title={`Cerca ed evidenzia "${template.name}" nella lista`}
+                              >
+                                <Search size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (isOverbooked) {
+                                    setOverbookedModal({ isOpen: true, item: template, type: 'template', avail: avail.available, total: avail.total });
+                                  } else {
+                                    addToSection(template, 'template');
+                                  }
+                                }}
+                                className={`p-1.5 rounded-lg transition-colors ${isOverbooked ? 'text-rose-500 hover:bg-rose-900/30' : 'text-slate-500 group-hover:text-emerald-400 hover:bg-emerald-900/30'}`}
+                                title={`Aggiungi a ${activeSection.name}`}
+                              >
+                                <Plus size={16} />
+                              </button>
+                            </div>
+                          </div>
                         )})}
 
                         {/* Kit matches */}
@@ -2409,23 +2474,58 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           const isOverbooked = avail.available <= 0;
 
                           return (
-                          <button key={kit.id} onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item: kit, type: 'kit', avail: avail.available, total: avail.total }); } else { addToSection(kit, 'kit'); } }} className="w-full text-left px-4 py-3 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group">
-                            <div>
-                                <div className="text-sm text-white flex items-center gap-2">
-                                    <PackageIcon size={14} className="text-purple-400" />
-                                    {kit.name}
+                          <div 
+                            key={kit.id} 
+                            onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item: kit, type: 'kit', avail: avail.available, total: avail.total }); } else { addToSection(kit, 'kit'); } }} 
+                            className="w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group cursor-pointer transition-colors"
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                                <div className="text-sm text-white flex items-center gap-2 truncate">
+                                    <PackageIcon size={14} className="text-purple-400 shrink-0" />
+                                    <span className="truncate">{kit.name}</span>
                                     {qtyInZone > 0 && (
-                                        <span className="text-xs bg-purple-950 text-purple-400 border border-purple-900 px-1.5 rounded font-bold">
+                                        <span className="text-xs bg-purple-950 text-purple-400 border border-purple-900 px-1.5 rounded font-bold shrink-0">
                                             x{qtyInZone}
                                         </span>
                                     )}
                                 </div>
-                                <div className="text-xs text-slate-500 pl-6 mt-0.5">
+                                <div className="text-xs text-slate-500 pl-6 mt-0.5 truncate">
                                     {kit.items.length} componenti • <span className={isOverbooked ? 'text-rose-500 font-bold' : 'text-slate-400'}>Disponibili: {avail.available}</span> / {avail.total}
                                 </div>
                             </div>
-                            <Plus size={16} className={`${isOverbooked ? 'text-rose-500' : 'text-slate-600 group-hover:text-emerald-500'} transition-colors`}/>
-                          </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setHighlightedItemName(kit.name);
+                                  setPickerSearch('');
+                                  setIsPickerHovered(false);
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-blue-900/30 rounded-lg transition-colors"
+                                title={`Cerca ed evidenzia "${kit.name}" nella lista`}
+                              >
+                                <Search size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (isOverbooked) {
+                                    setOverbookedModal({ isOpen: true, item: kit, type: 'kit', avail: avail.available, total: avail.total });
+                                  } else {
+                                    addToSection(kit, 'kit');
+                                  }
+                                }}
+                                className={`p-1.5 rounded-lg transition-colors ${isOverbooked ? 'text-rose-500 hover:bg-rose-900/30' : 'text-slate-500 group-hover:text-emerald-400 hover:bg-emerald-900/30'}`}
+                                title={`Aggiungi a ${activeSection.name}`}
+                              >
+                                <Plus size={16} />
+                              </button>
+                            </div>
+                          </div>
                         )})}
 
                         {/* Inventory matches */}
@@ -2446,22 +2546,57 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           const isOverbooked = avail.available <= 0;
 
                           return (
-                          <button key={item.id} onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total }); } else { addToSection(item, 'item'); } }} className="w-full text-left px-4 py-3 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group">
-                            <div>
-                                <div className="text-sm text-white flex items-center gap-2">
-                                    {item.name}
+                          <div 
+                            key={item.id} 
+                            onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total }); } else { addToSection(item, 'item'); } }} 
+                            className="w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group cursor-pointer transition-colors"
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                                <div className="text-sm text-white flex items-center gap-2 truncate">
+                                    <span className="truncate">{item.name}</span>
                                     {qtyInZone > 0 && (
-                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold">
+                                        <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold shrink-0">
                                             x{qtyInZone}
                                         </span>
                                     )}
                                 </div>
-                                <div className="text-xs text-slate-500 mt-0.5">
+                                <div className="text-xs text-slate-500 mt-0.5 truncate">
                                     {item.category} • <span className={isOverbooked ? 'text-rose-500 font-bold' : 'text-slate-400'}>Disponibili: {avail.available}</span> / {avail.total}
                                 </div>
                             </div>
-                            <Plus size={16} className={`${isOverbooked ? 'text-rose-500' : 'text-slate-600 group-hover:text-emerald-500'} transition-colors`}/>
-                          </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setHighlightedItemName(item.name);
+                                  setPickerSearch('');
+                                  setIsPickerHovered(false);
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-blue-900/30 rounded-lg transition-colors"
+                                title={`Cerca ed evidenzia "${item.name}" nella lista`}
+                              >
+                                <Search size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (isOverbooked) {
+                                    setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total });
+                                  } else {
+                                    addToSection(item, 'item');
+                                  }
+                                }}
+                                className={`p-1.5 rounded-lg transition-colors ${isOverbooked ? 'text-rose-500 hover:bg-rose-900/30' : 'text-slate-500 group-hover:text-emerald-400 hover:bg-emerald-900/30'}`}
+                                title={`Aggiungi a ${activeSection.name}`}
+                              >
+                                <Plus size={16} />
+                              </button>
+                            </div>
+                          </div>
                         )})}
                         
                         {/* Create new */}
@@ -2681,6 +2816,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                               {comp.type === 'template' && <span className="text-xs bg-emerald-900 text-emerald-200 px-1 rounded align-middle no-underline font-bold">Tmpl</span>}
                                               {comp.type === 'kit' && <span className="text-xs bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">Kit</span>}
                                               {comp.type === 'item' && hasAccessories && <span className="text-xs bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">Con accessori</span>}
+                                              {originalItem?.documents && originalItem.documents.length > 0 && (
+                                                  <button 
+                                                    onClick={(e) => { 
+                                                        e.stopPropagation(); 
+                                                        if (originalItem.documents && originalItem.documents.length === 1) {
+                                                            openDocumentInBrowser(originalItem.documents[0].url);
+                                                        } else if (originalItem.documents && originalItem.documents.length > 1) {
+                                                            setViewDocsItem(originalItem);
+                                                        }
+                                                    }}
+                                                    className="p-0.5 rounded-full text-blue-400 hover:bg-blue-900/40 transition-colors"
+                                                    title={originalItem.documents.length === 1 ? `Visualizza documento: ${originalItem.documents[0].name || originalItem.documents[0].url}` : `${originalItem.documents.length} documenti (clicca per scegliere quale visualizzare)`}
+                                                  >
+                                                      <FileText size={13} />
+                                                  </button>
+                                              )}
                                               {hasReminders && (
                                                   <button 
                                                     onClick={(e) => { 
@@ -3443,6 +3594,58 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       </Modal>
 
       {replacingComponentId && <div className="absolute inset-x-0 top-0 z-20 bg-amber-900/95 border-b border-amber-500/50 p-4 shadow-xl text-center text-amber-100 font-bold"><ArrowLeftRight className="inline mr-2"/> Modalità Sostituzione <button onClick={() => setReplacingComponentId(null)} className="ml-4 underline text-sm font-normal">Annulla</button></div>}
+      
+      {/* SHARE EVENT MODAL */}
+      <ShareEventModal 
+          isOpen={!!listToShare}
+          onClose={() => setListToShare(null)}
+          list={listToShare}
+      />
+
+      {/* ITEM DOCUMENTS PICKER MODAL */}
+      <Modal isOpen={!!viewDocsItem} onClose={() => setViewDocsItem(null)} title={`Documenti di ${viewDocsItem?.name || ''}`} size="md">
+        <div className="space-y-3">
+          <p className="text-xs text-slate-400">
+            Seleziona il documento da aprire e consultare nel browser:
+          </p>
+          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+            {viewDocsItem?.documents?.map((doc) => {
+              const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
+              return (
+                <div key={doc.id} className="flex justify-between items-center bg-slate-800/80 p-3 rounded-lg border border-slate-700/80 hover:border-slate-600 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+                    <FileText size={18} className="text-blue-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                      {doc.name && doc.name.trim() && (
+                        <div className="text-[11px] text-slate-500 font-mono truncate">{doc.url}</div>
+                      )}
+                    </div>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => openDocumentInBrowser(doc.url)} 
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/30 shrink-0 active:scale-95"
+                    title="Apri e visualizza nel browser"
+                  >
+                    <FileText size={13} />
+                    <span>Visualizza</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-end pt-2">
+            <button 
+              type="button"
+              onClick={() => setViewDocsItem(null)} 
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
+            >
+              Chiudi
+            </button>
+          </div>
+        </div>
+      </Modal>
       </div>
   );
 };

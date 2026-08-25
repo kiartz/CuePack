@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { InventoryItem, Category } from '../types';
+import { InventoryItem, Category, ItemDocument } from '../types';
 import { Modal } from './Modal';
-import { Plus, X, Search, Link, ArrowLeft, Lightbulb, Barcode, Eye, QrCode, Printer, PackageOpen } from 'lucide-react';
+import { Plus, X, Search, Link, ArrowLeft, Lightbulb, Barcode, Eye, QrCode, Printer, PackageOpen, FileText, ExternalLink } from 'lucide-react';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
+import { openDocumentInBrowser } from '../utils/documentViewer';
 import { updateItemFields, COLL_INVENTORY, getInventoryCollection } from '../firebase';
 
 interface ItemFormModalProps {
@@ -125,6 +126,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [reminderInput, setReminderInput] = useState('');
   const [isRemindersOpen, setIsRemindersOpen] = useState(false);
 
+  // Documents State
+  const [isDocumentsOpen, setIsDocumentsOpen] = useState(false);
+  const [docNameInput, setDocNameInput] = useState('');
+  const [docUrlInput, setDocUrlInput] = useState('');
+
   // Instances State
   const [isInstancesOpen, setIsInstancesOpen] = useState(false);
   const [tempInstances, setTempInstances] = useState<ItemInstance[]>([]);
@@ -161,6 +167,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           qrCode: initialQrCode,
           accessories: initialData.accessories || [], 
           reminders: initialData.reminders || [], 
+          documents: initialData.documents || [],
           instances: initialData.instances || [] 
         });
         setWeightInput(initialData.weight?.toString() || '0');
@@ -179,6 +186,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           description: '',
           accessories: [],
           reminders: [],
+          documents: [],
           instances: []
         });
         setWeightInput('0');
@@ -188,6 +196,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setIsQuickCreateOpen(false);
       setLocalInventory([]); // Reset local cache on open
       setReminderInput('');
+      setDocNameInput('');
+      setDocUrlInput('');
       setInstanceIdInput('');
       setInstanceSnInput('');
       setEditingInstanceIndex(null);
@@ -230,6 +240,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       finalFormData.instances = Array.isArray(finalFormData.instances) ? finalFormData.instances : [];
       finalFormData.accessories = Array.isArray(finalFormData.accessories) ? finalFormData.accessories : [];
       finalFormData.reminders = Array.isArray(finalFormData.reminders) ? finalFormData.reminders : [];
+      finalFormData.documents = Array.isArray(finalFormData.documents) ? finalFormData.documents : [];
 
       onSave(finalFormData as Omit<InventoryItem, 'id'>);
       onClose();
@@ -246,6 +257,25 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     const newReminders = [...(formData.reminders || [])];
     newReminders.splice(index, 1);
     setFormData({ ...formData, reminders: newReminders });
+  };
+
+  const addDocument = () => {
+    if (!docUrlInput.trim()) return;
+    const url = docUrlInput.trim();
+    const name = docNameInput.trim() ? docNameInput.trim() : url;
+    const newDoc: ItemDocument = {
+      id: generateId(),
+      name,
+      url
+    };
+    setFormData({ ...formData, documents: [...(formData.documents || []), newDoc] });
+    setDocNameInput('');
+    setDocUrlInput('');
+  };
+
+  const removeDocument = (id: string) => {
+    const newDocs = (formData.documents || []).filter(d => d.id !== id);
+    setFormData({ ...formData, documents: newDocs });
   };
 
   const getSuggestedInstanceId = (currentInstancesList?: ItemInstance[]) => {
@@ -842,20 +872,28 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       </div>
 
       <div className="flex flex-col-reverse md:flex-row justify-between items-stretch md:items-center pt-6 border-t border-slate-800 mt-2 gap-4">
-        <div className="flex flex-col md:flex-row gap-2">
+        <div className="flex flex-col md:flex-row gap-2 flex-wrap">
+            <button 
+                onClick={() => setIsDocumentsOpen(true)}
+                className={`flex items-center justify-center gap-2 p-3 md:px-4 md:py-2 w-full md:w-auto rounded-lg transition-colors ${formData.documents && formData.documents.length > 0 ? 'bg-blue-900/20 text-blue-400 border border-blue-900/30' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-blue-400'}`}
+                title="Gestisci documenti e file collegati (Google Drive, OneDrive, PDF, schede tecniche)"
+            >
+                <FileText size={18} />
+                <span className="text-sm font-bold uppercase tracking-wider">Documenti & File {formData.documents && formData.documents.length > 0 ? `(${formData.documents.length})` : ''}</span>
+            </button>
             <button 
                 onClick={() => setIsRemindersOpen(true)}
                 className={`flex items-center justify-center gap-2 p-3 md:px-4 md:py-2 w-full md:w-auto rounded-lg transition-colors ${formData.reminders && formData.reminders.length > 0 ? 'bg-yellow-900/20 text-yellow-400 border border-yellow-900/30' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-yellow-400'}`}
             >
-                <Lightbulb size={20} className={formData.reminders && formData.reminders.length > 0 ? 'fill-current' : ''} />
-                <span className="text-sm font-bold uppercase tracking-wider">Promemoria Oggetto {formData.reminders && formData.reminders.length > 0 ? `(${formData.reminders.length})` : ''}</span>
+                <Lightbulb size={18} className={formData.reminders && formData.reminders.length > 0 ? 'fill-current' : ''} />
+                <span className="text-sm font-bold uppercase tracking-wider">Promemoria {formData.reminders && formData.reminders.length > 0 ? `(${formData.reminders.length})` : ''}</span>
             </button>
             <button 
                 onClick={openInstancesModal}
                 className={`flex items-center justify-center gap-2 p-3 md:px-4 md:py-2 w-full md:w-auto rounded-lg transition-colors ${formData.instances && formData.instances.length > 0 ? 'bg-emerald-900/20 text-emerald-400 border border-emerald-900/30' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-emerald-400'}`}
             >
-                <Barcode size={20} />
-                <span className="text-sm font-bold uppercase tracking-wider">Codici / Seriali {formData.instances && formData.instances.length > 0 ? `(${formData.instances.length})` : ''}</span>
+                <Barcode size={18} />
+                <span className="text-sm font-bold uppercase tracking-wider">Seriali {formData.instances && formData.instances.length > 0 ? `(${formData.instances.length})` : ''}</span>
             </button>
         </div>
         <div className="flex gap-2 flex-col md:flex-row w-full md:w-auto">
@@ -865,6 +903,99 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       </div>
 
       {renderQuickCreateForm()}
+
+      {/* DOCUMENTS MODAL */}
+      <Modal isOpen={isDocumentsOpen} onClose={() => setIsDocumentsOpen(false)} title="Documenti & File Materiale" size="lg">
+            <div className="space-y-4">
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-start gap-3">
+                    <FileText size={20} className="text-blue-400 mt-0.5 shrink-0" />
+                    <div className="text-xs text-slate-400">
+                        Inserisci link a file archiviati su <strong>Google Drive, OneDrive, Dropbox</strong> o server aziendale (PDF, schede tecniche, Excel, DOCX, manuali).
+                        Se lasci vuoto il nome, verrà usato direttamente l'indirizzo del link.
+                    </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 bg-slate-900 p-3 rounded-xl border border-slate-800">
+                    <div className="flex-1 space-y-1">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Nome</label>
+                        <input 
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-blue-500 outline-none text-sm placeholder-slate-600"
+                            placeholder="Es. Manuale Tecnico, Scheda..."
+                            value={docNameInput}
+                            onChange={e => setDocNameInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && addDocument()}
+                        />
+                    </div>
+                    <div className="flex-[1.5] space-y-1">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Link Esterno / Drive (URL) *</label>
+                        <input 
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-blue-300 focus:border-blue-500 outline-none text-sm placeholder-slate-600 font-mono"
+                            placeholder="https://drive.google.com/file/d/..."
+                            value={docUrlInput}
+                            onChange={e => setDocUrlInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && addDocument()}
+                        />
+                    </div>
+                    <div className="flex items-end shrink-0">
+                        <button 
+                            type="button"
+                            onClick={addDocument} 
+                            disabled={!docUrlInput.trim()}
+                            className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center justify-center gap-1.5 text-sm transition-all shadow-md shadow-blue-900/30"
+                        >
+                            <Plus size={16}/> Aggiungi
+                        </button>
+                    </div>
+                </div>
+
+                <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+                    {formData.documents?.map((doc) => {
+                        const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
+                        return (
+                            <div key={doc.id} className="flex justify-between items-center bg-slate-800/80 p-3 rounded-lg border border-slate-700/80 group hover:border-slate-600 transition-colors">
+                                <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+                                    <FileText size={18} className="text-blue-400 shrink-0" />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                                        <div className="text-xs text-slate-500 font-mono truncate">{doc.url}</div>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <button 
+                                        type="button"
+                                        onClick={() => openDocumentInBrowser(doc.url)} 
+                                        className="px-2.5 py-1.5 bg-slate-700 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                                        title="Apri e visualizza nel browser"
+                                    >
+                                        <Eye size={14} />
+                                        <span>Apri</span>
+                                        <ExternalLink size={12} className="opacity-70" />
+                                    </button>
+                                    <button 
+                                        type="button"
+                                        onClick={() => removeDocument(doc.id)} 
+                                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition-colors"
+                                        title="Rimuovi documento"
+                                    >
+                                        <X size={16}/>
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                    {(!formData.documents || formData.documents.length === 0) && (
+                        <div className="text-center py-8 text-slate-500 flex flex-col items-center gap-2">
+                            <FileText size={32} className="opacity-20" />
+                            <span>Nessun documento o link collegato</span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex justify-end pt-2">
+                    <button type="button" onClick={() => setIsDocumentsOpen(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors">Chiudi</button>
+                </div>
+            </div>
+      </Modal>
 
       {/* REMINDERS MODAL */}
       <Modal isOpen={isRemindersOpen} onClose={() => setIsRemindersOpen(false)} title="Promemoria Oggetto" size="md">

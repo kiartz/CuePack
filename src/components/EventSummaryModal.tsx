@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { PackingList } from '../types';
 import { Modal } from './Modal';
-import { MapPin, Calendar, Clock, Phone, Building, Briefcase, FileText, BadgeInfo, Anchor, User, ArrowRight, PenSquare, ListOrdered, Home, Settings2, Truck, Wrench, Star } from 'lucide-react';
+import { ShareEventModal } from './ShareEventModal';
+import { MapPin, Calendar, Clock, Phone, Building, Briefcase, FileText, BadgeInfo, Anchor, User, ArrowRight, PenSquare, ListOrdered, Home, Settings2, Truck, Wrench, Star, Share2 } from 'lucide-react';
 
 interface EventSummaryModalProps {
   event: PackingList | null;
@@ -12,6 +13,8 @@ interface EventSummaryModalProps {
 }
 
 export const EventSummaryModal: React.FC<EventSummaryModalProps> = ({ event, isOpen, onClose, onEdit, onOpenList }) => {
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+
   if (!event) return null;
 
   const formatDate = (dStr?: string) => {
@@ -23,6 +26,7 @@ export const EventSummaryModal: React.FC<EventSummaryModalProps> = ({ event, isO
   const genericPersonnel = event.personnel?.join(', ') || '';
 
   return (
+    <>
     <Modal isOpen={isOpen} onClose={onClose} title="Riepilogo Evento" size="lg">
         <div className="space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar pr-2">
             
@@ -180,6 +184,13 @@ export const EventSummaryModal: React.FC<EventSummaryModalProps> = ({ event, isO
             {/* AZIONI RAPIDE */}
             <div className="border-t border-slate-800 pt-5 mt-2 flex flex-col sm:flex-row justify-end gap-3">
                 <button 
+                  onClick={() => setIsShareModalOpen(true)} 
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg font-medium transition-all transform active:scale-95 flex items-center justify-center gap-2 border border-slate-700"
+                  title="Condividi Evento"
+                >
+                  <Share2 size={16} /> Condividi
+                </button>
+                <button 
                   onClick={onEdit} 
                   className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium transition-all transform active:scale-95 flex items-center justify-center gap-2 border border-slate-700"
                 >
@@ -195,5 +206,13 @@ export const EventSummaryModal: React.FC<EventSummaryModalProps> = ({ event, isO
             
         </div>
     </Modal>
+
+    {/* SHARE EVENT MODAL */}
+    <ShareEventModal 
+        isOpen={isShareModalOpen} 
+        onClose={() => setIsShareModalOpen(false)} 
+        list={event} 
+    />
+    </>
   );
 };

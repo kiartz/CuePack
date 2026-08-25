@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent } from '../types';
 import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
+import { openDocumentInBrowser } from '../utils/documentViewer';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
@@ -29,6 +30,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [activeInventoryAction, setActiveInventoryAction] = useState<'duplicate' | 'delete' | null>(null);
   const [viewAccessoriesItem, setViewAccessoriesItem] = useState<InventoryItem | null>(null);
+  const [viewDocumentsItem, setViewDocumentsItem] = useState<InventoryItem | null>(null);
   const [previewCodeItem, setPreviewCodeItem] = useState<{ code: string; name: string } | null>(null);
 
   // Pagination State
@@ -315,20 +317,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   };
 
   return (
-    <div className="space-y-4 max-w-[1600px] mx-auto p-4 md:p-6 flex flex-col min-h-[calc(100vh-4rem)]">
+    <div className="h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden">
       {/* Top Header / Actions */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-sm">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Inventario Materiali</h1>
-          <p className="text-sm text-slate-400 mt-0.5">Gestisci e cataloga le attrezzature, accessori e disponibilità</p>
-        </div>
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-2">
+        <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario Materiali</h1>
 
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+        <div className="flex flex-wrap md:flex-nowrap items-center gap-2 w-full xl:w-auto">
           {/* Category Filter */}
-          <div className="relative flex-1 sm:flex-none">
-             <Filter className="absolute left-3 top-3 text-slate-500" size={16} />
+          <div className="relative flex-grow sm:flex-none">
+             <Filter className="absolute left-3 top-2.5 text-slate-500" size={16} />
              <select 
-               className="bg-slate-950 border border-slate-700 text-slate-300 pl-9 pr-8 py-2.5 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
+               className="bg-slate-900 border border-slate-700 text-slate-300 pl-8 pr-7 py-2 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
                value={selectedCategory}
                onChange={(e) => setSelectedCategory(e.target.value)}
              >
@@ -341,35 +340,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
           </div>
 
           {/* Search Bar */}
-          <div className="relative flex-1 sm:w-64">
-            <Search className="absolute left-3 top-3 text-slate-500" size={16} />
+          <div className="relative flex-grow min-w-0 md:w-64">
+            <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
             <input 
               type="text" 
               placeholder="Cerca materiale o codice..." 
-              className="bg-slate-950 border border-slate-700 text-white pl-9 pr-4 py-2.5 rounded-lg text-sm w-full outline-none focus:border-blue-500 placeholder-slate-500"
+              className="w-full bg-slate-900 border border-slate-700 text-white pl-9 pr-4 py-2 rounded-lg outline-none focus:border-blue-500 text-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
 
           {/* Actions Button Group */}
-          <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+          <div className="flex items-center gap-2">
              <button 
                 onClick={() => setActiveInventoryAction(activeInventoryAction === 'duplicate' ? null : 'duplicate')}
-                className={`p-2.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold ${activeInventoryAction === 'duplicate' ? 'bg-amber-600 text-white border-amber-500 shadow-lg shadow-amber-900/30' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white hover:bg-slate-700'}`}
+                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'duplicate' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                 title="Attiva modalità duplicazione (clicca su un articolo per duplicarlo)"
              >
-                <Copy size={16} />
-                <span className="hidden lg:inline">Duplica</span>
+                <Copy size={18} />
              </button>
 
              <button 
                 onClick={() => setActiveInventoryAction(activeInventoryAction === 'delete' ? null : 'delete')}
-                className={`p-2.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-900/30' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-rose-400 hover:bg-slate-700'}`}
+                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                 title="Attiva modalità eliminazione (clicca su un articolo per rimuoverlo)"
              >
-                <Trash2 size={16} />
-                <span className="hidden lg:inline">Elimina</span>
+                <Trash2 size={18} />
              </button>
 
              {items.some(i => (!i.productCode || !i.productCode.trim()) || (!i.qrCode || !i.qrCode.trim())) && (
@@ -389,7 +386,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                 className="bg-blue-600 hover:bg-blue-500 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-all shadow-lg shadow-blue-900/30 active:scale-95"
              >
                 <Plus size={20} />
-                <span className="hidden sm:inline">Nuovo</span>
+                <span className="hidden sm:inline">Nuovo Materiale</span>
              </button>
           </div>
         </div>
@@ -455,6 +452,39 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                             >
                                 <Link size={14} className="fill-current" />
                             </button>
+                            )}
+                            {item.documents && item.documents.length > 0 && (
+                            <div 
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1"
+                            >
+                              {item.documents.length === 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openDocumentInBrowser(item.documents![0].url);
+                                  }}
+                                  title={`Apri documento: ${item.documents[0].name || item.documents[0].url}`}
+                                  className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30 p-1 rounded transition-colors flex items-center gap-0.5 text-xs font-mono"
+                                >
+                                  <FileText size={14} />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setViewDocumentsItem(item);
+                                  }}
+                                  title={`${item.documents.length} documenti collegati (clicca per scegliere quale visualizzare)`}
+                                  className="text-blue-400 hover:text-blue-300 bg-blue-950/60 border border-blue-800/50 hover:bg-blue-900/40 px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-colors"
+                                >
+                                  <FileText size={12} />
+                                  <span>{item.documents.length}</span>
+                                </button>
+                              )}
+                            </div>
                             )}
                         </div>
                       )}
@@ -686,6 +716,52 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     </div>
                 );
             })}
+        </div>
+      </Modal>
+
+      {/* ITEM DOCUMENTS PICKER MODAL */}
+      <Modal isOpen={!!viewDocumentsItem} onClose={() => setViewDocumentsItem(null)} title={`Documenti di ${viewDocumentsItem?.name || ''}`} size="md">
+        <div className="space-y-3">
+          <p className="text-xs text-slate-400">
+            Seleziona il documento da aprire e consultare direttamente nel browser:
+          </p>
+          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+            {viewDocumentsItem?.documents?.map((doc) => {
+              const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
+              return (
+                <div key={doc.id} className="flex justify-between items-center bg-slate-800/80 p-3 rounded-lg border border-slate-700/80 hover:border-slate-600 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+                    <FileText size={18} className="text-blue-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                      {doc.name && doc.name.trim() && (
+                        <div className="text-[11px] text-slate-500 font-mono truncate">{doc.url}</div>
+                      )}
+                    </div>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => openDocumentInBrowser(doc.url)} 
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/30 shrink-0 active:scale-95"
+                    title="Apri e visualizza nel browser"
+                  >
+                    <Eye size={13} />
+                    <span>Visualizza</span>
+                    <ExternalLink size={11} className="opacity-70" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-end pt-2">
+            <button 
+              type="button"
+              onClick={() => setViewDocumentsItem(null)} 
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
+            >
+              Chiudi
+            </button>
+          </div>
         </div>
       </Modal>
 
