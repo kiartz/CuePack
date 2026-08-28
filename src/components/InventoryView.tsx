@@ -466,7 +466,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                     openDocumentInBrowser(item.documents![0].url);
                                   }}
                                   title={`Apri documento: ${item.documents[0].name || item.documents[0].url}`}
-                                  className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30 p-1 rounded transition-colors flex items-center gap-0.5 text-xs font-mono"
+                                  className="text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 p-1 rounded transition-colors flex items-center gap-0.5 text-xs font-mono"
                                 >
                                   <FileText size={14} />
                                 </button>
@@ -478,7 +478,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                     setViewDocumentsItem(item);
                                   }}
                                   title={`${item.documents.length} documenti collegati (clicca per scegliere quale visualizzare)`}
-                                  className="text-blue-400 hover:text-blue-300 bg-blue-950/60 border border-blue-800/50 hover:bg-blue-900/40 px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-colors"
+                                  className="text-blue-700 dark:text-blue-300 bg-blue-50 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:border-blue-800/50 dark:hover:bg-blue-900/40 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 transition-colors shadow-sm"
                                 >
                                   <FileText size={12} />
                                   <span>{item.documents.length}</span>
@@ -515,42 +515,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                       </span>
                     </td>
 
-                    {/* QR CODE / BARCODE COLUMN (PRINTABLE TAG) */}
+                    {/* QR CODE / BARCODE COLUMN (PRINTABLE TAG - 3 BUTTONS ONLY) */}
                     <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5 font-mono text-xs">
-                        <span 
-                          className={`px-1.5 py-0.5 rounded cursor-pointer ${item.qrCode ? 'text-purple-300 bg-purple-900/30 border border-purple-800/50 font-bold' : 'text-slate-400 bg-slate-800/40 border border-slate-700/50 italic'}`}
-                          title={item.qrCode ? "QR Code Prodotto salvato" : "QR Code Prodotto suggerito"}
-                          onClick={() => handleOpenModal(item)}
+                      <div className="flex items-center justify-center gap-1 font-mono text-xs">
+                        <button 
+                          type="button" 
+                          onClick={() => setPreviewCodeItem({ code: effectiveQrCode, name: item.name })} 
+                          className="p-1.5 text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800 dark:hover:text-blue-400 rounded-lg transition-colors"
+                          title={`Visualizza QR Code e Barcode (${effectiveQrCode})`}
                         >
-                          [{effectiveQrCode}]
-                        </span>
-                        <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
-                          <button 
-                            type="button" 
-                            onClick={() => setPreviewCodeItem({ code: effectiveQrCode, name: item.name })} 
-                            className="p-1 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
-                            title="Visualizza QR Code e Barcode"
-                          >
-                            <Eye size={14} />
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => printBarcode(effectiveQrCode, item.name)} 
-                            className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition-colors"
-                            title="Stampa Codice a Barre"
-                          >
-                            <Barcode size={14} />
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => printQRCode(effectiveQrCode, item.name)} 
-                            className="p-1 text-slate-400 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"
-                            title="Stampa QR Code"
-                          >
-                            <QrCode size={14} />
-                          </button>
-                        </div>
+                          <Eye size={15} />
+                        </button>
+                        <button 
+                          type="button" 
+                          onClick={() => printBarcode(effectiveQrCode, item.name)} 
+                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 dark:hover:text-emerald-400 rounded-lg transition-colors"
+                          title={`Stampa Codice a Barre (${effectiveQrCode})`}
+                        >
+                          <Barcode size={15} />
+                        </button>
+                        <button 
+                          type="button" 
+                          onClick={() => printQRCode(effectiveQrCode, item.name)} 
+                          className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 dark:hover:text-purple-400 rounded-lg transition-colors"
+                          title={`Stampa QR Code (${effectiveQrCode})`}
+                        >
+                          <QrCode size={15} />
+                        </button>
                       </div>
                     </td>
 
@@ -722,18 +713,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       {/* ITEM DOCUMENTS PICKER MODAL */}
       <Modal isOpen={!!viewDocumentsItem} onClose={() => setViewDocumentsItem(null)} title={`Documenti di ${viewDocumentsItem?.name || ''}`} size="md">
         <div className="space-y-3">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Seleziona il documento da aprire e consultare direttamente nel browser:
           </p>
-          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-900/60 p-2 rounded-xl border border-slate-200 dark:border-slate-800">
             {viewDocumentsItem?.documents?.map((doc) => {
               const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
               return (
-                <div key={doc.id} className="flex justify-between items-center bg-slate-800/80 p-3 rounded-lg border border-slate-700/80 hover:border-slate-600 transition-colors">
+                <div key={doc.id} className="flex justify-between items-center bg-white dark:bg-slate-800/80 p-3 rounded-lg border border-slate-200 dark:border-slate-700/80 hover:border-blue-400 dark:hover:border-slate-600 shadow-sm transition-colors">
                   <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
-                    <FileText size={18} className="text-blue-400 shrink-0" />
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800/40 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                      <FileText size={16} />
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{displayName}</div>
                       {doc.name && doc.name.trim() && (
                         <div className="text-[11px] text-slate-500 font-mono truncate">{doc.url}</div>
                       )}
@@ -742,7 +735,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                   <button 
                     type="button"
                     onClick={() => openDocumentInBrowser(doc.url)} 
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/30 shrink-0 active:scale-95"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/20 shrink-0 active:scale-95"
                     title="Apri e visualizza nel browser"
                   >
                     <Eye size={13} />
@@ -757,7 +750,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             <button 
               type="button"
               onClick={() => setViewDocumentsItem(null)} 
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded-lg text-xs font-semibold transition-colors"
             >
               Chiudi
             </button>

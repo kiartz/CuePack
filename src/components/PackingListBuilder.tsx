@@ -2360,16 +2360,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
             {/* DESKTOP CHECKLIST PANEL */}
             {isDesktopChecklistOpen && activeList && (
-                <div className="hidden md:flex flex-col w-80 lg:w-96 shrink-0 border-r border-slate-800 bg-slate-900 overflow-hidden relative shadow-2xl z-10 transition-all animate-in slide-in-from-left-8 duration-300">
-                    <div className="p-3 bg-slate-950 border-b border-slate-800 flex justify-between items-center shadow-md">
-                        <h3 className="font-bold text-white flex items-center gap-2 uppercase tracking-wider text-sm">
+                <div className="hidden md:flex flex-col w-80 lg:w-96 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden relative shadow-2xl z-10 transition-all animate-in slide-in-from-left-8 duration-300">
+                    <div className="p-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center shadow-sm">
+                        <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2 uppercase tracking-wider text-sm">
                             <ClipboardList size={16} className="text-blue-500" /> Checklist
                         </h3>
-                        <button onClick={() => setIsDesktopChecklistOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-800 transition-colors">
+                        <button onClick={() => setIsDesktopChecklistOpen(false)} className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-1 rounded-md hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
                             <X size={16}/>
                         </button>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-900/50">
+                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-50/50 dark:bg-slate-900/50">
                         <ChecklistView activeList={activeList} checklist={masterChecklist} />
                     </div>
                 </div>
@@ -3064,15 +3064,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           
                           {/* REMINDERS PANEL */}
                           {!closedRemindersIds.has(comp.uniqueId) && hasReminders && (
-                              <div className="mt-2 mx-2 bg-yellow-900/20 border border-yellow-700/30 rounded p-3 animate-in slide-in-from-top-2 fade-in duration-200">
-                                  <div className="text-xs font-bold text-yellow-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-                                      <Lightbulb size={12} className="fill-current"/> Cose da ricordare:
+                              <div className="mt-2 mx-2 bg-amber-500/10 dark:bg-yellow-900/20 border border-amber-500/30 dark:border-yellow-700/30 rounded-lg p-3 animate-in slide-in-from-top-2 fade-in duration-200">
+                                  <div className="text-xs font-extrabold text-amber-800 dark:text-yellow-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                      <Lightbulb size={13} className="fill-current text-amber-600 dark:text-yellow-400"/> Cose da ricordare:
                                   </div>
-                                  <ul className="space-y-1">
+                                  <ul className="space-y-1.5">
                                       {itemReminders.map((rem, ridx) => (
-                                          <li key={ridx} className="text-xs text-yellow-100 flex items-start gap-2">
-                                              <span className="mt-1 w-1 h-1 rounded-full bg-yellow-500 shrink-0"/>
-                                              {rem}
+                                          <li key={ridx} className="text-xs text-amber-950 dark:text-yellow-100 font-bold flex items-start gap-2">
+                                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-600 dark:bg-yellow-400 shrink-0"/>
+                                              <span className="leading-snug">{rem}</span>
                                           </li>
                                       ))}
                                   </ul>
@@ -3717,18 +3717,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       {/* ITEM DOCUMENTS PICKER MODAL */}
       <Modal isOpen={!!viewDocsItem} onClose={() => setViewDocsItem(null)} title={`Documenti di ${viewDocsItem?.name || ''}`} size="md">
         <div className="space-y-3">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Seleziona il documento da aprire e consultare nel browser:
           </p>
-          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-900/60 p-2 rounded-xl border border-slate-200 dark:border-slate-800">
             {viewDocsItem?.documents?.map((doc) => {
               const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
               return (
-                <div key={doc.id} className="flex justify-between items-center bg-slate-800/80 p-3 rounded-lg border border-slate-700/80 hover:border-slate-600 transition-colors">
+                <div key={doc.id} className="flex justify-between items-center bg-white dark:bg-slate-800/80 p-3 rounded-lg border border-slate-200 dark:border-slate-700/80 hover:border-blue-400 dark:hover:border-slate-600 shadow-sm transition-colors">
                   <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
-                    <FileText size={18} className="text-blue-400 shrink-0" />
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800/40 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                      <FileText size={16} />
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-white truncate">{displayName}</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{displayName}</div>
                       {doc.name && doc.name.trim() && (
                         <div className="text-[11px] text-slate-500 font-mono truncate">{doc.url}</div>
                       )}
@@ -3737,11 +3739,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   <button 
                     type="button"
                     onClick={() => openDocumentInBrowser(doc.url)} 
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/30 shrink-0 active:scale-95"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-blue-900/20 shrink-0 active:scale-95"
                     title="Apri e visualizza nel browser"
                   >
-                    <FileText size={13} />
+                    <Eye size={13} />
                     <span>Visualizza</span>
+                    <ExternalLink size={11} className="opacity-70" />
                   </button>
                 </div>
               );
@@ -3751,7 +3754,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             <button 
               type="button"
               onClick={() => setViewDocsItem(null)} 
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded-lg text-xs font-semibold transition-colors"
             >
               Chiudi
             </button>

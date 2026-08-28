@@ -101,7 +101,9 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const rawActiveList = useMemo(() => lists.find(l => l.id === activeListId), [lists, activeListId]);
   const [localList, setLocalList] = useState<PackingList | null>(null);
   const localListRef = useRef<PackingList | null>(null);
-  const pendingWritesRef = useRef<number>(0);
+  const isWritingRef = useRef<boolean>(false);
+  const pendingCommitRef = useRef<{ listId: string; zones: ListZone[] } | null>(null);
+  const debounceTimerRef = useRef<any>(null);
   const [activeWarningTooltipId, setActiveWarningTooltipId] = useState<string | null>(null);
 
   // Keep localList in sync with activeListId and remote Firestore updates
@@ -109,6 +111,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     if (!activeListId) {
       setLocalList(null);
       localListRef.current = null;
+      pendingCommitRef.current = null;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       return;
     }
 
@@ -122,14 +126,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     const unsubDoc = onSnapshot(doc(db, COLL_LISTS, activeListId), (snapshot) => {
       if (snapshot.exists()) {
         const incomingData = { ...snapshot.data(), id: snapshot.id } as PackingList;
-        if (localListRef.current && localListRef.current.id === activeListId) {
-          const merged = mergeWarehouseStates(localListRef.current, incomingData);
-          localListRef.current = merged;
-          setLocalList(merged);
-        } else {
-          localListRef.current = incomingData;
-          setLocalList(incomingData);
+        
+        // If this snapshot originates from local uncommitted writes or we are currently sending writes, ignore to prevent rollbacks
+        if (snapshot.metadata.hasPendingWrites || isWritingRef.current || pendingCommitRef.current) {
+          return;
         }
+
+        localListRef.current = incomingData;
+        setLocalList(incomingData);
       }
     }, (error) => {
       console.error("PrepMaterial doc onSnapshot error:", error);
@@ -137,6 +141,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
     return () => {
       unsubDoc();
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, [activeListId]);
 
@@ -494,24 +499,45 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   }, [highlightedItemName, activeZoneId, aggregatedData]);
 
 
-  // --- COMMIT ZONES UPDATE HELPER (Optimistic + Direct Firestore updateDoc) ---
-  const commitZonesUpdate = async (newZones: ListZone[]) => {
+  // --- COMMIT ZONES UPDATE HELPER (Optimistic + Fast Queued Firestore sync) ---
+  const processPendingCommit = async () => {
+    if (!pendingCommitRef.current || isWritingRef.current) return;
+    
+    const task = pendingCommitRef.current;
+    pendingCommitRef.current = null;
+    isWritingRef.current = true;
+
+    try {
+      await updateItemFields(COLL_LISTS, task.listId, { zones: task.zones });
+    } catch (err) {
+      console.error("Failed to commit zones update to Firestore:", err);
+    } finally {
+      isWritingRef.current = false;
+      // If new writes were queued while this network request was in flight, process immediately
+      if (pendingCommitRef.current) {
+        processPendingCommit();
+      }
+    }
+  };
+
+  const commitZonesUpdate = (newZones: ListZone[]) => {
     if (!activeListId) return;
     const current = localListRef.current || activeList;
     if (!current) return;
 
+    // 1. Immediate 0ms local optimistic UI update
     const updatedList = { ...current, zones: newZones };
     localListRef.current = updatedList;
     setLocalList(updatedList);
 
-    pendingWritesRef.current++;
-    try {
-      await updateItemFields(COLL_LISTS, activeListId, { zones: newZones });
-    } catch (err) {
-      console.error("Failed to commit zones update to Firestore:", err);
-    } finally {
-      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
-    }
+    // 2. Queue latest zones for Firestore commit
+    pendingCommitRef.current = { listId: activeListId, zones: newZones };
+
+    // 3. Debounce commit slightly (35ms) to bundle ultra-fast successive taps, or fire immediately
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      processPendingCommit();
+    }, 35);
   };
 
   // --- ACTIONS ---
@@ -1550,34 +1576,34 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                             
                             {/* DELETED ITEMS WARNING BLOCK */}
                             {zoneDeletedItems && zoneDeletedItems.length > 0 && (
-                                <div className="bg-rose-950/20 border border-rose-900/50 rounded-xl overflow-hidden mb-6">
-                                    <div className="px-4 py-2 bg-rose-900/20 border-b border-rose-900/30 text-rose-400 font-bold text-sm flex items-center justify-between">
+                                <div className="bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/30 dark:border-rose-900/50 rounded-xl overflow-hidden mb-6">
+                                    <div className="px-4 py-2 bg-rose-500/15 dark:bg-rose-900/20 border-b border-rose-500/20 dark:border-rose-900/30 text-rose-700 dark:text-rose-400 font-bold text-sm flex items-center justify-between">
                                         <div className="flex items-center gap-2"><AlertCircle size={16} /> MATERIALE RIMOSSO NELL'ULTIMA VERSIONE</div>
                                         <button 
                                             onClick={() => clearDeletedItems(activeZone.name)}
-                                            className="text-xs bg-rose-500 text-white px-2 py-1 rounded hover:bg-rose-400 transition-colors"
+                                            className="text-xs bg-rose-600 text-white px-2.5 py-1 rounded-md font-bold hover:bg-rose-500 transition-colors shadow-sm"
                                         >
                                             NASCONDI SEGNALAZIONI
                                         </button>
                                     </div>
-                                    <div className="divide-y divide-rose-900/20">
+                                    <div className="divide-y divide-rose-500/15 dark:divide-rose-900/20">
                                         {zoneDeletedItems.map((del, idx) => (
-                                            <div key={idx} className="p-3 opacity-75 flex flex-col gap-2">
+                                            <div key={idx} className="p-3 flex flex-col gap-2 bg-rose-500/5">
                                                     <div className="flex items-center gap-4">
-                                                        <div className="w-8 h-8 rounded bg-rose-900/20 flex items-center justify-center text-rose-500 font-bold text-xs shrink-0">0</div>
+                                                        <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-800 dark:text-rose-300 font-bold text-xs shrink-0">0</div>
                                                         <div className="flex-1">
-                                                            <div className="font-bold text-rose-200 line-through decoration-rose-500/50">{del.originalComponent.name}</div>
-                                                            <div className="text-xs text-rose-400/70">Era in: {del.sectionName} • (Era: {del.originalComponent.quantity})</div>
+                                                            <div className="font-bold text-rose-950 dark:text-rose-200 line-through decoration-rose-600 text-sm">{del.originalComponent.name}</div>
+                                                            <div className="text-xs text-rose-800 dark:text-rose-400 font-medium">Era in: {del.sectionName} • (Era: {del.originalComponent.quantity})</div>
                                                         </div>
                                                     </div>
                                                     {/* Deleted Contents/Accessories */}
                                                     {del.originalComponent.contents && del.originalComponent.contents.length > 0 && (
                                                         <div className="pl-12 space-y-1">
                                                             {del.originalComponent.contents.map((sub, subIdx) => (
-                                                                <div key={subIdx} className="flex items-center gap-2 text-rose-400/60 text-xs">
+                                                                <div key={subIdx} className="flex items-center gap-2 text-rose-800 dark:text-rose-400 text-xs font-medium">
                                                                     <span> - </span>
                                                                     <span className="line-through">{sub.name}</span>
-                                                                    <span className="font-mono">x{sub.quantity * del.originalComponent.quantity}</span>
+                                                                    <span className="font-mono font-bold">x{sub.quantity * del.originalComponent.quantity}</span>
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -1646,11 +1672,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: {comp.notes}</span>}</div>
+                                                                <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-amber-600 dark:text-yellow-400 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: <span className="font-bold">{comp.notes}</span></span>}</div>
                                                                 
                                                                 {ws.warehouseNote && (
-                                                                    <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block w-full sm:w-auto">
-                                                                        Note Magazzino: {ws.warehouseNote}
+                                                                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                                                                        <span className="font-normal">Note Magazzino: </span><span className="font-bold">{ws.warehouseNote}</span>
                                                                     </div>
                                                                 )}
                                                                 {ws.isBroken && (
@@ -1720,7 +1746,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                     </span>
                                                                                 )}
                                                                             </div>
-                                                                            {subWs.warehouseNote && <div className="text-xs text-blue-400 bg-blue-900/20 px-1.5 py-0.5 rounded inline-block mt-0.5">Nota: {subWs.warehouseNote}</div>}
+                                                                            {subWs.warehouseNote && <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5"><span className="font-normal">Nota: </span><span className="font-bold">{subWs.warehouseNote}</span></div>}
                                                                             {subWs.isBroken && <div className="text-rose-500 text-xs font-bold uppercase mt-0.5">{subWs.brokenNote || 'ROTTO'}</div>}
                                                                         </div>
                                                                     </div>
@@ -1835,11 +1861,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                 </span>
                                                             )}
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-yellow-600 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: {comp.notes}</span>}</div>
+                                                            <div className="text-xs text-slate-500 mt-0.5 truncate">{comp.category} {comp.notes && <span className="text-amber-600 dark:text-yellow-400 ml-2 block sm:inline mt-1 sm:mt-0">• Nota Prod: <span className="font-bold">{comp.notes}</span></span>}</div>
                                                             
                                                             {ws.warehouseNote && (
-                                                                <div className="mt-1 text-xs text-blue-400 bg-blue-900/20 p-1.5 rounded inline-block w-full sm:w-auto">
-                                                                    Note Magazzino: {ws.warehouseNote}
+                                                                <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                                                                    <span className="font-normal">Note Magazzino: </span><span className="font-bold">{ws.warehouseNote}</span>
                                                                 </div>
                                                             )}
                                                             {ws.isBroken && (
@@ -2208,8 +2234,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                               {data.aggregatedNotes && data.aggregatedNotes.length > 0 && (
                                                   <div className="mt-1 flex flex-col gap-0.5 pl-2 mb-2">
                                                       {data.aggregatedNotes.map((an: any, i: number) => (
-                                                          <div key={i} className="text-xs text-slate-400 font-medium">
-                                                              ↳ <span className="text-slate-500">{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
+                                                          <div key={i} className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                                                              ↳ <span className="text-slate-400">{an.qty}x</span> <span>Nota: </span><span className="font-bold">{an.text}</span>
                                                           </div>
                                                       ))}
                                                   </div>
@@ -2288,8 +2314,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                           {childData.aggregatedNotes && childData.aggregatedNotes.length > 0 && (
                                                               <div className="mt-0.5 flex flex-col gap-0.5 pl-4">
                                                                   {childData.aggregatedNotes.map((an: any, i: number) => (
-                                                                      <div key={i} className="text-xs text-slate-500">
-                                                                          ↳ <span>{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
+                                                                      <div key={i} className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                                                                          ↳ <span className="text-slate-400">{an.qty}x</span> <span>Nota: </span><span className="font-bold">{an.text}</span>
                                                                       </div>
                                                                   ))}
                                                               </div>
@@ -2390,8 +2416,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                       {data.aggregatedNotes && data.aggregatedNotes.length > 0 && (
                                                           <div className="mt-1 flex flex-col gap-0.5 pl-2 mb-2">
                                                               {data.aggregatedNotes.map((an: any, i: number) => (
-                                                                  <div key={i} className="text-xs text-slate-400 font-medium">
-                                                                      ↳ <span className="text-slate-500">{an.qty}x</span> Nota: <span className="italic">{an.text}</span>
+                                                                  <div key={i} className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                                                                      ↳ <span className="text-slate-400">{an.qty}x</span> <span>Nota: </span><span className="font-bold">{an.text}</span>
                                                                   </div>
                                                               ))}
                                                           </div>

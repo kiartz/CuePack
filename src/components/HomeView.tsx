@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { generateId } from '../utils';
 import { 
   Download, Upload, LayoutDashboard, Database, Package, FileText, 
-  AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2 
+  AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2
 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, InventoryDatabase } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -299,7 +299,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     <div className="h-full p-4 md:p-6 overflow-y-auto custom-scrollbar">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        {/* Header Dashboard with Active DB Indicator */}
+        {/* Header Dashboard with Active DB Indicator & Theme Switch */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-sm">
             <div className="flex items-center gap-4">
                 <div className="p-3 bg-blue-600 rounded-xl shadow-lg shadow-blue-900/20">
@@ -311,13 +311,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3 py-2 rounded-xl">
-                <Database size={18} className="text-emerald-400" />
-                <div className="text-xs">
-                    <span className="text-slate-500 block uppercase font-bold text-[10px]">Database Attivo:</span>
-                    <span className="text-white font-bold">{currentDb.name}</span>
+            <div className="flex flex-wrap items-center gap-3">
+                {/* Database Attivo Indicator */}
+                <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-xl shadow-inner">
+                    <Database size={18} className="text-emerald-400" />
+                    <div className="text-xs">
+                        <span className="text-slate-500 block uppercase font-bold text-[10px]">Database Attivo:</span>
+                        <span className="text-white font-bold">{currentDb.name}</span>
+                    </div>
+                    <span className="ml-2 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" title="Database in uso sincronizzato in tempo reale" />
                 </div>
-                <span className="ml-2 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" title="Database in uso sincronizzato in tempo reale" />
             </div>
         </div>
 
@@ -635,7 +638,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         <div className="text-center space-y-1 pb-8">
             <div className="text-xs text-slate-500 font-medium tracking-wide transition-opacity">
-                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.6</span>
+                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.7.2</span>
             </div>
             <div className="text-xs text-slate-600 uppercase tracking-widest font-bold">
                 Cloud Sync Active • Multi-Database Architecture

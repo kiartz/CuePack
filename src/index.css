@@ -47,3 +47,332 @@ input::-webkit-inner-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+/* ==========================================================================
+   LIGHT MODE THEME (MODALITÀ GIORNO) OVERRIDES
+   ========================================================================== */
+
+/* App Shell & Backgrounds */
+html.light,
+html.light body,
+html.light #root {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* Structural & Card Backgrounds */
+html.light .bg-slate-950 {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-slate-850 {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .bg-slate-750 {
+  background-color: #e2e8f0 !important;
+}
+
+html.light .bg-slate-700 {
+  background-color: #e2e8f0 !important;
+}
+
+html.light .bg-slate-600 {
+  background-color: #cbd5e1 !important;
+}
+
+/* Alpha Background Tints */
+html.light .bg-slate-900\/50,
+html.light .bg-slate-900\/80,
+html.light .bg-slate-900\/90 {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+}
+
+html.light .bg-slate-950\/50,
+html.light .bg-slate-950\/80,
+html.light .bg-slate-950\/90 {
+  background-color: rgba(248, 250, 252, 0.95) !important;
+}
+
+html.light .bg-slate-800\/20,
+html.light .bg-slate-800\/30,
+html.light .bg-slate-800\/40,
+html.light .bg-slate-800\/50,
+html.light .bg-slate-800\/60 {
+  background-color: rgba(241, 245, 249, 0.8) !important;
+}
+
+/* Borders */
+html.light .border-slate-950,
+html.light .border-slate-900,
+html.light .border-slate-850,
+html.light .border-slate-800 {
+  border-color: #e2e8f0 !important;
+}
+
+html.light .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+
+html.light .border-slate-600 {
+  border-color: #94a3b8 !important;
+}
+
+html.light .border-slate-800\/50,
+html.light .border-slate-800\/60,
+html.light .border-slate-700\/50 {
+  border-color: rgba(226, 232, 240, 0.85) !important;
+}
+
+html.light .divide-slate-800 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-slate-900 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+html.light .divide-slate-700 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #cbd5e1 !important;
+}
+
+/* Typography Overrides */
+html.light .text-white {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-100 {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-200 {
+  color: #1e293b !important;
+}
+
+html.light .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light .text-slate-500 {
+  color: #64748b !important;
+}
+
+html.light .text-slate-600 {
+  color: #64748b !important;
+}
+
+/* Colored Buttons, Badges, & Highlights (Keep white text on saturated colored backgrounds) */
+html.light .bg-blue-600,
+html.light .bg-blue-500,
+html.light .bg-indigo-600,
+html.light .bg-emerald-600,
+html.light .bg-emerald-500,
+html.light .bg-green-600,
+html.light .bg-rose-600,
+html.light .bg-rose-500,
+html.light .bg-red-600,
+html.light .bg-purple-600,
+html.light .bg-purple-500,
+html.light .bg-amber-600,
+html.light .bg-amber-500,
+html.light .bg-cyan-600 {
+  color: #ffffff !important;
+}
+
+html.light .bg-blue-600 *,
+html.light .bg-blue-500 *,
+html.light .bg-indigo-600 *,
+html.light .bg-emerald-600 *,
+html.light .bg-emerald-500 *,
+html.light .bg-green-600 *,
+html.light .bg-rose-600 *,
+html.light .bg-rose-500 *,
+html.light .bg-red-600 *,
+html.light .bg-purple-600 *,
+html.light .bg-purple-500 *,
+html.light .bg-amber-600 *,
+html.light .bg-cyan-600 * {
+  color: #ffffff !important;
+}
+
+html.light .bg-blue-600 svg,
+html.light .bg-blue-500 svg,
+html.light .bg-emerald-600 svg,
+html.light .bg-emerald-500 svg,
+html.light .bg-rose-600 svg,
+html.light .bg-purple-600 svg,
+html.light .bg-amber-600 svg,
+html.light .bg-red-600 svg {
+  stroke: #ffffff !important;
+}
+
+/* Saturated Colored Background Tints in Light Mode */
+html.light .bg-blue-900\/20,
+html.light .bg-blue-900\/30,
+html.light .bg-blue-950\/30 {
+  background-color: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+html.light .bg-emerald-900\/20,
+html.light .bg-emerald-900\/30,
+html.light .bg-emerald-950\/30 {
+  background-color: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+}
+
+html.light .bg-purple-900\/20,
+html.light .bg-purple-900\/30,
+html.light .bg-purple-950\/30 {
+  background-color: #faf5ff !important;
+  border-color: #e9d5ff !important;
+}
+
+html.light .bg-amber-900\/20,
+html.light .bg-amber-900\/30,
+html.light .bg-amber-950\/30 {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+}
+
+html.light .bg-rose-900\/10,
+html.light .bg-rose-900\/20,
+html.light .bg-rose-900\/30,
+html.light .bg-rose-950\/30 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+}
+
+html.light .bg-cyan-900\/20,
+html.light .bg-cyan-900\/30,
+html.light .bg-cyan-950\/30 {
+  background-color: #ecfeff !important;
+  border-color: #a5f3fc !important;
+}
+
+/* Form Controls in Light Mode */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light input:focus,
+html.light select:focus,
+html.light textarea:focus {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15) !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Hover States in Light Mode */
+html.light .hover\:bg-slate-800:hover,
+html.light .hover\:bg-slate-850:hover {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .hover\:bg-slate-700:hover {
+  background-color: #e2e8f0 !important;
+}
+
+html.light .hover\:bg-slate-800\/30:hover,
+html.light .hover\:bg-slate-800\/50:hover {
+  background-color: rgba(241, 245, 249, 0.9) !important;
+}
+
+html.light .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+html.light .hover\:text-slate-300:hover {
+  color: #1e293b !important;
+}
+
+/* Shadows & Modals in Light Mode */
+html.light .shadow-sm {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+}
+html.light .shadow-md {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
+}
+html.light .shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05) !important;
+}
+html.light .shadow-xl {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05) !important;
+}
+html.light .shadow-2xl {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+}
+
+html.light .bg-black\/80,
+html.light .bg-black\/70,
+html.light .bg-black\/60 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+/* Light Scrollbar */
+html.light ::-webkit-scrollbar-track,
+html.light .custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+html.light ::-webkit-scrollbar-thumb,
+html.light .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+html.light ::-webkit-scrollbar-thumb:hover,
+html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Reminders & Highlights Contrast in Light Mode */
+html.light .text-yellow-100,
+html.light .text-amber-100 {
+  color: #451a03 !important;
+  font-weight: 600;
+}
+html.light .text-yellow-500 {
+  color: #92400e !important;
+}
+html.light .text-yellow-600 {
+  color: #78350f !important;
+}
+html.light .bg-yellow-900\/20 {
+  background-color: #fef3c7 !important;
+  border-color: #fde68a !important;
+}
+
+/* Checklist Contrast in Light Mode */
+html.light .text-emerald-100,
+html.light .text-emerald-200,
+html.light .text-emerald-300 {
+  color: #064e3b !important;
+  font-weight: 700;
+}
+html.light .text-emerald-400 {
+  color: #047857 !important;
+  font-weight: 700;
+}
+html.light .bg-emerald-900\/30,
+html.light .bg-emerald-950\/20,
+html.light .bg-emerald-950\/30 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+}

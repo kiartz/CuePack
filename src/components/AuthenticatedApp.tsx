@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Layers, Package, ClipboardList, ClipboardCheck, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map, Database } from 'lucide-react';
+import { Layers, Package, ClipboardList, ClipboardCheck, Menu, X, Home, Loader2, WifiOff, LogOut, Truck, Rocket, Copy, Blocks, ChevronDown, ChevronRight, Calendar, Users, Building, Wrench, Zap, Monitor, Map, Database, Sun, Moon } from 'lucide-react';
 import { InventoryView } from './InventoryView';
 import { KitsView } from './KitsView';
 import { TemplatesView } from './TemplatesView';
@@ -20,10 +20,12 @@ import {
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { getShareUrlParams } from '../utils/share';
+import { useTheme } from '../context/ThemeContext';
 
 type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material' | 'logistica-personale' | 'logistica-mezzi' | 'logistica-hotel' | 'utility-calcolo-elettrico' | 'utility-pixelmap' | 'utility-calcolo-ledwall' | 'utility-calcolo-stripled';
 
 export default function AuthenticatedApp() {
+  const { theme, toggleTheme } = useTheme();
   const [currentView, setCurrentView] = useState<View>('home');
   
   // --- MULTI-DATABASE STATE ---
@@ -604,16 +606,37 @@ export default function AuthenticatedApp() {
         </nav>
 
         {/* Footer */}
-        <div className={`p-4 border-t border-slate-800 text-xs text-slate-600 shrink-0 bg-slate-900 flex items-center transition-all ${isSidebarCollapsed ? 'flex-col gap-3 justify-center' : 'justify-between'}`}>
-           {!isSidebarCollapsed && (
-               <div className="flex flex-col gap-1 overflow-hidden min-w-0">
-                  <span className="truncate">© R. Chiartano</span>
-                  <span className="opacity-50 text-[10px] truncate">v0.5.7.1</span>
-               </div>
-           )}
-           <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
-             <LogOut size={16} />
-           </button>
+        <div className="p-3 border-t border-slate-800 shrink-0 bg-slate-900 flex flex-col gap-2 transition-all">
+           {/* Day / Night Theme Switch */}
+           <div className="flex items-center justify-center gap-3 py-1">
+              {!isSidebarCollapsed && <Moon size={15} className={theme === 'dark' ? 'text-blue-400 fill-blue-400/20' : 'text-slate-500'} />}
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${theme === 'dark' ? 'bg-slate-700' : 'bg-amber-400'}`}
+                title={theme === 'dark' ? "Passa a Modalità Giorno" : "Passa a Modalità Notte"}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out flex items-center justify-center ${theme === 'dark' ? 'translate-x-0' : 'translate-x-5'}`}
+                >
+                  {theme === 'dark' ? <Moon size={10} className="text-slate-900" /> : <Sun size={10} className="text-amber-600" />}
+                </span>
+              </button>
+              {!isSidebarCollapsed && <Sun size={15} className={theme === 'light' ? 'text-amber-500 fill-amber-500/20' : 'text-slate-500'} />}
+           </div>
+
+           <div className={`flex items-center ${isSidebarCollapsed ? 'flex-col gap-2 justify-center' : 'justify-between'} text-xs text-slate-600`}>
+              {!isSidebarCollapsed && (
+                  <div className="flex flex-col gap-0.5 overflow-hidden min-w-0">
+                     <span className="truncate">© R. Chiartano</span>
+                     <span className="opacity-50 text-[10px] truncate">v0.5.7.2</span>
+                  </div>
+              )}
+              <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
+                <LogOut size={16} />
+              </button>
+           </div>
         </div>
       </aside>
 
@@ -670,13 +693,32 @@ export default function AuthenticatedApp() {
                     </button>
                 )
             })}
-            <div className="pt-8 border-t border-slate-800">
+            
+            {/* Mobile Theme Switcher */}
+            <div className="pt-6 border-t border-slate-800 flex items-center justify-center gap-4 py-2">
+                <Moon size={20} className={theme === 'dark' ? 'text-blue-400 fill-blue-400/20' : 'text-slate-500'} />
+                <button
+                    type="button"
+                    onClick={toggleTheme}
+                    className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${theme === 'dark' ? 'bg-slate-700' : 'bg-amber-400'}`}
+                    title={theme === 'dark' ? "Passa a Modalità Giorno" : "Passa a Modalità Notte"}
+                >
+                    <span
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow transition duration-200 ease-in-out flex items-center justify-center ${theme === 'dark' ? 'translate-x-0' : 'translate-x-5'}`}
+                    >
+                        {theme === 'dark' ? <Moon size={12} className="text-slate-900" /> : <Sun size={12} className="text-amber-600" />}
+                    </span>
+                </button>
+                <Sun size={20} className={theme === 'light' ? 'text-amber-500 fill-amber-500/20' : 'text-slate-500'} />
+            </div>
+
+            <div className="pt-4">
                 <button onClick={handleLogout} className="w-full text-left px-4 py-3 rounded-lg text-lg font-medium text-rose-500 hover:bg-slate-800 flex items-center gap-2">
                     <LogOut size={20} /> Esci
                 </button>
             </div>
-            <div className="pt-8 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                 CuePack Manager ✨ v0.5.6
+            <div className="pt-6 text-center text-xs text-slate-600 uppercase tracking-[2px]">
+                 CuePack Manager ✨ v0.5.7.2
             </div>
          </nav>
       </div>

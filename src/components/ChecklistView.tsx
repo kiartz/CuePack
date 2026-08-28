@@ -105,9 +105,9 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
               className={`rounded-lg border transition-all duration-300 overflow-hidden 
                 ${isEnabled 
                     ? isComplete 
-                        ? 'bg-emerald-900/30 border-emerald-600/50 shadow-md shadow-emerald-900/10' 
-                        : 'bg-slate-900 border-slate-700 shadow-sm'
-                    : 'border-transparent opacity-80 hover:opacity-100 hover:bg-slate-900/30'
+                        ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-600/50 shadow-sm' 
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 shadow-sm'
+                    : 'bg-slate-50/50 dark:bg-transparent border-slate-200 dark:border-transparent opacity-80 hover:opacity-100 hover:bg-slate-100 dark:hover:bg-slate-900/30'
                 }`}
             >
               {/* Sector Header */}
@@ -117,11 +117,11 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                     className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer group/header"
                     onClick={() => toggleExpansion(sector.id)}
                  >
-                     <div className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''} ${isComplete && isEnabled ? 'text-emerald-400' : 'text-slate-600 group-hover/header:text-slate-400'}`}>
+                     <div className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''} ${isComplete && isEnabled ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-600 group-hover/header:text-slate-700 dark:group-hover/header:text-slate-400'}`}>
                          <ChevronRight size={14} />
                      </div>
                      <div className="flex-1 min-w-0">
-                         <div className={`text-xs font-bold truncate ${isComplete && isEnabled ? 'text-emerald-100' : isEnabled ? 'text-blue-100' : 'text-slate-400 group-hover/header:text-slate-300'}`}>
+                         <div className={`text-xs font-bold truncate ${isComplete && isEnabled ? 'text-emerald-950 dark:text-emerald-100' : isEnabled ? 'text-blue-900 dark:text-blue-100' : 'text-slate-700 dark:text-slate-400 group-hover/header:text-slate-900 dark:group-hover/header:text-slate-300'}`}>
                             {cleanedTitle}
                          </div>
                      </div>
@@ -130,7 +130,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                  {/* Right: Toggle Switch & Info (Controls Enabled State Only) */}
                  <div className="flex items-center gap-2 shrink-0">
                      {isEnabled && (
-                         <div className={`text-xs font-mono mr-1 ${isComplete ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
+                         <div className={`text-xs font-mono mr-1 ${isComplete ? 'text-emerald-800 dark:text-emerald-400 font-bold' : 'text-slate-600 dark:text-slate-400 font-semibold'}`}>
                              {checkedGroups}/{totalGroups}
                          </div>
                      )}
@@ -141,7 +141,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                             toggleEnabled(sector.id);
                         }}
                         className={`relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none 
-                            ${isEnabled ? (isComplete ? 'bg-emerald-500' : 'bg-blue-600') : 'bg-slate-700 hover:bg-slate-600'}`}
+                            ${isEnabled ? (isComplete ? 'bg-emerald-600' : 'bg-blue-600') : 'bg-slate-300 dark:bg-slate-700 hover:bg-slate-400 dark:hover:bg-slate-600'}`}
                         title={isEnabled ? "Disattiva Settore" : "Attiva Settore"}
                      >
                         <span 
@@ -157,7 +157,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
 
               {/* Sector Content (Shown if Expanded) */}
               {isExpanded && (
-                <div className={`border-t p-2 space-y-3 animate-in ${isComplete ? 'border-emerald-800/50 bg-emerald-950/20' : 'border-slate-800 bg-slate-950/30'}`}>
+                <div className={`border-t p-2 space-y-3 animate-in ${isComplete ? 'border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20' : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/30'}`}>
                   {sector.groups.map((group, groupIdx) => {
                     const groupId = getGroupId(sector.id, groupIdx);
                     const isGroupChecked = checkedItems.includes(groupId);
@@ -168,25 +168,25 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                         <div 
                             className={`flex items-center gap-2 cursor-pointer p-1.5 rounded transition-colors select-none
                                 ${isGroupChecked 
-                                    ? isComplete ? 'hover:bg-emerald-900/40 text-emerald-300' : 'hover:bg-slate-800 text-slate-200'
-                                    : 'hover:bg-slate-800 text-slate-300'
+                                    ? isComplete ? 'hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 text-emerald-900 dark:text-emerald-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-slate-200'
+                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-300'
                                 }`}
                             onClick={() => toggleGroup(groupId)}
                         >
-                            <div className={`shrink-0 transition-colors ${isGroupChecked ? 'text-emerald-500' : 'text-slate-500 group-hover/item:text-slate-300'}`}>
+                            <div className={`shrink-0 transition-colors ${isGroupChecked ? 'text-emerald-600 dark:text-emerald-500' : 'text-slate-400 dark:text-slate-500 group-hover/item:text-slate-600 dark:group-hover/item:text-slate-300'}`}>
                                 {isGroupChecked ? <CheckSquare size={16} /> : <Square size={16} />}
                             </div>
-                            <h4 className={`text-xs font-bold uppercase tracking-wider leading-tight ${isGroupChecked ? 'opacity-80' : ''}`}>
+                            <h4 className={`text-xs font-extrabold uppercase tracking-wider leading-tight ${isGroupChecked ? 'text-emerald-900 dark:text-emerald-300 opacity-90' : 'text-slate-900 dark:text-slate-200'}`}>
                                 {group.title}
                             </h4>
                         </div>
 
                         {/* List Items (Static Reminders) */}
-                        <div className={`pl-7 pr-2 border-l border-slate-800/50 ml-2.5 mt-1 mb-2 ${isGroupChecked ? 'opacity-50 grayscale' : 'opacity-100'}`}>
+                        <div className={`pl-7 pr-2 border-l ${isComplete ? 'border-emerald-300 dark:border-emerald-800/50' : 'border-slate-300 dark:border-slate-800/50'} ml-2.5 mt-1 mb-2 ${isGroupChecked ? 'opacity-80' : 'opacity-100'}`}>
                             <ul className="space-y-1">
                                 {group.items.map((item, itemIdx) => (
-                                    <li key={itemIdx} className="flex items-start gap-2 text-xs text-slate-400 leading-snug">
-                                        <span className="mt-1 w-1 h-1 rounded-full bg-slate-600 shrink-0" />
+                                    <li key={itemIdx} className={`flex items-start gap-2 text-xs font-semibold leading-snug ${isComplete ? 'text-emerald-950 dark:text-emerald-100' : 'text-slate-800 dark:text-slate-300'}`}>
+                                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full ${isComplete ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-slate-400 dark:bg-slate-600'} shrink-0`} />
                                         <span>{item}</span>
                                     </li>
                                 ))}
