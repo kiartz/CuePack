@@ -1312,10 +1312,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       const isComplete = current >= total;
       const isStarted = current > 0;
       
-      let icon = <Square size={24} className={showWarning && !isComplete ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} />;
+      let icon = <Square size={32} className={`sm:w-7 sm:h-7 ${showWarning && !isComplete ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'}`} />;
       
       if (isComplete) {
-          icon = <CheckSquare size={24} />;
+          icon = <CheckSquare size={32} className="sm:w-7 sm:h-7" />;
           if (type === 'distinta') textColor = 'text-emerald-500';
           if (type === 'carico') textColor = 'text-blue-500';
           if (type === 'rientro') textColor = 'text-purple-500';
@@ -1328,11 +1328,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
               {showWarning && !isComplete && warningTooltipKey && (
                   renderModifiedWarningBadge(warningTooltipKey, { previousQuantity: originalTotal ?? 0, changedAt: '' }, total)
               )}
-              <label className={`flex flex-col items-center group ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+              <div className="flex flex-col items-center">
                   <button 
-                      onClick={onClick}
+                      type="button"
+                      onClick={(e) => {
+                          e.stopPropagation();
+                          if (!disabled) onClick();
+                      }}
                       disabled={disabled}
-                      className={`${isStarted && !isComplete ? 'bg-yellow-500 hover:bg-yellow-400 text-black px-1.5 py-0.5 rounded text-xs font-bold leading-none min-w-[24px] h-[24px] flex items-center justify-center' : textColor} ${disabled ? 'cursor-not-allowed' : ''}`}
+                      className={`p-2 sm:p-1 rounded-xl touch-manipulation min-w-[48px] min-h-[48px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center active:scale-95 transition-all ${isStarted && !isComplete ? 'bg-yellow-500 hover:bg-yellow-400 text-black px-2 py-1 rounded-lg text-sm sm:text-xs font-black min-w-[48px] h-[38px] sm:min-w-[28px] sm:h-[28px]' : textColor} ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
                       {isStarted && !isComplete ? (
                           `${current}/${total}`
@@ -1340,7 +1344,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           icon
                       )}
                   </button>
-              </label>
+              </div>
           </div>
       );
   };
@@ -1636,9 +1640,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     <span className={`${showChangeWarning ? 'bg-amber-500 text-black' : 'bg-purple-900 text-purple-200'} px-1.5 py-0.5 rounded text-xs font-mono font-bold shrink-0`}>x{comp.quantity}</span>
                                                                     {hasChanged && (
                                                                         <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
-                                                                            {ws.changeLog?.previousQuantity === 0 
-                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
-                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v${previousVersion})</span>
+                                                                            {ws.changeLog?.previou                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
+                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{previousVersion})</span>
                                                                             }
                                                                         </span>
                                                                     )}
@@ -1662,18 +1665,20 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                             {/* Kit Controls */}
                                                             <div className={`flex items-center gap-2 self-end sm:self-center mt-2 sm:mt-0 transition-opacity shrink-0 ${isFilterActive && !isMainMatch ? 'opacity-25 grayscale' : 'opacity-100'}`}>
                                                                 <button 
-                                                                    onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
-                                                                    className={`p-1 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' }); }}
+                                                                    className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'}`}
                                                                     title="Aggiungi Nota Magazzino"
                                                                 >
-                                                                    <MessageSquare size={16} className={ws.warehouseNote ? 'fill-current' : ''} />
+                                                                    <MessageSquare size={18} className={ws.warehouseNote ? 'fill-current' : ''} />
                                                                 </button>
                                                                 <button 
-                                                                    onClick={() => setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' })}
-                                                                    className={`p-1 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' }); }}
+                                                                    className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'}`}
                                                                     title={ws.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
                                                                 >
-                                                                    <AlertTriangle size={16} className={ws.isBroken ? 'fill-current' : ''} />
+                                                                    <AlertTriangle size={18} className={ws.isBroken ? 'fill-current' : ''} />
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -1694,7 +1699,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                             if (isFilterActive && !isMainMatch && !isChildMatch) return null;
 
                                                             return (
-                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-1 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
+                                                                <div key={`${comp.uniqueId}-sub-${subIdx}`} className={`pl-8 pr-3 py-1.5 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                     {/* Content Info */}
                                                                     <div className="flex-1 w-full flex items-center gap-3">
                                                                         <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${contentWarning ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-purple-500/50'}`}></div>
@@ -1706,7 +1711,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                 >
                                                                                     {sub.name}
                                                                                 </span>
-                                                                                <span className={`text-xs px-1 py-0.2 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
+                                                                                <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${contentWarning ? 'bg-amber-500 text-black font-bold' : 'bg-slate-800 text-slate-400'}`}>x{totalQty}</span>
                                                                                 {hasChanged && (
                                                                                     <span className={`text-xs font-medium ml-2 ${contentWarning ? 'text-amber-400 font-bold' : 'opacity-40'}`}>
                                                                                         {ws.changeLog?.previousQuantity === 0 
@@ -1715,50 +1720,67 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                                     </span>
                                                                                 )}
                                                                             </div>
-                                                                            {subWs.warehouseNote && <div className="text-xs text-blue-400 bg-blue-900/20 px-1 rounded inline-block mt-0.5">Nota: {subWs.warehouseNote}</div>}
+                                                                            {subWs.warehouseNote && <div className="text-xs text-blue-400 bg-blue-900/20 px-1.5 py-0.5 rounded inline-block mt-0.5">Nota: {subWs.warehouseNote}</div>}
                                                                             {subWs.isBroken && <div className="text-rose-500 text-xs font-bold uppercase mt-0.5">{subWs.brokenNote || 'ROTTO'}</div>}
                                                                         </div>
                                                                     </div>
 
                                                                     {/* Content Controls */}
-                                                                    <div className="flex items-center gap-2">
+                                                                    <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                                                                         {/* Actions */}
-                                                                        <div className="flex gap-1 pr-4 border-r border-slate-800">
+                                                                        <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800">
                                                                             <button 
-                                                                                onClick={() => setNoteModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.warehouseNote || '' })}
-                                                                                className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${subWs.warehouseNote ? 'text-blue-400' : 'text-slate-600'}`}
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); setNoteModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.warehouseNote || '' }); }}
+                                                                                className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${subWs.warehouseNote ? 'text-blue-400' : 'text-slate-600'}`}
                                                                                 title="Aggiungi Nota Magazzino"
                                                                             >
                                                                                 <MessageSquare size={16} className={subWs.warehouseNote ? 'fill-current' : ''} />
                                                                             </button>
                                                                             <button 
-                                                                                 onClick={() => setBrokenModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.brokenNote || '' })}
+                                                                                 type="button"
+                                                                                 onClick={(e) => { e.stopPropagation(); setBrokenModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.brokenNote || '' }); }}
                                                                                  disabled={!activeList?.isCompleted}
-                                                                                 className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${subWs.isBroken ? 'text-rose-500' : 'text-slate-600'} ${!activeList?.isCompleted ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                                 className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${subWs.isBroken ? 'text-rose-500' : 'text-slate-600'} ${!activeList?.isCompleted ? 'opacity-40 cursor-not-allowed' : ''}`}
                                                                                  title={subWs.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
                                                                              >
                                                                                  <AlertTriangle size={16} className={subWs.isBroken ? 'fill-current' : ''} />
                                                                              </button>
                                                                          </div>
-                                    
+                                     
                                                                         {/* Content Checkboxes */}
                                                                          <div className="flex items-center gap-2 sm:gap-4">
                                                                              {contentWarning && renderModifiedWarningBadge(`kit-acc-${comp.uniqueId}-${subIdx}`, ws.changeLog, totalQty)}
-                                                                             <label className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} className={contentWarning ? 'text-rose-500' : 'text-slate-600'} />}
+                                                                             <div className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {subWs.inDistinta ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className={`sm:w-5 sm:h-5 ${contentWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
                                                                                  </button>
-                                                                             </label>
-                                                                             <label className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} className={contentWarning ? 'text-rose-500' : 'text-slate-600'} />}
+                                                                             </div>
+                                                                             <div className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {subWs.loaded ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className={`sm:w-5 sm:h-5 ${contentWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
                                                                                  </button>
-                                                                             </label>
-                                                                             <label className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                             </div>
+                                                                             <div className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {subWs.returned ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className="sm:w-5 sm:h-5" />}
                                                                                  </button>
-                                                                             </label>
+                                                                             </div>
                                                                          </div>
                                                                     </div>
                                                                 </div>
@@ -1831,32 +1853,32 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
                                                         {/* Controls */}
                                                         <div className="flex items-center gap-2 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end mt-2 sm:mt-0 shrink-0">
-                                                            
-                                                                                                                  {/* Actions */}
-                                                                                                                  <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800">
-                                                                                                                      <button 
-                                                                                                                              onClick={() => setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' })}
-                                                                                                                              disabled={isReadOnly}
-                                                                                                                              className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                                                                                                              title="Aggiungi Nota Magazzino"
-                                                                                                                          >
-                                                                                                                              <MessageSquare size={16} className={ws.warehouseNote ? 'fill-current' : ''} />
-                                                                                                                          </button>
-                                                                                                                          <button 
-                                                                                                                              onClick={() => setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' })}
-                                                                                                                              disabled={isReadOnly}
-                                                                                                                              className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                                                                                                              title={ws.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
-                                                                                                                          >
-                                                                                                                              <AlertTriangle size={16} className={ws.isBroken ? 'fill-current' : ''} />
-                                                                                                                          </button>
-                                                                                                                  </div>
+                                                            {/* Actions */}
+                                                            <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800">
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); setNoteModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.warehouseNote || '' }); }}
+                                                                    disabled={isReadOnly}
+                                                                    className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${ws.warehouseNote ? 'text-blue-400 bg-blue-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                    title="Aggiungi Nota Magazzino"
+                                                                >
+                                                                    <MessageSquare size={18} className={ws.warehouseNote ? 'fill-current' : ''} />
+                                                                </button>
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); setBrokenModal({ isOpen: true, targets: [{ uniqueId: comp.uniqueId }], text: ws.brokenNote || '' }); }}
+                                                                    disabled={isReadOnly}
+                                                                    className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${ws.isBroken ? 'text-rose-500 bg-rose-900/20' : 'text-slate-500'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                    title={ws.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
+                                                                >
+                                                                    <AlertTriangle size={18} className={ws.isBroken ? 'fill-current' : ''} />
+                                                                </button>
+                                                            </div>
                                                             {/* Checkboxes */}
-                                                            <div className="flex gap-2 sm:gap-3">
+                                                            <div className="flex items-center gap-2 sm:gap-3">
                                                                 {(() => {
                                                                     const isResolved = ws.inDistinta && ws.loaded;
                                                                     const showWarning = hasChanged && !isResolved;
-                                                                    const checkSize = 30;
 
                                                                     // Helper to determine if a checkbox label should be hidden on mobile
                                                                     const getMobileClass = (type: string) => {
@@ -1866,24 +1888,40 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
                                                                     return (
                                                                         <>
-                                                                             <label className={`${getMobileClass('distinta')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Dist.</span>
-                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { inDistinta: !ws.inDistinta })} disabled={isReadOnly} className={`${ws.inDistinta ? 'text-emerald-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {ws.inDistinta ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
+                                                                             {showWarning && renderModifiedWarningBadge(`item-${comp.uniqueId}`, ws.changeLog, comp.quantity)}
+                                                                             <div className={`${getMobileClass('distinta')} flex-col items-center gap-0.5`}>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase hidden sm:block">Dist.</span>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateComponentState(comp.uniqueId, { inDistinta: !ws.inDistinta }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[48px] min-h-[48px] sm:min-w-[36px] sm:min-h-[36px] active:scale-95 transition-all ${ws.inDistinta ? 'text-emerald-500' : showWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {ws.inDistinta ? <CheckSquare size={34} className="sm:w-7 sm:h-7" /> : <Square size={34} className={`sm:w-7 sm:h-7 ${showWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
                                                                                  </button>
-                                                                             </label>
-                                                                             <label className={`${getMobileClass('carico')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Car.</span>
-                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { loaded: !ws.loaded })} disabled={isReadOnly} className={`${ws.loaded ? 'text-blue-500' : showWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {ws.loaded ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
+                                                                             </div>
+                                                                             <div className={`${getMobileClass('carico')} flex-col items-center gap-0.5`}>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase hidden sm:block">Car.</span>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateComponentState(comp.uniqueId, { loaded: !ws.loaded }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[48px] min-h-[48px] sm:min-w-[36px] sm:min-h-[36px] active:scale-95 transition-all ${ws.loaded ? 'text-blue-500' : showWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {ws.loaded ? <CheckSquare size={34} className="sm:w-7 sm:h-7" /> : <Square size={34} className={`sm:w-7 sm:h-7 ${showWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
                                                                                  </button>
-                                                                             </label>
-                                                                             <label className={`${getMobileClass('rientro')} flex-col items-center gap-0.5 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <span className="text-xs text-slate-500 font-bold uppercase group-hover:text-slate-300">Rie.</span>
-                                                                                 <button onClick={() => updateComponentState(comp.uniqueId, { returned: !ws.returned })} disabled={isReadOnly} className={`${ws.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {ws.returned ? <CheckSquare size={checkSize} /> : <Square size={checkSize} />}
+                                                                             </div>
+                                                                             <div className={`${getMobileClass('rientro')} flex-col items-center gap-0.5`}>
+                                                                                 <span className="text-xs text-slate-500 font-bold uppercase hidden sm:block">Rie.</span>
+                                                                                 <button 
+                                                                                     type="button"
+                                                                                     onClick={(e) => { e.stopPropagation(); updateComponentState(comp.uniqueId, { returned: !ws.returned }); }} 
+                                                                                     disabled={isReadOnly} 
+                                                                                     className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[48px] min-h-[48px] sm:min-w-[36px] sm:min-h-[36px] active:scale-95 transition-all ${ws.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                                 >
+                                                                                     {ws.returned ? <CheckSquare size={34} className="sm:w-7 sm:h-7" /> : <Square size={34} className="sm:w-7 sm:h-7" />}
                                                                                  </button>
-                                                                             </label>
+                                                                             </div>
                                                                         </>
                                                                     );
                                                                 })()}
@@ -1904,7 +1942,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                         if (isFilterActive && !isMatch && !isParentMatch) return null;
                                                         
                                                         return (
-                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-1 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
+                                                            <div key={`${comp.uniqueId}-acc-${subIdx}`} className={`pl-8 pr-3 py-1.5 border-b border-slate-800/50 flex flex-col md:flex-row gap-2 md:gap-4 items-center transition-all duration-300 ${subWs.isBroken ? 'bg-rose-900/10' : contentWarning ? 'bg-amber-900/10' : 'hover:bg-slate-800/30'}`}>
                                                                 {/* Accessory Info */}
                                                                 <div className="flex-1 w-full flex items-center gap-3">
                                                                     <div className={`${hasAccessories ? (contentWarning ? 'text-amber-500' : 'text-cyan-500/50') : 'text-slate-600'} shrink-0`}> - </div>
@@ -1928,44 +1966,62 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     </div>
                                                                 </div>
 
-                                                                                                                          {/* Accessory Controls */}
-                                                                                                                          <div className="flex items-center gap-2">
-                                                                                                                              {/* Actions */}
-                                                                                                                              <div className="flex gap-1 pr-4 border-r border-slate-800">
-                                                                                                                                  <button 
-                                                                                                                                      onClick={() => setNoteModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.warehouseNote || '' })}
-                                                                                                                                      className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${subWs.warehouseNote ? 'text-blue-400' : 'text-slate-600'}`}
-                                                                                                                                      title="Aggiungi Nota Magazzino"
-                                                                                                                                  >
-                                                                                                                                      <MessageSquare size={16} className={subWs.warehouseNote ? 'fill-current' : ''} />
-                                                                                                                                  </button>
-                                                                                                                                  <button 
-                                                                                                                                      onClick={() => setBrokenModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.brokenNote || '' })}
-                                                                                                                                      disabled={isReadOnly}
-                                                                                                                                      className={`p-1.5 rounded hover:bg-slate-700 transition-colors ${subWs.isBroken ? 'text-rose-500' : 'text-slate-600'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                                                                                                                      title={subWs.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
-                                                                                                                                  >
-                                                                                                                                      <AlertTriangle size={16} className={subWs.isBroken ? 'fill-current' : ''} />
-                                                                                                                                  </button>
-                                                                                                                              </div>
-                                                                
-                                                                                                                              <div className="flex gap-4">
-                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                            {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                {/* Accessory Controls */}
+                                                                <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                                                                    {/* Actions */}
+                                                                    <div className="flex gap-1 pr-2 sm:pr-4 border-r border-slate-800">
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={(e) => { e.stopPropagation(); setNoteModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.warehouseNote || '' }); }}
+                                                                            className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${subWs.warehouseNote ? 'text-blue-400' : 'text-slate-600'}`}
+                                                                            title="Aggiungi Nota Magazzino"
+                                                                        >
+                                                                            <MessageSquare size={16} className={subWs.warehouseNote ? 'fill-current' : ''} />
                                                                         </button>
-                                                                    </label>
-                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                            {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                                        <button 
+                                                                            type="button"
+                                                                            onClick={(e) => { e.stopPropagation(); setBrokenModal({ isOpen: true, targets: [{ parentId: comp.uniqueId, childIdx: subIdx }], text: subWs.brokenNote || '' }); }}
+                                                                            disabled={isReadOnly}
+                                                                            className={`p-1.5 rounded-lg hover:bg-slate-700 transition-colors ${subWs.isBroken ? 'text-rose-500' : 'text-slate-600'} ${isReadOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                                            title={subWs.isBroken ? "Modifica Segnalazione" : "Segnala Rotto/Mancante"}
+                                                                        >
+                                                                            <AlertTriangle size={16} className={subWs.isBroken ? 'fill-current' : ''} />
                                                                         </button>
-                                                                    </label>
-                                                                    <label className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                        <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                            {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
-                                                                        </button>
-                                                                    </label>
-                                                                </div>
+                                                                    </div>
+                                
+                                                                    <div className="flex items-center gap-2 sm:gap-4">
+                                                                        {contentWarning && renderModifiedWarningBadge(`acc-${comp.uniqueId}-${subIdx}`, ws.changeLog, totalQty)}
+                                                                        <div className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                            <button 
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta }); }} 
+                                                                                disabled={isReadOnly} 
+                                                                                className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                            >
+                                                                                {subWs.inDistinta ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className={`sm:w-5 sm:h-5 ${contentWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
+                                                                            </button>
+                                                                        </div>
+                                                                        <div className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                            <button 
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded }); }} 
+                                                                                disabled={isReadOnly} 
+                                                                                className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                            >
+                                                                                {subWs.loaded ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className={`sm:w-5 sm:h-5 ${contentWarning ? 'text-rose-500' : 'text-slate-600'}`} />}
+                                                                            </button>
+                                                                        </div>
+                                                                        <div className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden' : 'flex'} flex-col items-center`}>
+                                                                            <button 
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned }); }} 
+                                                                                disabled={isReadOnly} 
+                                                                                className={`p-2 sm:p-1 rounded-xl touch-manipulation flex items-center justify-center min-w-[44px] min-h-[44px] sm:min-w-[32px] sm:min-h-[32px] active:scale-95 transition-all ${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                                            >
+                                                                                {subWs.returned ? <CheckSquare size={28} className="sm:w-5 sm:h-5" /> : <Square size={28} className="sm:w-5 sm:h-5" />}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         );
