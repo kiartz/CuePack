@@ -1,11 +1,75 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection } from '../types';
-import { addOrUpdateItem, deleteItem, COLL_LISTS } from '../firebase';
+import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ShareEventModal } from './ShareEventModal';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
+
+// --- MERGE REMOTE WAREHOUSE STATES HELPER ---
+const mergeWarehouseStates = (currentList: PackingList, incomingList: PackingList): PackingList => {
+  if (!incomingList.zones) return incomingList;
+  const incomingWsMap = new Map<string, { ws?: WarehouseState; contents?: any[]; templateContents?: any[] }>();
+
+  incomingList.zones.forEach(z => {
+    z.sections.forEach(s => {
+      s.components.forEach(c => {
+        incomingWsMap.set(c.uniqueId, {
+          ws: c.warehouseState,
+          contents: c.contents,
+          templateContents: c.templateContents
+        });
+      });
+    });
+  });
+
+  const mergedZones = (currentList.zones || []).map(z => ({
+    ...z,
+    sections: z.sections.map(s => ({
+      ...s,
+      components: s.components.map(c => {
+        const inc = incomingWsMap.get(c.uniqueId);
+        if (!inc) return c;
+
+        let mergedContents = c.contents;
+        if (c.contents && inc.contents) {
+          mergedContents = c.contents.map((sub, idx) => {
+            const incSub = inc.contents?.[idx];
+            return {
+              ...sub,
+              warehouseState: incSub?.warehouseState || sub.warehouseState
+            };
+          });
+        }
+
+        let mergedTemplateContents = c.templateContents;
+        if (c.templateContents && inc.templateContents) {
+          mergedTemplateContents = c.templateContents.map((tc, idx) => {
+            const incTc = inc.templateContents?.[idx];
+            return {
+              ...tc,
+              warehouseState: incTc?.warehouseState || tc.warehouseState
+            };
+          });
+        }
+
+        return {
+          ...c,
+          warehouseState: inc.ws || c.warehouseState,
+          contents: mergedContents,
+          templateContents: mergedTemplateContents
+        };
+      })
+    }))
+  }));
+
+  return {
+    ...incomingList,
+    zones: mergedZones
+  };
+};
 
 interface PrepMaterialViewProps {
   lists: PackingList[];
@@ -32,6 +96,59 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     return null;
   });
   const [listToShare, setListToShare] = useState<PackingList | null>(null);
+
+  // Optimistic real-time active list state
+  const rawActiveList = useMemo(() => lists.find(l => l.id === activeListId), [lists, activeListId]);
+  const [localList, setLocalList] = useState<PackingList | null>(null);
+  const localListRef = useRef<PackingList | null>(null);
+  const pendingWritesRef = useRef<number>(0);
+  const [activeWarningTooltipId, setActiveWarningTooltipId] = useState<string | null>(null);
+
+  // Keep localList in sync with activeListId and remote Firestore updates
+  useEffect(() => {
+    if (!activeListId) {
+      setLocalList(null);
+      localListRef.current = null;
+      return;
+    }
+
+    const initial = lists.find(l => l.id === activeListId) || null;
+    if (!localListRef.current || localListRef.current.id !== activeListId) {
+      setLocalList(initial);
+      localListRef.current = initial;
+    }
+
+    // Direct Firestore real-time listener for the active list document
+    const unsubDoc = onSnapshot(doc(db, COLL_LISTS, activeListId), (snapshot) => {
+      if (snapshot.exists()) {
+        const incomingData = { ...snapshot.data(), id: snapshot.id } as PackingList;
+        if (localListRef.current && localListRef.current.id === activeListId) {
+          const merged = mergeWarehouseStates(localListRef.current, incomingData);
+          localListRef.current = merged;
+          setLocalList(merged);
+        } else {
+          localListRef.current = incomingData;
+          setLocalList(incomingData);
+        }
+      }
+    }, (error) => {
+      console.error("PrepMaterial doc onSnapshot error:", error);
+    });
+
+    return () => {
+      unsubDoc();
+    };
+  }, [activeListId]);
+
+  // Sync when parent `lists` changes if localList is not yet initialized
+  useEffect(() => {
+    if (activeListId && rawActiveList && !localListRef.current) {
+      setLocalList(rawActiveList);
+      localListRef.current = rawActiveList;
+    }
+  }, [activeListId, rawActiveList]);
+
+  const activeList = localList || rawActiveList;
 
   // Handle initial list from deep link
   useEffect(() => {
@@ -82,8 +199,6 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       setHighlightedItemName(name);
       if (name) {
           setItemSearch('');
-          // Optional: collapse search on mobile when selecting an item?
-          // setIsSearchExpanded(false); 
       }
   };
 
@@ -105,7 +220,6 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   // Issues Summary Modal
   const [issuesModalList, setIssuesModalList] = useState<PackingList | null>(null);
 
-  const activeList = useMemo(() => lists.find(l => l.id === activeListId), [lists, activeListId]);
   const isReadOnly = activeList 
       ? (parseFloat(activeList.version || '0') < 1 && !activeList.isCompleted) 
       : false;
@@ -380,12 +494,33 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   }, [highlightedItemName, activeZoneId, aggregatedData]);
 
 
+  // --- COMMIT ZONES UPDATE HELPER (Optimistic + Direct Firestore updateDoc) ---
+  const commitZonesUpdate = async (newZones: ListZone[]) => {
+    if (!activeListId) return;
+    const current = localListRef.current || activeList;
+    if (!current) return;
+
+    const updatedList = { ...current, zones: newZones };
+    localListRef.current = updatedList;
+    setLocalList(updatedList);
+
+    pendingWritesRef.current++;
+    try {
+      await updateItemFields(COLL_LISTS, activeListId, { zones: newZones });
+    } catch (err) {
+      console.error("Failed to commit zones update to Firestore:", err);
+    } finally {
+      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+    }
+  };
+
   // --- ACTIONS ---
   
   const updateComponentState = async (componentId: string, updates: Partial<WarehouseState>) => {
-      if (isReadOnly || !activeList?.zones) return;
+      const current = localListRef.current || activeList;
+      if (isReadOnly || !current?.zones) return;
 
-      const newZones = activeList.zones.map(z => ({
+      const newZones = current.zones.map(z => ({
           ...z,
           sections: z.sections.map(s => ({
               ...s,
@@ -417,13 +552,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           }))
       }));
 
-      await addOrUpdateItem(COLL_LISTS, { ...activeList, zones: newZones });
+      await commitZonesUpdate(newZones);
   };
 
   const updateContentState = async (componentId: string, contentIdx: number, updates: Partial<WarehouseState>) => {
-      if (isReadOnly || !activeList?.zones) return;
+      const current = localListRef.current || activeList;
+      if (isReadOnly || !current?.zones) return;
 
-      const newZones = activeList.zones.map(z => ({
+      const newZones = current.zones.map(z => ({
           ...z,
           sections: z.sections.map(s => ({
               ...s,
@@ -468,16 +604,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           }))
       }));
 
-      await addOrUpdateItem(COLL_LISTS, { ...activeList, zones: newZones });
+      await commitZonesUpdate(newZones);
   };
 
   const handleBatchUpdate = async (
       targets: { uniqueId?: string, parentId?: string, childIdx?: number }[], 
       updates: Partial<WarehouseState>
   ) => {
-      if (isReadOnly || !activeList?.zones) return;
+      const current = localListRef.current || activeList;
+      if (isReadOnly || !current?.zones) return;
 
-      const newZones = activeList.zones.map(z => ({
+      const newZones = current.zones.map(z => ({
           ...z,
           sections: z.sections.map(s => ({
               ...s,
@@ -532,7 +669,66 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           }))
       }));
 
-      await addOrUpdateItem(COLL_LISTS, { ...activeList, zones: newZones });
+      await commitZonesUpdate(newZones);
+  };
+
+  // --- MODIFIED WARNING BADGE & TOOLTIP RENDERER ---
+  const renderModifiedWarningBadge = (
+    tooltipKey: string,
+    changeLog?: { previousQuantity: number; changedAt: string },
+    currentQty?: number
+  ) => {
+    const isTooltipOpen = activeWarningTooltipId === tooltipKey;
+    const prevQty = changeLog?.previousQuantity ?? 0;
+    const isNew = prevQty === 0;
+
+    return (
+      <div className="relative inline-flex items-center shrink-0">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveWarningTooltipId(prev => prev === tooltipKey ? null : tooltipKey);
+          }}
+          className="p-1 rounded-full bg-rose-950 border border-rose-500 text-rose-400 hover:bg-rose-900 shadow-md animate-pulse flex items-center justify-center shrink-0 cursor-pointer transition-transform hover:scale-110"
+          title="Materiale modificato - Clicca per dettagli"
+        >
+          <AlertTriangle size={14} className="text-rose-500 fill-rose-500/20" />
+        </button>
+
+        {isTooltipOpen && (
+          <div 
+            className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-900 border-2 border-rose-500/90 rounded-xl shadow-2xl text-xs text-slate-200 pointer-events-auto animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} className="text-rose-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-rose-400 uppercase text-[10px] tracking-wider mb-0.5">
+                  Materiale da aggiornare
+                </div>
+                <p className="text-[11px] leading-tight text-slate-300">
+                  {isNew
+                    ? `Nuovo articolo aggiunto nella versione v${activeList?.version || '1.0'}.`
+                    : `Quantità modificata (da ${prevQty} a ${currentQty}) nella versione v${activeList?.version || '1.0'}.`}
+                </p>
+                <div className="text-[10px] text-amber-400 font-semibold mt-1 flex items-center gap-1">
+                  <span>⚠️</span> Ricontrollare e spuntare la casella.
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setActiveWarningTooltipId(null); }}
+                className="text-slate-500 hover:text-white p-0.5 shrink-0"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-4 border-transparent border-t-rose-500"></div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const saveNote = () => {
@@ -1106,15 +1302,17 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       total: number,
       onClick: () => void,
       showWarning?: boolean,
-      disabled?: boolean
+      disabled?: boolean,
+      warningTooltipKey?: string,
+      originalTotal?: number
   ) => {
       if (activeWarehouseMode !== type) return null;
 
       let textColor = 'text-slate-600';
-      let icon = <Square size={24} />;
-      
       const isComplete = current >= total;
       const isStarted = current > 0;
+      
+      let icon = <Square size={24} className={showWarning && !isComplete ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} />;
       
       if (isComplete) {
           icon = <CheckSquare size={24} />;
@@ -1122,24 +1320,28 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
           if (type === 'carico') textColor = 'text-blue-500';
           if (type === 'rientro') textColor = 'text-purple-500';
       } else if (showWarning && (type === 'distinta' || type === 'carico')) {
-          // RED PULSE FOR WARNING
-          textColor = 'text-rose-500 animate-pulse';
+          textColor = 'text-rose-500';
       }
 
       return (
-          <label className={`flex flex-col items-center group ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-              <button 
-                  onClick={onClick}
-                  disabled={disabled}
-                  className={`${isStarted && !isComplete ? 'bg-yellow-500 hover:bg-yellow-400 text-black px-1.5 py-0.5 rounded text-xs font-bold leading-none min-w-[24px] h-[24px] flex items-center justify-center' : textColor} ${disabled ? 'cursor-not-allowed' : ''}`}
-              >
-                  {isStarted && !isComplete ? (
-                      `${current}/${total}`
-                  ) : (
-                      icon
-                  )}
-              </button>
-          </label>
+          <div className="flex items-center gap-1.5 shrink-0">
+              {showWarning && !isComplete && warningTooltipKey && (
+                  renderModifiedWarningBadge(warningTooltipKey, { previousQuantity: originalTotal ?? 0, changedAt: '' }, total)
+              )}
+              <label className={`flex flex-col items-center group ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                  <button 
+                      onClick={onClick}
+                      disabled={disabled}
+                      className={`${isStarted && !isComplete ? 'bg-yellow-500 hover:bg-yellow-400 text-black px-1.5 py-0.5 rounded text-xs font-bold leading-none min-w-[24px] h-[24px] flex items-center justify-center' : textColor} ${disabled ? 'cursor-not-allowed' : ''}`}
+                  >
+                      {isStarted && !isComplete ? (
+                          `${current}/${total}`
+                      ) : (
+                          icon
+                      )}
+                  </button>
+              </label>
+          </div>
       );
   };
   return (
@@ -1436,7 +1638,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                         <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
                                                                             {ws.changeLog?.previousQuantity === 0 
                                                                                 ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
-                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{previousVersion})</span>
+                                                                                : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v${previousVersion})</span>
                                                                             }
                                                                         </span>
                                                                     )}
@@ -1540,20 +1742,21 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                          </div>
                                     
                                                                         {/* Content Checkboxes */}
-                                                                         <div className="flex gap-4">
+                                                                         <div className="flex items-center gap-2 sm:gap-4">
+                                                                             {contentWarning && renderModifiedWarningBadge(`kit-acc-${comp.uniqueId}-${subIdx}`, ws.changeLog, totalQty)}
                                                                              <label className={`${activeWarehouseMode && activeWarehouseMode !== 'distinta' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.inDistinta ? <CheckSquare size={24} /> : <Square size={24} />}
+                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { inDistinta: !subWs.inDistinta })} disabled={isReadOnly} className={`${subWs.inDistinta ? 'text-emerald-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                                     {subWs.inDistinta ? <CheckSquare size={20} /> : <Square size={20} className={contentWarning ? 'text-rose-500' : 'text-slate-600'} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`${activeWarehouseMode && activeWarehouseMode !== 'carico' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.loaded ? <CheckSquare size={24} /> : <Square size={24} />}
+                                                                                 <button onClick={() => updateContentState(comp.uniqueId, subIdx, { loaded: !subWs.loaded })} disabled={isReadOnly} className={`${subWs.loaded ? 'text-blue-500' : contentWarning ? 'text-rose-500 ring-2 ring-rose-500/50 rounded animate-pulse' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
+                                                                                     {subWs.loaded ? <CheckSquare size={20} /> : <Square size={20} className={contentWarning ? 'text-rose-500' : 'text-slate-600'} />}
                                                                                  </button>
                                                                              </label>
                                                                              <label className={`${activeWarehouseMode && activeWarehouseMode !== 'rientro' ? 'hidden' : 'flex'} flex-col items-center gap-1 group ${isReadOnly ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
                                                                                  <button onClick={() => updateContentState(comp.uniqueId, subIdx, { returned: !subWs.returned })} disabled={isReadOnly} className={`${subWs.returned ? 'text-purple-500' : 'text-slate-600'} ${isReadOnly ? 'cursor-not-allowed' : ''}`}>
-                                                                                     {subWs.returned ? <CheckSquare size={24} /> : <Square size={24} />}
+                                                                                     {subWs.returned ? <CheckSquare size={20} /> : <Square size={20} />}
                                                                                  </button>
                                                                              </label>
                                                                          </div>
@@ -1977,24 +2180,28 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
                                               {/* Parent Checkboxes (Only if NOT a Kit) */}
                                               {!isActuallyKit && (
-                                                  <div className="flex gap-2 sm:gap-4 shrink-0">
-                                                       {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
-                                                           handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty }),
-                                                           showWarning,
-                                                           isReadOnly
-                                                       )}
-                                                       {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
-                                                           handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty }),
-                                                           showWarning,
-                                                           isReadOnly
-                                                       )}
-                                                       {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
-                                                           handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty }),
-                                                           false,
-                                                           isReadOnly
-                                                       )}
-                                                   </div>
-                                              )}
+                                                   <div className="flex gap-2 sm:gap-4 shrink-0">
+                                                        {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
+                                                            handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty }),
+                                                            showWarning,
+                                                            isReadOnly,
+                                                            `total-parent-${data.name}`,
+                                                            data.originalTotalQty
+                                                        )}
+                                                        {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
+                                                            handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty }),
+                                                            showWarning,
+                                                            isReadOnly,
+                                                            `total-parent-${data.name}`,
+                                                            data.originalTotalQty
+                                                        )}
+                                                        {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
+                                                            handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty }),
+                                                            false,
+                                                            isReadOnly
+                                                        )}
+                                                    </div>
+                                               )}
                                           </div>
                                       </div>
                                       <div className="divide-y divide-slate-800">
@@ -2059,12 +2266,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                           {renderTotalButton('distinta', childData.inDistintaQty, childData.totalQty, () => 
                                                               handleBatchUpdate(childData.instances, { inDistinta: childData.inDistintaQty < childData.totalQty }),
                                                               showWarning,
-                                                              isReadOnly
+                                                              isReadOnly,
+                                                              `total-child-${key}-${childName}`,
+                                                              childData.originalTotalQty
                                                           )}
                                                           {renderTotalButton('carico', childData.loadedQty, childData.totalQty, () => 
                                                               handleBatchUpdate(childData.instances, { loaded: childData.loadedQty < childData.totalQty }),
                                                               showWarning,
-                                                              isReadOnly
+                                                              isReadOnly,
+                                                              `total-child-${key}-${childName}`,
+                                                              childData.originalTotalQty
                                                           )}
                                                           {renderTotalButton('rientro', childData.returnedQty, childData.totalQty, () => 
                                                               handleBatchUpdate(childData.instances, { returned: childData.returnedQty < childData.totalQty }),
@@ -2153,12 +2364,16 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                           {renderTotalButton('distinta', data.inDistintaQty, data.totalQty, () => 
                                                               handleBatchUpdate(data.instances, { inDistinta: data.inDistintaQty < data.totalQty }),
                                                               showWarning,
-                                                              isReadOnly
+                                                              isReadOnly,
+                                                              `total-simple-${name}`,
+                                                              data.originalTotalQty
                                                           )}
                                                           {renderTotalButton('carico', data.loadedQty, data.totalQty, () => 
                                                               handleBatchUpdate(data.instances, { loaded: data.loadedQty < data.totalQty }),
                                                               showWarning,
-                                                              isReadOnly
+                                                              isReadOnly,
+                                                              `total-simple-${name}`,
+                                                              data.originalTotalQty
                                                           )}
                                                           {renderTotalButton('rientro', data.returnedQty, data.totalQty, () => 
                                                               handleBatchUpdate(data.instances, { returned: data.returnedQty < data.totalQty }),

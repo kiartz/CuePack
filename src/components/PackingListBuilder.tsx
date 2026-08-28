@@ -1666,7 +1666,161 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
   
   // --- VERSIONING & COMPLETION ---
-  const handleCompleteList = async (isUpdate = false) => {
+  // --- COMPUTE VERSION SNAPSHOT DIFF HELPER ---
+  const computeVersionSnapshotDiff = (
+    currentZones: ListZone[],
+    previousSnapshot?: ListZone[],
+    isBump: boolean = true
+  ): { updatedZones: ListZone[]; newDeletedItems: any[] } => {
+    const newDeletedItems: any[] = [...(activeList?.deletedItems || [])];
+
+    // 1. Identify deleted items from previous snapshot
+    if (previousSnapshot && previousSnapshot.length > 0 && isBump) {
+      previousSnapshot.forEach(prevZone => {
+        prevZone.sections.forEach(prevSection => {
+          prevSection.components.forEach(prevComp => {
+            const findInCurrent = (comp: ListComponent): boolean => {
+              for (const z of currentZones) {
+                for (const s of z.sections) {
+                  for (const c of s.components) {
+                    if (c.uniqueId === comp.uniqueId) return true;
+                    if (c.type === 'template' && c.templateContents) {
+                      if (c.templateContents.some(tc => tc.uniqueId === comp.uniqueId)) return true;
+                    }
+                  }
+                }
+              }
+              return false;
+            };
+
+            if (prevComp.type === 'template' && prevComp.templateContents) {
+              prevComp.templateContents.forEach(tc => {
+                if (!findInCurrent(tc) && !newDeletedItems.some(d => d.originalComponent.uniqueId === tc.uniqueId)) {
+                  newDeletedItems.push({
+                    originalComponent: tc,
+                    zoneName: prevZone.name,
+                    sectionName: prevSection.name,
+                    deletedAt: new Date().toISOString()
+                  });
+                }
+              });
+            } else {
+              if (!findInCurrent(prevComp) && !newDeletedItems.some(d => d.originalComponent.uniqueId === prevComp.uniqueId)) {
+                newDeletedItems.push({
+                  originalComponent: prevComp,
+                  zoneName: prevZone.name,
+                  sectionName: prevSection.name,
+                  deletedAt: new Date().toISOString()
+                });
+              }
+            }
+          });
+        });
+      });
+    }
+
+    // 2. Helper to process and compare a single component
+    const processComponentDiff = (comp: ListComponent): ListComponent => {
+      let prevComp: ListComponent | undefined;
+      if (previousSnapshot && previousSnapshot.length > 0) {
+        for (const pz of previousSnapshot) {
+          for (const ps of pz.sections) {
+            for (const pc of ps.components) {
+              if (pc.uniqueId === comp.uniqueId) {
+                prevComp = pc;
+                break;
+              }
+              if (pc.type === 'template' && pc.templateContents) {
+                const innerMatch = pc.templateContents.find(tc => tc.uniqueId === comp.uniqueId);
+                if (innerMatch) {
+                  prevComp = innerMatch;
+                  break;
+                }
+              }
+            }
+            if (prevComp) break;
+          }
+          if (prevComp) break;
+        }
+      }
+
+      // Handle template component container
+      if (comp.type === 'template' && comp.templateContents) {
+        const updatedTemplateContents = comp.templateContents.map(tc => processComponentDiff(tc));
+        return {
+          ...comp,
+          templateContents: updatedTemplateContents
+        };
+      }
+
+      // If there was a previous snapshot and this is an actual version bump
+      if (isBump && previousSnapshot && previousSnapshot.length > 0) {
+        // Case 1: Existing item with modified quantity
+        if (prevComp && prevComp.quantity !== comp.quantity) {
+          const resetContents = comp.contents?.map(content => ({
+            ...content,
+            warehouseState: {
+              ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+              inDistinta: false,
+              loaded: false
+            }
+          }));
+
+          return {
+            ...comp,
+            contents: resetContents,
+            warehouseState: {
+              ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+              inDistinta: false,
+              loaded: false,
+              changeLog: { previousQuantity: prevComp.quantity, changedAt: new Date().toISOString() }
+            }
+          };
+        }
+
+        // Case 2: Brand new item added in this updated version
+        if (!prevComp) {
+          const resetContents = comp.contents?.map(content => ({
+            ...content,
+            warehouseState: {
+              ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+              inDistinta: false,
+              loaded: false
+            }
+          }));
+
+          return {
+            ...comp,
+            contents: resetContents,
+            warehouseState: {
+              ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+              inDistinta: false,
+              loaded: false,
+              changeLog: { previousQuantity: 0, changedAt: new Date().toISOString() }
+            }
+          };
+        }
+
+        // Case 3: Unchanged item (prevComp.quantity === comp.quantity)
+        // Keep existing warehouseState intact!
+        return comp;
+      }
+
+      return comp;
+    };
+
+    const updatedZones = currentZones.map(zone => ({
+      ...zone,
+      sections: zone.sections.map(section => ({
+        ...section,
+        components: section.components.map(processComponentDiff)
+      }))
+    }));
+
+    return { updatedZones, newDeletedItems };
+  };
+
+  const handleCompleteList = async (isUpdate: boolean = false) => {
     if (!activeList || !activeList.zones) return;
     
     let newVersion = '1.0';
@@ -1684,61 +1838,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     }
 
     const currentZones = activeList.zones;
-    const newDeletedItems = [...(activeList.deletedItems || [])];
-
-    // Identify deleted items
-    activeList.snapshot?.forEach(prevZone => {
-        prevZone.sections.forEach(prevSection => {
-            prevSection.components.forEach(prevComp => {
-                let found = false;
-                currentZones.forEach(currZone => {
-                    currZone.sections.forEach(currSection => {
-                        if (currSection.components.some(c => c.uniqueId === prevComp.uniqueId)) found = true;
-                    });
-                });
-                if (!found && !newDeletedItems.some(d => d.originalComponent.uniqueId === prevComp.uniqueId)) {
-                    newDeletedItems.push({ originalComponent: prevComp, zoneName: prevZone.name, sectionName: prevSection.name, deletedAt: new Date().toISOString() });
-                }
-            });
-        });
-    });
-
-    const updatedZones = currentZones.map(zone => ({
-        ...zone,
-        sections: zone.sections.map(section => ({
-            ...section,
-            components: section.components.map(comp => {
-                let prevComp: ListComponent | undefined;
-                activeList.snapshot?.forEach(pz => {
-                    pz.sections.forEach(ps => {
-                        const match = ps.components.find(c => c.uniqueId === comp.uniqueId);
-                        if (match) prevComp = match;
-                    });
-                });
-
-                if (prevComp && prevComp.quantity !== comp.quantity) {
-                    const resetContents = comp.contents?.map(content => ({
-                        ...content,
-                        warehouseState: {
-                            ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-                            inDistinta: false, loaded: false
-                        }
-                    }));
-
-                    return {
-                        ...comp,
-                        contents: resetContents,
-                        warehouseState: {
-                            ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-                            inDistinta: false, loaded: false,
-                            changeLog: { previousQuantity: prevComp.quantity, changedAt: new Date().toISOString() }
-                        }
-                    };
-                }
-                return comp;
-            })
-        }))
-    }));
+    const { updatedZones, newDeletedItems } = computeVersionSnapshotDiff(
+      currentZones,
+      activeList.snapshot,
+      isUpdate
+    );
 
     await updateActiveList({
         version: newVersion,
@@ -1793,10 +1897,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         newVersion = `0.${minor + 1}`;
     }
 
+    const { updatedZones, newDeletedItems } = computeVersionSnapshotDiff(
+      activeList.zones,
+      activeList.snapshot,
+      true
+    );
+
     await updateActiveList({
         isDraftVisible: true,
         version: newVersion,
-        snapshot: activeList.zones
+        snapshot: updatedZones,
+        zones: updatedZones,
+        deletedItems: newDeletedItems
     });
     
     setFeedbackModal({ 
