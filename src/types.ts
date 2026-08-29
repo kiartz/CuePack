@@ -13,7 +13,12 @@ export enum Category {
 export interface ItemInstance {
   id: string; // Codice Univoco / QR Code del Seriale (a 7 cifre 1000001+ o custom, stampabile)
   serialNumber?: string; // Serial Number del costruttore (SN)
+  internalReference?: string; // Riferimento interno (es. 1, 2)
+  purchaseDate?: string; // Data di acquisto
+  active?: boolean; // Attivo (true) / Fuori uso (false)
   notes?: string;
+  lastInspectionDate?: string;
+  nextInspectionDate?: string;
 }
 
 export interface ItemDocument {
@@ -22,20 +27,69 @@ export interface ItemDocument {
   url: string;
 }
 
+export interface ItemAccessory {
+  itemId: string;
+  quantity: number;
+  automatic?: boolean; // default: true (se false, prompt all'aggiunta in distinta)
+  prepNote?: string;
+}
+
+export interface PeriodicInspection {
+  id: string;
+  name: string;
+  period: number; // es. 6
+  frequency: 'days' | 'months' | 'years'; // Giorni / Mesi / Anni
+  description?: string;
+  active: boolean;
+}
+
+export interface ItemDimensions {
+  length?: number; // cm
+  width?: number; // cm
+  height?: number; // cm
+}
+
 export interface InventoryItem {
   id: string;
   name: string;
   productCode?: string; // Codice Prodotto (parte da 1 in avanti, es. 1, 2, 067, NON stampato)
   qrCode?: string; // Codice QR / Barcode del Prodotto (a 7 cifre 1000001+, stampabile)
   category: Category;
-  weight?: number; // in kg
-  powerConsumption?: number; // in Watt (0 for non-electrical items)
-  description?: string;
+  folder?: string; // Cartella/Sottocategoria (es. "Diffusori Passivi", "Cavi RCA")
+  alias?: string; // Alias / Nome breve (es. "SB18", "CDJ2000")
+  location?: string; // Posizione a magazzino (es. "T2", "R2", "A-01")
+  stockType?: 'bulk' | 'serialized'; // Metodo calcolo giacenza
   inStock: number;
-  accessories?: { itemId: string; quantity: number; prepNote?: string }[]; // Linked items (e.g., cables for a light)
+  
+  // Proprietà Fisiche & Imballo
+  weight?: number; // in kg
+  dimensions?: ItemDimensions; // L x W x H in cm
+  volume?: number; // Volume di trasporto in m³
+  packedPer?: number; // Pezzi per imballo / case
+
+  // Proprietà Elettriche
+  powerConsumption?: number; // in Watt (0 for non-electrical items)
+  current?: number; // in Ampere
+
+  // Proprietà Economiche
+  rentalPrice?: number; // Prezzo di listino noleggio (€)
+  subrentalCost?: number; // Costo stimato subnoleggio (€)
+
+  // Tipologia & Caratteristiche
+  rentalSaleType?: 'rental' | 'sale'; // Noleggio vs Vendita/Consumabile
+  canHaveContent?: boolean; // Se è un contenitore (baule, rack)
+
+  // Note & Descrizioni
+  description?: string;
+  internalRemark?: string; // Note interne
+  externalRemark?: string; // Note esterne per cliente / scheda tecnica
+  
+  // Relazioni, Manutenzioni e Allegati
+  accessories?: ItemAccessory[]; // Linked items with automatic flag
   reminders?: string[];
   documents?: ItemDocument[];
   instances?: ItemInstance[];
+  periodicInspections?: PeriodicInspection[];
 }
 
 export interface KitComponent {

@@ -697,13 +697,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         <div className="space-y-2">
             {viewAccessoriesItem?.accessories?.map((acc, idx) => {
                 const accItem = items.find(i => i.id === acc.itemId);
+                const isAuto = acc.automatic !== false;
                 return (
                     <div key={idx} className="flex justify-between items-center bg-slate-800 p-3 rounded-lg border border-slate-700">
                         <div className="flex flex-col">
                             <span className="text-sm font-bold text-white max-w-[200px] sm:max-w-xs truncate">{accItem ? accItem.name : 'Oggetto Sconosciuto'}</span>
                             <span className="text-xs text-slate-400">{accItem ? accItem.category : ''}</span>
                         </div>
-                        <span className="text-sm font-mono font-bold bg-slate-900 border border-slate-600 text-slate-300 px-2 py-1 rounded">x{acc.quantity}</span>
+                        <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${isAuto ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-amber-950 text-amber-300 border-amber-800'}`}>
+                                {isAuto ? 'Automatico' : 'Opzionale'}
+                            </span>
+                            <span className="text-sm font-mono font-bold bg-slate-900 border border-slate-600 text-slate-300 px-2 py-1 rounded">x{acc.quantity}</span>
+                        </div>
                     </div>
                 );
             })}

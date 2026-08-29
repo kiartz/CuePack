@@ -227,6 +227,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   } | null>(null);
   const [externalRentalVendor, setExternalRentalVendor] = useState('');
 
+  // Non-automatic Accessory Confirmation Modal
+  const [accessoryPromptModal, setAccessoryPromptModal] = useState<{
+      isOpen: boolean;
+      item: InventoryItem;
+      nonAutoAccessories: { itemId: string; name: string; quantity: number; selected: boolean }[];
+      isExternalRental?: boolean;
+      rentalType?: 'internal_shortage' | 'external_rental';
+      vendor?: string;
+  } | null>(null);
+
   // Note Toggle State
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
   
@@ -1460,7 +1470,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                  const i = master as InventoryItem;
                  name = i.name;
                  category = i.category;
-                 contents = (i.accessories || []).map(acc => {
+                 contents = (i.accessories || []).filter(acc => acc.automatic !== false).map(acc => {
                      const invItem = inventory.find(inv => inv.id === acc.itemId);
                      return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro' };
                  });
@@ -1493,11 +1503,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         };
       } else {
         const i = item as InventoryItem;
+        const rawAccessories = customAccessories !== undefined
+          ? customAccessories
+          : (i.accessories || []).filter(acc => acc.automatic !== false);
+
         return {
           type: 'item', referenceId: i.id, name: i.name, category: i.category,
-          contents: (i.accessories || []).map(acc => {
+          contents: rawAccessories.map(acc => {
               const invItem = inventory.find(inv => inv.id === acc.itemId);
-              return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro', prepNote: acc.prepNote || '' };
+              return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro', prepNote: (acc as any).prepNote || '' };
           })
         };
       }
@@ -1508,12 +1522,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       type: 'item' | 'kit' | 'template', 
       isExternalRental: boolean = false,
       rentalType?: 'internal_shortage' | 'external_rental',
-      vendor?: string
+      vendor?: string,
+      customAccessories?: { itemId: string; quantity: number }[]
   ) => {
       updateActiveSection(currentSection => {
           // Check for replacement
           if (replacingComponentId) {
-              const newBase = generateComponentFromItem(item, type);
+              const newBase = generateComponentFromItem(item, type, customAccessories);
               const newComponents = currentSection.components.map(c => 
                   c.uniqueId === replacingComponentId ? { 
                       ...c, 
@@ -1547,7 +1562,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   isExternalRental, 
                   rentalType,
                   externalRentalVendor: vendor,
-                  ...generateComponentFromItem(item, type) 
+                  ...generateComponentFromItem(item, type, customAccessories) 
               };
 
               let newComponents = [...currentSection.components];
@@ -1569,6 +1584,50 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               return { components: newComponents };
           }
       });
+  };
+
+  const triggerAddItem = (
+      item: InventoryItem, 
+      isExternalRental = false, 
+      rentalType?: 'internal_shortage' | 'external_rental', 
+      vendor?: string
+  ) => {
+      const nonAutoAccs = (item.accessories || []).filter(a => a.automatic === false);
+      if (nonAutoAccs.length > 0) {
+          const itemsList = nonAutoAccs.map(acc => {
+              const inv = inventory.find(i => i.id === acc.itemId);
+              return {
+                  itemId: acc.itemId,
+                  name: inv?.name || 'Accessorio',
+                  quantity: acc.quantity,
+                  selected: true
+              };
+          });
+          setAccessoryPromptModal({
+              isOpen: true,
+              item,
+              nonAutoAccessories: itemsList,
+              isExternalRental,
+              rentalType,
+              vendor
+          });
+      } else {
+          addToSection(item, 'item', isExternalRental, rentalType, vendor);
+      }
+  };
+
+  const handleConfirmAccessoryPrompt = (includeSelected: boolean) => {
+      if (!accessoryPromptModal) return;
+      const { item, nonAutoAccessories, isExternalRental, rentalType, vendor } = accessoryPromptModal;
+      
+      const autoAccs = (item.accessories || []).filter(a => a.automatic !== false);
+      const chosenNonAuto = includeSelected 
+          ? nonAutoAccessories.filter(a => a.selected).map(a => ({ itemId: a.itemId, quantity: a.quantity }))
+          : [];
+      
+      const combined = [...autoAccs, ...chosenNonAuto];
+      addToSection(item, 'item', isExternalRental, rentalType, vendor, combined);
+      setAccessoryPromptModal(null);
   };
 
   const updateComponentQty = (uniqueId: string, qtyOrUpdater: number | ((prev: number) => number)) => {
@@ -2660,7 +2719,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           return (
                           <div 
                             key={item.id} 
-                            onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total }); } else { addToSection(item, 'item'); } }} 
+                            onClick={(e) => { e.preventDefault(); if (isOverbooked) { setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total }); } else { triggerAddItem(item); } }} 
                             className="w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group cursor-pointer transition-colors"
                           >
                             <div className="flex-1 min-w-0 pr-2">
@@ -2699,7 +2758,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                   if (isOverbooked) {
                                     setOverbookedModal({ isOpen: true, item, type: 'item', avail: avail.available, total: avail.total });
                                   } else {
-                                    addToSection(item, 'item');
+                                    triggerAddItem(item);
                                   }
                                 }}
                                 className={`p-1.5 rounded-lg transition-colors ${isOverbooked ? 'text-rose-500 hover:bg-rose-900/30' : 'text-slate-500 group-hover:text-emerald-400 hover:bg-emerald-900/30'}`}
@@ -3701,6 +3760,75 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
               <div className="flex justify-center pt-2">
                   <button onClick={() => setOverbookedModal(null)} className="text-sm text-slate-500 hover:text-white underline">Annulla e non aggiungere</button>
+              </div>
+          </div>
+      </Modal>
+
+      {/* ACCESSORY CONFIRMATION PROMPT MODAL */}
+      <Modal 
+          isOpen={!!accessoryPromptModal?.isOpen} 
+          onClose={() => setAccessoryPromptModal(null)} 
+          title="Accessori Opzionali" 
+          size="md"
+      >
+          <div className="space-y-4">
+              <div className="flex items-start gap-3 bg-slate-900 p-3 rounded-xl border border-slate-800">
+                  <div className="p-2 bg-cyan-900/30 text-cyan-400 rounded-lg shrink-0">
+                      <Link size={24} />
+                  </div>
+                  <div>
+                      <h4 className="text-sm font-bold text-white">
+                          {accessoryPromptModal?.item.name}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                          Questo articolo ha accessori non automatici. Seleziona quelli che desideri includere in questa distinta:
+                      </p>
+                  </div>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar bg-slate-950 p-2 rounded-xl border border-slate-800">
+                  {accessoryPromptModal?.nonAutoAccessories.map((acc, idx) => (
+                      <label 
+                          key={acc.itemId} 
+                          className="flex items-center justify-between p-2.5 bg-slate-900 hover:bg-slate-850 rounded-lg border border-slate-800 cursor-pointer transition-colors"
+                      >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
+                              <input 
+                                  type="checkbox" 
+                                  checked={acc.selected} 
+                                  onChange={(e) => {
+                                      const isChecked = e.target.checked;
+                                      setAccessoryPromptModal(prev => prev ? ({
+                                          ...prev,
+                                          nonAutoAccessories: prev.nonAutoAccessories.map((a, i) => i === idx ? { ...a, selected: isChecked } : a)
+                                      }) : null);
+                                  }}
+                                  className="w-4 h-4 rounded text-cyan-600 bg-slate-950 border-slate-700 focus:ring-cyan-500 focus:ring-offset-0"
+                              />
+                              <span className="text-xs font-semibold text-white truncate">{acc.name}</span>
+                          </div>
+                          <span className="px-2 py-0.5 bg-slate-800 text-cyan-300 rounded text-xs font-bold font-mono shrink-0">
+                              Qtà: {acc.quantity}
+                          </span>
+                      </label>
+                  ))}
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-3 border-t border-slate-800">
+                  <button 
+                      type="button" 
+                      onClick={() => handleConfirmAccessoryPrompt(false)} 
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold transition-colors"
+                  >
+                      Aggiungi Senza Opzionali
+                  </button>
+                  <button 
+                      type="button" 
+                      onClick={() => handleConfirmAccessoryPrompt(true)} 
+                      className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-cyan-900/30 active:scale-95"
+                  >
+                      Conferma & Aggiungi
+                  </button>
               </div>
           </div>
       </Modal>
