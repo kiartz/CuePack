@@ -54,24 +54,29 @@ export interface InventoryItem {
   name: string;
   productCode?: string; // Codice Prodotto (parte da 1 in avanti, es. 1, 2, 067, NON stampato)
   qrCode?: string; // Codice QR / Barcode del Prodotto (a 7 cifre 1000001+, stampabile)
-  category: Category;
-  folder?: string; // Cartella/Sottocategoria (es. "Diffusori Passivi", "Cavi RCA")
+  category: Category | string;
+  subcategory?: string; // Sottocategoria (es. "Diffusori Passivi", "Cavi RCA", "Par Led")
+  folder?: string; // Retrocompatibilità con vecchie versioni / importazioni
   alias?: string; // Alias / Nome breve (es. "SB18", "CDJ2000")
   location?: string; // Posizione a magazzino (es. "T2", "R2", "A-01")
-  stockType?: 'bulk' | 'serialized'; // Metodo calcolo giacenza
+  stockType?: 'bulk' | 'serialized'; // Tipo scorta
   inStock: number;
   
-  // Proprietà Fisiche & Imballo
+  // Proprietà Fisiche & Dimensioni
   weight?: number; // in kg
   dimensions?: ItemDimensions; // L x W x H in cm
   volume?: number; // Volume di trasporto in m³
-  packedPer?: number; // Pezzi per imballo / case
+  packedPer?: number; // Pezzi per imballo (opzionale)
 
   // Proprietà Elettriche
   powerConsumption?: number; // in Watt (0 for non-electrical items)
   current?: number; // in Ampere
+  powerPhase?: 'monofase' | 'trifase'; // 'monofase' (230V) | 'trifase' (400V)
+  powerSupplyRating?: string; // '16A' | '32A' | '63A' | '125A' | 'standard'
+  powerConnector?: string; // es. 'Schuko', 'PowerCON TRUE1', 'PowerCON Blue', 'CEE 16A 3P', 'CEE 32A 5P', 'CEE 63A 5P', 'CEE 125A 5P', 'Socapex', ecc.
 
   // Proprietà Economiche
+  purchasePrice?: number; // Prezzo di Acquisto (€)
   rentalPrice?: number; // Prezzo di listino noleggio (€)
   subrentalCost?: number; // Costo stimato subnoleggio (€)
 
@@ -81,7 +86,7 @@ export interface InventoryItem {
 
   // Note & Descrizioni
   description?: string;
-  internalRemark?: string; // Note interne
+  internalRemark?: string; // Note interne magazzino/staff
   externalRemark?: string; // Note esterne per cliente / scheda tecnica
   
   // Relazioni, Manutenzioni e Allegati

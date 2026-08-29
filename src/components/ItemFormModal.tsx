@@ -8,12 +8,11 @@ import {
   PeriodicInspection, 
   ItemInstance 
 } from '../types';
-import { Modal } from './Modal';
 import { 
   Plus, 
   X, 
   Search, 
-  Link, 
+  Link as LinkIcon, 
   ArrowLeft, 
   Lightbulb, 
   Barcode, 
@@ -32,11 +31,27 @@ import {
   Tag,
   CheckCircle2,
   AlertTriangle,
-  Info
+  Info,
+  Scale,
+  Box,
+  Hash,
+  FileCheck,
+  StickyNote,
+  Paperclip,
+  Trash2,
+  Check,
+  Settings
 } from 'lucide-react';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
-import { updateItemFields, COLL_INVENTORY, getInventoryCollection } from '../firebase';
+import { 
+  getCategoryDefinitions, 
+  getSubcategoriesForCategory, 
+  addSubcategoryToCategory,
+  CategoryDefinition 
+} from '../utils/categories';
+import { CategoryManagerModal } from './CategoryManagerModal';
+import { Modal } from './Modal';
 
 interface ItemFormModalProps {
   isOpen: boolean;
@@ -140,23 +155,34 @@ export const generateProductQrCode = (
   }
 };
 
-type ActiveTab = 'data' | 'serials' | 'accessories' | 'inspections' | 'remarks_docs';
+type ActiveTab = 'data' | 'serials' | 'accessories' | 'inspections' | 'notes' | 'files';
 
 export const ItemFormModal: React.FC<ItemFormModalProps> = ({ 
-  isOpen, onClose, onSave, initialData, inventory = [], onCreateAccessory, title, activeDatabaseId 
+  isOpen, onClose, onSave, initialData, inventory = [], onCreateAccessory, title, initialName, activeDatabaseId 
 }) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('data');
   const [formData, setFormData] = useState<Partial<InventoryItem>>({});
   
+  // Category management
+  const [categoryDefs, setCategoryDefs] = useState<CategoryDefinition[]>(getCategoryDefinitions());
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [newSubcatInput, setNewSubcatInput] = useState('');
+  const [isAddingSubcat, setIsAddingSubcat] = useState(false);
+
   // Numeric Inputs
   const [weightInput, setWeightInput] = useState('0');
   const [powerInput, setPowerInput] = useState('0');
   const [currentInput, setCurrentInput] = useState('0');
+  const [powerPhase, setPowerPhase] = useState<'monofase' | 'trifase'>('monofase');
+  const [powerSupplyRating, setPowerSupplyRating] = useState('16A');
+  const [powerConnector, setPowerConnector] = useState('');
+
   const [lengthInput, setLengthInput] = useState('0');
   const [widthInput, setWidthInput] = useState('0');
   const [heightInput, setHeightInput] = useState('0');
   const [volumeInput, setVolumeInput] = useState('0');
-  const [packedPerInput, setPackedPerInput] = useState('1');
+  
+  const [purchasePriceInput, setPurchasePriceInput] = useState('0');
   const [rentalPriceInput, setRentalPriceInput] = useState('0');
   const [subrentalCostInput, setSubrentalCostInput] = useState('0');
 
@@ -166,7 +192,6 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [localInventory, setLocalInventory] = useState<InventoryItem[]>([]);
   const [quickForm, setQuickForm] = useState<Partial<InventoryItem>>({});
   const [quickWeightInput, setQuickWeightInput] = useState('0');
-  const [quickPowerInput, setQuickPowerInput] = useState('0');
 
   // Reminders & Docs State
   const [reminderInput, setReminderInput] = useState('');
@@ -188,1660 +213,1871 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [inspectionDescInput, setInspectionDescInput] = useState('');
 
   // Code Preview State
-  const [isCodePreviewOpen, setIsCodePreviewOpen] = useState(false);
+  const [previewCodeModal, setPreviewCodeModal] = useState<{ code: string; name: string } | null>(null);
+
+  const refreshCategories = () => {
+    setCategoryDefs(getCategoryDefinitions());
+  };
 
   // Initialize or reset form state when modal opens
   useEffect(() => {
     if (isOpen) {
       setActiveTab('data');
+      refreshCategories();
       if (initialData) {
         let initialProductCode = initialData.productCode || '';
         if (initialProductCode && /^[A-Z]+-\d+$/i.test(initialProductCode.trim())) {
           const numPart = parseInt(initialProductCode.replace(/^[A-Z]+-0*/i, ''), 10);
           if (!isNaN(numPart) && numPart > 0) {
             initialProductCode = numPart.toString();
-          } else {
-            initialProductCode = generateProductCode(inventory, initialData.id);
           }
-        } else if (!initialProductCode.trim()) {
+        }
+        if (!initialProductCode) {
           initialProductCode = generateProductCode(inventory, initialData.id);
         }
+
         let initialQrCode = initialData.qrCode || '';
-        if (!initialQrCode.trim()) {
+        if (!initialQrCode || !/^\d{7}$/.test(initialQrCode.trim())) {
           initialQrCode = generateProductQrCode(inventory, initialData.id);
         }
-        
-        setFormData({ 
-          ...initialData, 
+
+        const currentSubcat = initialData.subcategory || initialData.folder || '';
+
+        setFormData({
+          ...initialData,
           productCode: initialProductCode,
           qrCode: initialQrCode,
-          stockType: initialData.stockType || (initialData.instances && initialData.instances.length > 0 ? 'serialized' : 'bulk'),
-          rentalSaleType: initialData.rentalSaleType || 'rental',
-          accessories: initialData.accessories || [], 
-          reminders: initialData.reminders || [], 
-          documents: initialData.documents || [],
-          instances: initialData.instances || [],
-          periodicInspections: initialData.periodicInspections || []
+          subcategory: currentSubcat,
+          folder: currentSubcat
         });
 
-        setTempInstances(initialData.instances || []);
         setWeightInput(initialData.weight?.toString() || '0');
         setPowerInput(initialData.powerConsumption?.toString() || '0');
         setCurrentInput(initialData.current?.toString() || '0');
+        setPowerPhase(initialData.powerPhase || 'monofase');
+        setPowerSupplyRating(initialData.powerSupplyRating || '16A');
+        setPowerConnector(initialData.powerConnector || '');
+
         setLengthInput(initialData.dimensions?.length?.toString() || '0');
         setWidthInput(initialData.dimensions?.width?.toString() || '0');
         setHeightInput(initialData.dimensions?.height?.toString() || '0');
         setVolumeInput(initialData.volume?.toString() || '0');
-        setPackedPerInput(initialData.packedPer?.toString() || '1');
+        
+        setPurchasePriceInput(initialData.purchasePrice?.toString() || '0');
         setRentalPriceInput(initialData.rentalPrice?.toString() || '0');
         setSubrentalCostInput(initialData.subrentalCost?.toString() || '0');
+
+        setTempInstances(initialData.instances || []);
       } else {
-        const defaultCode = generateProductCode(inventory);
-        const defaultQr = generateProductQrCode(inventory);
+        const autoProductCode = generateProductCode(inventory);
+        const autoQrCode = generateProductQrCode(inventory);
+        
         setFormData({
+          name: initialName || '',
+          productCode: autoProductCode,
+          qrCode: autoQrCode,
           category: Category.AUDIO,
-          inStock: 0,
-          weight: 0,
-          powerConsumption: 0,
-          current: 0,
-          stockType: 'bulk',
-          rentalSaleType: 'rental',
-          canHaveContent: false,
-          name: '',
-          productCode: defaultCode,
-          qrCode: defaultQr,
-          description: '',
+          subcategory: '',
           folder: '',
           alias: '',
           location: '',
-          dimensions: { length: 0, width: 0, height: 0 },
-          volume: 0,
-          packedPer: 1,
-          rentalPrice: 0,
-          subrentalCost: 0,
-          internalRemark: '',
-          externalRemark: '',
+          inStock: 1,
+          rentalSaleType: 'rental',
+          canHaveContent: false,
           accessories: [],
           reminders: [],
           documents: [],
           instances: [],
-          periodicInspections: []
+          periodicInspections: [],
+          internalRemark: '',
+          externalRemark: '',
+          description: ''
         });
-        setTempInstances([]);
+
         setWeightInput('0');
         setPowerInput('0');
         setCurrentInput('0');
+        setPowerPhase('monofase');
+        setPowerSupplyRating('16A');
+        setPowerConnector('');
+
         setLengthInput('0');
         setWidthInput('0');
         setHeightInput('0');
         setVolumeInput('0');
-        setPackedPerInput('1');
+        
+        setPurchasePriceInput('0');
         setRentalPriceInput('0');
         setSubrentalCostInput('0');
+
+        setTempInstances([]);
       }
-
-      setAccessorySearch('');
-      setIsQuickCreateOpen(false);
-      setLocalInventory([]);
-      setReminderInput('');
-      setDocNameInput('');
-      setDocUrlInput('');
-      setInstanceIdInput('');
-      setInstanceSnInput('');
-      setInstanceRefInput('');
-      setInstancePurchaseDateInput('');
-      setInstanceNotesInput('');
-      setInspectionNameInput('');
-      setInspectionPeriodInput('6');
-      setInspectionFrequencyInput('months');
-      setInspectionDescInput('');
+      setLocalInventory(inventory);
     }
-  }, [isOpen, initialData?.id]);
+  }, [isOpen, initialData, inventory, initialName]);
 
-  // Handle Dimensions & Volume automatic recalculation
-  const handleDimensionChange = (field: 'length' | 'width' | 'height', val: string) => {
-    if (field === 'length') setLengthInput(val);
-    if (field === 'width') setWidthInput(val);
-    if (field === 'height') setHeightInput(val);
+  // Recalculate transport volume (m³) when L x W x H change
+  useEffect(() => {
+    const l = parseFloat(lengthInput) || 0;
+    const w = parseFloat(widthInput) || 0;
+    const h = parseFloat(heightInput) || 0;
+    if (l > 0 && w > 0 && h > 0) {
+      const volM3 = (l * w * h) / 1000000;
+      setVolumeInput(volM3 < 0.001 ? volM3.toFixed(4) : volM3.toFixed(3));
+    }
+  }, [lengthInput, widthInput, heightInput]);
 
-    const l = field === 'length' ? parseFloat(val) || 0 : parseFloat(lengthInput) || 0;
-    const w = field === 'width' ? parseFloat(val) || 0 : parseFloat(widthInput) || 0;
-    const h = field === 'height' ? parseFloat(val) || 0 : parseFloat(heightInput) || 0;
-
-    const newDims = { length: l, width: w, height: h };
-    // Volume in m3 = (L cm * W cm * H cm) / 1,000,000
-    const calcVol = Number(((l * w * h) / 1000000).toFixed(4));
-    setVolumeInput(calcVol.toString());
-
-    setFormData(prev => ({
-      ...prev,
-      dimensions: newDims,
-      volume: calcVol
-    }));
+  // Handle Power (W) change -> auto calculate Current (A)
+  const handlePowerChange = (wVal: string, phase = powerPhase) => {
+    setPowerInput(wVal);
+    const watts = parseFloat(wVal);
+    if (!isNaN(watts) && watts > 0) {
+      const divisor = phase === 'monofase' ? 230 : 692.82;
+      const amps = Math.round((watts / divisor) * 100) / 100;
+      setCurrentInput(amps.toString());
+    } else if (wVal === '' || watts === 0) {
+      setCurrentInput('0');
+    }
   };
 
-  const getSuggestedInstanceId = (currentInstancesList?: ItemInstance[]) => {
-    const usedNumbers = new Set<number>();
+  // Handle Current (A) change -> auto calculate Power (W)
+  const handleCurrentChange = (aVal: string, phase = powerPhase) => {
+    setCurrentInput(aVal);
+    const amps = parseFloat(aVal);
+    if (!isNaN(amps) && amps > 0) {
+      const multiplier = phase === 'monofase' ? 230 : 692.82;
+      const watts = Math.round(amps * multiplier);
+      setPowerInput(watts.toString());
+    } else if (aVal === '' || amps === 0) {
+      setPowerInput('0');
+    }
+  };
 
-    if (inventory && Array.isArray(inventory)) {
-      inventory.forEach(item => {
-        if (initialData && item.id === initialData.id) return;
-        if (item.qrCode && /^\d{7}$/.test(item.qrCode.trim())) {
-          usedNumbers.add(parseInt(item.qrCode.trim(), 10));
-        }
-        (item.instances || []).forEach(inst => {
-          const code = (inst.id || '').trim();
-          if (/^\d{7}$/.test(code)) {
-            usedNumbers.add(parseInt(code, 10));
-          }
-        });
+  // Handle Phase switch (Monofase <-> Trifase)
+  const handlePhaseChange = (newPhase: 'monofase' | 'trifase') => {
+    setPowerPhase(newPhase);
+    const watts = parseFloat(powerInput);
+    if (!isNaN(watts) && watts > 0) {
+      const divisor = newPhase === 'monofase' ? 230 : 692.82;
+      const amps = Math.round((watts / divisor) * 100) / 100;
+      setCurrentInput(amps.toString());
+    }
+  };
+
+  // Subcategories available for selected category
+  const availableSubcategories = useMemo(() => {
+    const catName = formData.category || Category.AUDIO;
+    return getSubcategoriesForCategory(catName);
+  }, [formData.category, categoryDefs]);
+
+  // Handle adding custom subcategory inline
+  const handleAddSubcategoryInline = () => {
+    const trimmed = newSubcatInput.trim();
+    if (!trimmed) return;
+    const catName = (formData.category || Category.AUDIO) as string;
+    const updated = addSubcategoryToCategory(catName, trimmed);
+    setCategoryDefs(updated);
+    setFormData(prev => ({ ...prev, subcategory: trimmed, folder: trimmed }));
+    setNewSubcatInput('');
+    setIsAddingSubcat(false);
+  };
+
+  // Handle Form Submission
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name) return;
+
+    let finalProductCode = (formData.productCode || '').trim();
+    if (!finalProductCode) {
+      finalProductCode = generateProductCode(inventory, initialData?.id);
+    }
+
+    let finalQrCode = (formData.qrCode || '').trim();
+    if (!finalQrCode || !/^\d{7}$/.test(finalQrCode)) {
+      finalQrCode = generateProductQrCode(inventory, initialData?.id);
+    }
+
+    const finalSubcat = (formData.subcategory || formData.folder || '').trim();
+
+    onSave({
+      name: formData.name,
+      productCode: finalProductCode,
+      qrCode: finalQrCode,
+      category: formData.category || Category.OTHER,
+      subcategory: finalSubcat,
+      folder: finalSubcat,
+      alias: (formData.alias || '').trim(),
+      location: (formData.location || '').trim(),
+      stockType: tempInstances.length > 0 ? 'serialized' : 'bulk',
+      inStock: parseInt(formData.inStock?.toString() || '1', 10) || 0,
+      
+      // Fisiche
+      weight: parseFloat(weightInput) || 0,
+      dimensions: {
+        length: parseFloat(lengthInput) || 0,
+        width: parseFloat(widthInput) || 0,
+        height: parseFloat(heightInput) || 0
+      },
+      volume: parseFloat(volumeInput) || 0,
+      
+      // Elettriche
+      powerConsumption: parseFloat(powerInput) || 0,
+      current: parseFloat(currentInput) || 0,
+      powerPhase: powerPhase,
+      powerSupplyRating: powerSupplyRating,
+      powerConnector: powerConnector.trim(),
+
+      // Prezzi
+      purchasePrice: parseFloat(purchasePriceInput) || 0,
+      rentalPrice: parseFloat(rentalPriceInput) || 0,
+      subrentalCost: parseFloat(subrentalCostInput) || 0,
+
+      // Caratteristiche
+      rentalSaleType: formData.rentalSaleType || 'rental',
+      canHaveContent: !!formData.canHaveContent,
+
+      // Descrizioni & Note
+      description: (formData.description || '').trim(),
+      internalRemark: (formData.internalRemark || '').trim(),
+      externalRemark: (formData.externalRemark || '').trim(),
+
+      // Relazioni
+      accessories: formData.accessories || [],
+      reminders: formData.reminders || [],
+      documents: formData.documents || [],
+      instances: tempInstances,
+      periodicInspections: formData.periodicInspections || []
+    });
+    onClose();
+  };
+
+  // --- ACCESSORIES MANAGEMENT ---
+  const handleAddAccessory = (itemId: string) => {
+    const current = formData.accessories || [];
+    if (!current.some(a => a.itemId === itemId)) {
+      setFormData({
+        ...formData,
+        accessories: [...current, { itemId, quantity: 1, automatic: true }]
       });
     }
+  };
 
-    if (formData.qrCode && /^\d{7}$/.test(formData.qrCode.trim())) {
-      usedNumbers.add(parseInt(formData.qrCode.trim(), 10));
+  const handleUpdateAccessoryQty = (itemId: string, quantity: number) => {
+    if (quantity <= 0) {
+      handleRemoveAccessory(itemId);
+      return;
     }
-
-    const instancesToScan = currentInstancesList !== undefined ? currentInstancesList : (tempInstances || []);
-    instancesToScan.forEach(inst => {
-      const code = (inst.id || '').trim();
-      if (/^\d{7}$/.test(code)) {
-        usedNumbers.add(parseInt(code, 10));
-      }
+    const current = formData.accessories || [];
+    setFormData({
+      ...formData,
+      accessories: current.map(a => a.itemId === itemId ? { ...a, quantity } : a)
     });
-
-    let nextNum = 1000001;
-    while (usedNumbers.has(nextNum)) {
-      nextNum++;
-    }
-
-    return nextNum.toString();
   };
 
-  // Pre-fill instance ID when switching to serials tab if empty
-  useEffect(() => {
-    if (activeTab === 'serials' && !instanceIdInput) {
-      setInstanceIdInput(getSuggestedInstanceId(tempInstances));
-    }
-  }, [activeTab]);
-
-  const handleSubmit = () => {
-    if (formData.name && formData.category) {
-      const finalFormData = { ...formData };
-      if (!finalFormData.productCode || !finalFormData.productCode.trim()) {
-        finalFormData.productCode = generateProductCode(inventory, initialData?.id);
-      } else {
-        finalFormData.productCode = finalFormData.productCode.trim();
-      }
-
-      if (finalFormData.productCode.length > 20) {
-        alert("Il codice prodotto può avere una lunghezza massima di 20 caratteri.");
-        return;
-      }
-
-      // If serialized, stock equals active instances count
-      if (finalFormData.stockType === 'serialized') {
-        finalFormData.instances = tempInstances;
-        finalFormData.inStock = tempInstances.filter(i => i.active !== false).length;
-      } else {
-        finalFormData.instances = tempInstances;
-      }
-
-      finalFormData.accessories = Array.isArray(finalFormData.accessories) ? finalFormData.accessories : [];
-      finalFormData.reminders = Array.isArray(finalFormData.reminders) ? finalFormData.reminders : [];
-      finalFormData.documents = Array.isArray(finalFormData.documents) ? finalFormData.documents : [];
-      finalFormData.periodicInspections = Array.isArray(finalFormData.periodicInspections) ? finalFormData.periodicInspections : [];
-
-      onSave(finalFormData as Omit<InventoryItem, 'id'>);
-      onClose();
-    }
+  const handleToggleAccessoryAutomatic = (itemId: string) => {
+    const current = formData.accessories || [];
+    setFormData({
+      ...formData,
+      accessories: current.map(a => {
+        if (a.itemId === itemId) {
+          const isCurrentlyAuto = a.automatic !== false;
+          return { ...a, automatic: !isCurrentlyAuto };
+        }
+        return a;
+      })
+    });
   };
 
-  // --- SERIALS LOGIC ---
-  const addInstance = () => {
-    const code = instanceIdInput.trim();
-    if (!code) return;
+  const handleRemoveAccessory = (itemId: string) => {
+    const current = formData.accessories || [];
+    setFormData({
+      ...formData,
+      accessories: current.filter(a => a.itemId !== itemId)
+    });
+  };
 
-    if (code.length > 20) {
-      alert("Il codice univoco / QR può avere una lunghezza massima di 20 caratteri.");
-      return;
-    }
+  const handleCreateAndAddAccessory = () => {
+    if (!quickForm.name) return;
+    const newId = generateId();
+    const autoCode = generateProductCode([...inventory, ...localInventory]);
+    const autoQr = generateProductQrCode([...inventory, ...localInventory]);
 
-    const isDuplicateLocal = tempInstances.some(inst => inst.id.toLowerCase() === code.toLowerCase());
-    if (isDuplicateLocal) {
-      alert(`Il codice univoco / QR "${code}" è già stato inserito in questo articolo.`);
-      return;
-    }
-
-    let duplicateItemName = '';
-    if (inventory && Array.isArray(inventory)) {
-      for (const item of inventory) {
-        if (initialData && item.id === initialData.id) continue;
-        if (item.qrCode && item.qrCode.trim().toLowerCase() === code.toLowerCase()) {
-          duplicateItemName = item.name;
-          break;
-        }
-        const hasDuplicate = (item.instances || []).some(inst => (inst.id || '').trim().toLowerCase() === code.toLowerCase());
-        if (hasDuplicate) {
-          duplicateItemName = item.name;
-          break;
-        }
-      }
-    }
-
-    if (duplicateItemName) {
-      alert(`Errore: Il codice univoco / QR "${code}" è già associato al prodotto "${duplicateItemName}".`);
-      return;
-    }
-
-    const snCode = instanceSnInput.trim();
-    const newInstance: ItemInstance = { 
-      id: code, 
-      serialNumber: snCode || undefined,
-      internalReference: instanceRefInput.trim() || undefined,
-      purchaseDate: instancePurchaseDateInput || undefined,
-      notes: instanceNotesInput.trim() || undefined,
-      active: true
+    const newItem: InventoryItem = {
+      id: newId,
+      name: quickForm.name,
+      productCode: autoCode,
+      qrCode: autoQr,
+      category: quickForm.category || Category.CABLES,
+      weight: parseFloat(quickWeightInput) || 0,
+      inStock: quickForm.inStock || 10,
+      description: 'Accessorio creato rapidamente'
     };
 
-    const updated = [...tempInstances, newInstance];
-    setTempInstances(updated);
-    setFormData(prev => ({ 
-      ...prev, 
-      instances: updated,
-      inStock: prev.stockType === 'serialized' ? updated.filter(i => i.active !== false).length : prev.inStock
-    }));
+    setLocalInventory(prev => [...prev, newItem]);
+    if (onCreateAccessory) {
+      onCreateAccessory(newItem);
+    }
 
-    const nextCode = getSuggestedInstanceId(updated);
-    setInstanceIdInput(nextCode);
+    handleAddAccessory(newId);
+    setIsQuickCreateOpen(false);
+    setQuickForm({});
+    setQuickWeightInput('0');
+  };
+
+  // --- INSTANCES / SERIALS MANAGEMENT ---
+  const handleAddInstance = () => {
+    let finalCode = instanceIdInput.trim();
+    if (!finalCode) {
+      finalCode = generateProductQrCode([...inventory, ...localInventory]);
+    }
+
+    const newInst: ItemInstance = {
+      id: finalCode,
+      serialNumber: instanceSnInput.trim(),
+      internalReference: instanceRefInput.trim(),
+      purchaseDate: instancePurchaseDateInput || '',
+      active: true,
+      notes: instanceNotesInput.trim()
+    };
+
+    setTempInstances(prev => [...prev, newInst]);
+    setInstanceIdInput('');
     setInstanceSnInput('');
     setInstanceRefInput('');
+    setInstancePurchaseDateInput('');
     setInstanceNotesInput('');
   };
 
-  const removeInstance = (index: number) => {
-    const updated = [...tempInstances];
-    updated.splice(index, 1);
-    setTempInstances(updated);
-    setFormData(prev => ({ 
-      ...prev, 
-      instances: updated,
-      inStock: prev.stockType === 'serialized' ? updated.filter(i => i.active !== false).length : prev.inStock
-    }));
-    const nextCode = getSuggestedInstanceId(updated);
-    setInstanceIdInput(nextCode);
+  const handleToggleInstanceActive = (idx: number) => {
+    setTempInstances(prev => prev.map((inst, i) => i === idx ? { ...inst, active: !inst.active } : inst));
   };
 
-  const toggleInstanceActive = (index: number) => {
-    const updated = tempInstances.map((inst, idx) => 
-      idx === index ? { ...inst, active: inst.active === false ? true : false } : inst
-    );
-    setTempInstances(updated);
-    setFormData(prev => ({ 
-      ...prev, 
-      instances: updated,
-      inStock: prev.stockType === 'serialized' ? updated.filter(i => i.active !== false).length : prev.inStock
-    }));
+  const handleRemoveInstance = (idx: number) => {
+    setTempInstances(prev => prev.filter((_, i) => i !== idx));
   };
 
-  // --- ACCESSORIES LOGIC ---
-  const addAccessory = (item: InventoryItem) => {
-    const currentAccessories = formData.accessories || [];
-    const existing = currentAccessories.find(a => a.itemId === item.id);
-    
-    let updatedAccessories: ItemAccessory[];
-    if (existing) {
-      updatedAccessories = currentAccessories.map(a => 
-        a.itemId === item.id ? { ...a, quantity: a.quantity + 1 } : a
-      );
-    } else {
-      updatedAccessories = [...currentAccessories, { itemId: item.id, quantity: 1, automatic: true }];
-    }
-    setFormData(prev => ({ ...prev, accessories: updatedAccessories }));
-    setAccessorySearch('');
-  };
-
-  const removeAccessory = (itemId: string) => {
-    setFormData(prev => ({ 
-      ...prev, 
-      accessories: (prev.accessories || []).filter(a => a.itemId !== itemId) 
-    }));
-  };
-
-  const updateAccessoryQuantity = (itemId: string, qty: number) => {
-    if (qty < 1) return;
-    setFormData(prev => ({ 
-      ...prev, 
-      accessories: (prev.accessories || []).map(a => a.itemId === itemId ? { ...a, quantity: qty } : a) 
-    }));
-  };
-
-  const toggleAccessoryAutomatic = (itemId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      accessories: (prev.accessories || []).map(a => 
-        a.itemId === itemId ? { ...a, automatic: a.automatic === false ? true : false } : a
-      )
-    }));
-  };
-
-  // --- PERIODIC INSPECTIONS LOGIC ---
-  const addInspection = () => {
+  // --- PERIODIC INSPECTIONS MANAGEMENT ---
+  const handleAddInspection = () => {
     if (!inspectionNameInput.trim()) return;
-    const newInsp: PeriodicInspection = {
+    const newInspection: PeriodicInspection = {
       id: generateId(),
       name: inspectionNameInput.trim(),
-      period: parseInt(inspectionPeriodInput, 10) || 1,
+      period: parseInt(inspectionPeriodInput, 10) || 6,
       frequency: inspectionFrequencyInput,
-      description: inspectionDescInput.trim() || undefined,
+      description: inspectionDescInput.trim(),
       active: true
     };
     setFormData(prev => ({
       ...prev,
-      periodicInspections: [...(prev.periodicInspections || []), newInsp]
+      periodicInspections: [...(prev.periodicInspections || []), newInspection]
     }));
     setInspectionNameInput('');
-    setInspectionPeriodInput('6');
     setInspectionDescInput('');
   };
 
-  const removeInspection = (id: string) => {
+  const handleRemoveInspection = (id: string) => {
     setFormData(prev => ({
       ...prev,
-      periodicInspections: (prev.periodicInspections || []).filter(i => i.id !== id)
+      periodicInspections: (prev.periodicInspections || []).filter(ins => ins.id !== id)
     }));
   };
 
-  const toggleInspectionActive = (id: string) => {
+  const handleToggleInspectionActive = (id: string) => {
     setFormData(prev => ({
       ...prev,
-      periodicInspections: (prev.periodicInspections || []).map(i => 
-        i.id === id ? { ...i, active: !i.active } : i
-      )
+      periodicInspections: (prev.periodicInspections || []).map(ins => ins.id === id ? { ...ins, active: !ins.active } : ins)
     }));
   };
 
-  // --- REMINDERS & DOCS LOGIC ---
-  const addReminder = () => {
+  // --- REMINDERS & DOCUMENTS ---
+  const handleAddReminder = () => {
     if (!reminderInput.trim()) return;
-    setFormData({ ...formData, reminders: [...(formData.reminders || []), reminderInput.trim()] });
+    setFormData(prev => ({
+      ...prev,
+      reminders: [...(prev.reminders || []), reminderInput.trim()]
+    }));
     setReminderInput('');
   };
 
-  const removeReminder = (index: number) => {
-    const newReminders = [...(formData.reminders || [])];
-    newReminders.splice(index, 1);
-    setFormData({ ...formData, reminders: newReminders });
+  const handleRemoveReminder = (idx: number) => {
+    setFormData(prev => ({
+      ...prev,
+      reminders: (prev.reminders || []).filter((_, i) => i !== idx)
+    }));
   };
 
-  const addDocument = () => {
+  const handleAddDocument = () => {
     if (!docUrlInput.trim()) return;
-    const url = docUrlInput.trim();
-    const name = docNameInput.trim() ? docNameInput.trim() : url;
     const newDoc: ItemDocument = {
       id: generateId(),
-      name,
-      url
+      name: docNameInput.trim() || docUrlInput.trim(),
+      url: docUrlInput.trim()
     };
-    setFormData({ ...formData, documents: [...(formData.documents || []), newDoc] });
+    setFormData(prev => ({
+      ...prev,
+      documents: [...(prev.documents || []), newDoc]
+    }));
     setDocNameInput('');
     setDocUrlInput('');
   };
 
-  const removeDocument = (id: string) => {
-    const newDocs = (formData.documents || []).filter(d => d.id !== id);
-    setFormData({ ...formData, documents: newDocs });
+  const handleRemoveDocument = (id: string) => {
+    setFormData(prev => ({
+      ...prev,
+      documents: (prev.documents || []).filter(d => d.id !== id)
+    }));
   };
 
-  // Quick Create Accessory Modal
-  const openQuickCreate = () => {
-    setQuickForm({
-      name: accessorySearch,
-      category: Category.CABLES,
-      inStock: 0,
-      weight: 0,
-      powerConsumption: 0,
-      description: ''
-    });
-    setQuickWeightInput('0');
-    setQuickPowerInput('0');
-    setIsQuickCreateOpen(true);
-  };
-
-  const handleCreateAndAddAccessory = () => {
-    if (!quickForm.name?.trim() || !onCreateAccessory) return;
-    
-    const newItemData: InventoryItem = {
-      id: generateId(),
-      name: quickForm.name.trim(),
-      category: quickForm.category || Category.CABLES,
-      inStock: quickForm.inStock || 0,
-      weight: quickForm.weight || 0,
-      powerConsumption: quickForm.powerConsumption || 0,
-      description: quickForm.description || '',
-      accessories: []
-    };
-
-    setLocalInventory(prev => [...prev, newItemData]);
-    onCreateAccessory(newItemData);
-    addAccessory(newItemData);
-    
-    setIsQuickCreateOpen(false);
-    setAccessorySearch(''); 
-  };
-
-  const searchResults = useMemo(() => {
-    const tokens = accessorySearch.trim().toLowerCase().split(/\s+/).filter(t => t.length > 0);
-    if (tokens.length === 0) return [];
-    return inventory.filter(i => {
-      if (i.id === initialData?.id) return false;
-      const combined = `${i.name} ${i.category} ${i.description || ''} ${i.folder || ''} ${i.alias || ''}`.toLowerCase();
-      return tokens.every(token => combined.includes(token));
-    });
-  }, [inventory, accessorySearch, initialData]);
+  if (!isOpen) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} size="2xl" hideCloseButton={true}>
-      <div className="flex flex-col h-full max-h-[85vh]">
-        
-        {/* HEADER BAR & TABS */}
-        <div className="border-b border-slate-800 pb-3 -mt-2">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 bg-slate-800 text-blue-400 font-mono text-xs font-bold rounded-lg border border-slate-700">
-                {formData.productCode || '---'}
+    <div className="fixed inset-0 z-50 bg-slate-950 text-slate-100 flex flex-col overflow-hidden animate-fadeIn select-none">
+      
+      {/* 1. TOP APP BAR / PAGE HEADER */}
+      <header className="h-16 border-b border-slate-800 bg-slate-900/95 backdrop-blur px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-lg z-20">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs sm:text-sm font-bold transition-all border border-slate-700 active:scale-95 shrink-0"
+            title="Torna all'inventario"
+          >
+            <ArrowLeft size={18} />
+            <span className="hidden sm:inline">Torna all'Inventario</span>
+          </button>
+          
+          <div className="h-6 w-[1px] bg-slate-800 hidden sm:block"></div>
+
+          <div className="flex items-center gap-2.5 truncate">
+            {formData.productCode && (
+              <span className="px-2.5 py-1 bg-blue-950 text-blue-400 border border-blue-800/80 rounded-lg text-xs font-mono font-bold shrink-0">
+                Cod. {formData.productCode}
               </span>
-              <h2 className="text-base font-bold text-white truncate max-w-md">
-                {formData.name || 'Nuovo Articolo'}
-              </h2>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button 
-                type="button" 
-                onClick={onClose} 
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors font-medium"
-              >
-                Annulla
-              </button>
-              <button 
-                type="button" 
-                onClick={handleSubmit} 
-                disabled={!formData.name} 
-                className="px-5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold transition-all shadow-md shadow-blue-900/30 active:scale-95"
-              >
-                Salva Materiale
-              </button>
-            </div>
-          </div>
-
-          {/* TABS NAVIGATION */}
-          <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar pt-1">
-            <button
-              type="button"
-              onClick={() => setActiveTab('data')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'data'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Layers size={14} /> Dati Generali
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('serials')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'serials'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Barcode size={14} /> Seriali / Matricole 
-              {tempInstances.length > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'serials' ? 'bg-emerald-900 text-emerald-200' : 'bg-slate-800 text-emerald-400'}`}>
-                  {tempInstances.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('accessories')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'accessories'
-                  ? 'bg-cyan-600 text-white shadow-md shadow-cyan-900/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Link size={14} /> Accessori
-              {(formData.accessories || []).length > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'accessories' ? 'bg-cyan-900 text-cyan-200' : 'bg-slate-800 text-cyan-400'}`}>
-                  {(formData.accessories || []).length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('inspections')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'inspections'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Wrench size={14} /> Manutenzioni
-              {(formData.periodicInspections || []).length > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'inspections' ? 'bg-amber-900 text-amber-200' : 'bg-slate-800 text-amber-400'}`}>
-                  {(formData.periodicInspections || []).length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('remarks_docs')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
-                activeTab === 'remarks_docs'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <FileText size={14} /> Note & File
-              {((formData.documents || []).length > 0 || (formData.reminders || []).length > 0) && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'remarks_docs' ? 'bg-purple-900 text-purple-200' : 'bg-slate-800 text-purple-400'}`}>
-                  {(formData.documents || []).length + (formData.reminders || []).length}
-                </span>
-              )}
-            </button>
+            )}
+            <h1 className="text-sm sm:text-base md:text-lg font-black text-white truncate tracking-tight">
+              {formData.name ? formData.name : (title || 'Nuovo Materiale')}
+            </h1>
           </div>
         </div>
 
-        {/* TAB CONTENTS */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar py-4 px-1 space-y-6">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition-colors"
+          >
+            Annulla
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!formData.name}
+            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-900/30 transition-all active:scale-95"
+          >
+            <Check size={18} />
+            <span>Salva Materiale</span>
+          </button>
+        </div>
+      </header>
 
-          {/* ========================================================================= */}
-          {/* TAB 1: DATI GENERALI */}
-          {/* ========================================================================= */}
+      {/* 2. TAB NAVIGATION BAR */}
+      <div className="border-b border-slate-800 bg-slate-900/60 px-4 sm:px-6 shrink-0 overflow-x-auto custom-scrollbar z-10">
+        <div className="flex items-center gap-1 sm:gap-2 py-2 min-w-max">
+          
+          <button
+            type="button"
+            onClick={() => setActiveTab('data')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'data'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <Layers size={16} />
+            Dati Generali
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('serials')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'serials'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <QrCode size={16} />
+            Seriali / Matricole
+            {tempInstances.length > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                activeTab === 'serials' ? 'bg-blue-800 text-white' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {tempInstances.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('accessories')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'accessories'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <LinkIcon size={16} />
+            Accessori
+            {(formData.accessories?.length || 0) > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                activeTab === 'accessories' ? 'bg-blue-800 text-white' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {formData.accessories?.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('inspections')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'inspections'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <Wrench size={16} />
+            Manutenzioni & Ispezioni
+            {(formData.periodicInspections?.length || 0) > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                activeTab === 'inspections' ? 'bg-blue-800 text-white' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {formData.periodicInspections?.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('notes')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'notes'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <StickyNote size={16} />
+            Note & Promemoria
+            {((formData.reminders?.length || 0) > 0 || !!formData.internalRemark || !!formData.externalRemark) && (
+              <span className={`w-2 h-2 rounded-full ${activeTab === 'notes' ? 'bg-white' : 'bg-amber-400'}`}></span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('files')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+              activeTab === 'files'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/70'
+            }`}
+          >
+            <Paperclip size={16} />
+            File & Documenti
+            {(formData.documents?.length || 0) > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                activeTab === 'files' ? 'bg-blue-800 text-white' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {formData.documents?.length}
+              </span>
+            )}
+          </button>
+
+        </div>
+      </div>
+
+      {/* 3. SCROLLABLE PAGE BODY */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 custom-scrollbar">
+        <div className="max-w-6xl mx-auto space-y-6">
+
+          {/* ========================================================= */}
+          {/* TAB 1: DATI GENERALI (REORGANIZED & COMPACTED) */}
+          {/* ========================================================= */}
           {activeTab === 'data' && (
-            <div className="space-y-6">
+            <div className="space-y-6 animate-fadeIn">
               
-              {/* SECTION 1: INFORMAZIONI PRINCIPALI */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-4">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <Tag size={14} className="text-blue-400" /> Informazioni Principali
-                </h3>
+              {/* TOP ROW: IDENTIFICAZIONE (NOME/ALIAS) + CODICI COMPATTI A DESTRA */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* LEFT: NOME MATERIALE & ALIAS (8 COLS) */}
+                <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+                    <Tag size={18} className="text-blue-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Identificazione Articolo</h3>
+                  </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                  <div className="space-y-1 md:col-span-6">
-                    <label className="text-xs text-slate-400 font-medium">Nome Materiale (Database) *</label>
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1 block">
+                      Nome Materiale (Database) <span className="text-rose-500">*</span>
+                    </label>
                     <input 
                       type="text" 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm placeholder-slate-600" 
+                      required
+                      placeholder="Es. Media Server MSI Katana, L-Acoustics SB18, Par Led 18x12W..." 
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-base sm:text-lg font-bold text-white placeholder-slate-600 focus:border-blue-500 outline-none transition-colors shadow-inner" 
                       value={formData.name || ''} 
-                      onChange={e => setFormData({ ...formData, name: e.target.value })} 
-                      placeholder="Es. Lettore DJ - Pioneer - CDJ-2000" 
-                      autoFocus 
+                      onChange={e => setFormData({...formData, name: e.target.value})} 
+                      autoFocus
                     />
                   </div>
 
-                  <div className="space-y-1 md:col-span-3">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-slate-400 font-medium">Cod. Prodotto</label>
-                      <span className="text-[10px] text-slate-500 font-mono">No Stampa</span>
-                    </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                      Alias / Ricerca Rapida
+                    </label>
                     <input 
                       type="text" 
-                      maxLength={20}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none font-mono text-sm placeholder-slate-600" 
-                      value={formData.productCode || ''} 
-                      onChange={e => setFormData({ ...formData, productCode: e.target.value })} 
-                      placeholder="Es. 067" 
+                      placeholder="Es. SB18, CDJ2000, MSI, Fumo..." 
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-200 placeholder-slate-600 focus:border-blue-500 outline-none transition-colors" 
+                      value={formData.alias || ''} 
+                      onChange={e => setFormData({...formData, alias: e.target.value})} 
                     />
                   </div>
+                </div>
 
-                  <div className="space-y-1 md:col-span-3">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-slate-400 font-medium">QR Code Prodotto</label>
-                      {formData.qrCode && (
-                        <div className="flex items-center gap-0.5">
-                          <button 
-                            type="button" 
-                            onClick={() => setIsCodePreviewOpen(true)} 
-                            className="p-1 text-slate-400 hover:text-blue-400 rounded transition-colors"
-                            title="Visualizza Codice"
+                {/* RIGHT: CODICI COMPATTI (4 COLS) */}
+                <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3.5 flex flex-col justify-between">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+                    <Hash size={18} className="text-cyan-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Codici & Riconoscimento</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* Codice Prodotto */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cod. Prodotto</label>
+                        <span className="text-[10px] text-slate-500">Non stampato</span>
+                      </div>
+                      <input 
+                        type="text" 
+                        placeholder="Es. 530" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-sm font-mono font-bold text-cyan-300 focus:border-cyan-500 outline-none text-right" 
+                        value={formData.productCode || ''} 
+                        onChange={e => setFormData({...formData, productCode: e.target.value})} 
+                      />
+                    </div>
+
+                    {/* QR Code Prodotto */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">QR Code / Barcode</label>
+                        <span className="text-[10px] text-emerald-400 font-bold">7 cifre univoco</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input 
+                          type="text" 
+                          placeholder="1000530" 
+                          maxLength={7}
+                          className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-sm font-mono font-bold text-emerald-400 focus:border-emerald-500 outline-none text-right" 
+                          value={formData.qrCode || ''} 
+                          onChange={e => setFormData({...formData, qrCode: e.target.value})} 
+                        />
+                        <button
+                          type="button"
+                          onClick={() => formData.qrCode && setPreviewCodeModal({ code: formData.qrCode, name: formData.name || 'Prodotto' })}
+                          className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition-colors shrink-0"
+                          title="Anteprima Codici"
+                        >
+                          <Eye size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => formData.qrCode && printQRCode(formData.qrCode, formData.name || 'Prodotto')}
+                          className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition-colors shrink-0"
+                          title="Stampa Etichetta QR"
+                        >
+                          <Printer size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* MIDDLE ROW: CATEGORIA & MAGAZZINO (LEFT) VS PROPRIETÀ FISICHE (RIGHT) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* LEFT: CATEGORIA & MAGAZZINO (7 COLS) */}
+                <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+                    <div className="flex items-center gap-2">
+                      <MapPin size={18} className="text-emerald-400" />
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Categoria & Magazzino</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsCategoryModalOpen(true)}
+                      className="text-xs text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1 transition-colors"
+                    >
+                      <Settings size={13} />
+                      Gestisci Categorie
+                    </button>
+                  </div>
+
+                  {/* Categoria Macro & Sottocategoria */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Macro Categoria
+                      </label>
+                      <select 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:border-emerald-500 outline-none" 
+                        value={formData.category || Category.AUDIO} 
+                        onChange={e => {
+                          const newCat = e.target.value;
+                          setFormData({
+                            ...formData, 
+                            category: newCat as any,
+                            subcategory: '',
+                            folder: ''
+                          });
+                        }}
+                      >
+                        {categoryDefs.map(c => (
+                          <option key={c.id} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sottocategoria</label>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingSubcat(!isAddingSubcat)}
+                          className="text-[11px] text-emerald-400 hover:underline"
+                        >
+                          {isAddingSubcat ? 'Annulla' : '+ Nuova'}
+                        </button>
+                      </div>
+
+                      {isAddingSubcat ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            placeholder="Es. Diffusori Passivi..."
+                            value={newSubcatInput}
+                            onChange={e => setNewSubcatInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleAddSubcategoryInline()}
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-500"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddSubcategoryInline}
+                            className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold"
                           >
-                            <Eye size={14} />
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => printBarcode(formData.qrCode!, formData.name || '')} 
-                            className="p-1 text-slate-400 hover:text-emerald-400 rounded transition-colors"
-                            title="Stampa Barcode"
-                          >
-                            <Barcode size={14} />
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => printQRCode(formData.qrCode!, formData.name || '')} 
-                            className="p-1 text-slate-400 hover:text-purple-400 rounded transition-colors"
-                            title="Stampa QR Code"
-                          >
-                            <QrCode size={14} />
+                            <Check size={14} />
                           </button>
                         </div>
+                      ) : (
+                        <select 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:border-emerald-500 outline-none" 
+                          value={formData.subcategory || formData.folder || ''} 
+                          onChange={e => setFormData({
+                            ...formData, 
+                            subcategory: e.target.value,
+                            folder: e.target.value
+                          })}
+                        >
+                          <option value="">-- Nessuna sottocategoria --</option>
+                          {availableSubcategories.map(sub => (
+                            <option key={sub} value={sub}>{sub}</option>
+                          ))}
+                        </select>
                       )}
                     </div>
-                    <input 
-                      type="text" 
-                      maxLength={20}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-purple-300 font-bold focus:border-purple-500 outline-none font-mono text-sm placeholder-slate-600" 
-                      value={formData.qrCode || ''} 
-                      onChange={e => setFormData({ ...formData, qrCode: e.target.value })} 
-                      placeholder="Es. 1006821" 
-                    />
+                  </div>
+
+                  {/* Giacenza & Posizione */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Giacenza Totale (Quantità)
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm font-bold text-white focus:border-emerald-500 outline-none text-right font-mono" 
+                        value={formData.inStock ?? 1} 
+                        onChange={e => setFormData({...formData, inStock: parseInt(e.target.value, 10) || 0})} 
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Posizione / Ubicazione Magazzino
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="Es. T2, R2, A-03..." 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:border-emerald-500 outline-none" 
+                        value={formData.location || ''} 
+                        onChange={e => setFormData({...formData, location: e.target.value})} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Tipo Materiale & Flag Contenitore */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-center pt-2">
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Tipo Materiale
+                      </label>
+                      <select 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:border-emerald-500 outline-none" 
+                        value={formData.rentalSaleType || 'rental'} 
+                        onChange={e => setFormData({...formData, rentalSaleType: e.target.value as 'rental' | 'sale'})}
+                      >
+                        <option value="rental">Noleggio (Rientra a magazzino)</option>
+                        <option value="sale">Vendita / Consumabile (Non rientra)</option>
+                      </select>
+                    </div>
+
+                    <div className="sm:pt-5">
+                      <label className="flex items-center gap-2.5 cursor-pointer bg-slate-950 p-2.5 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
+                        <input 
+                          type="checkbox" 
+                          checked={!!formData.canHaveContent} 
+                          onChange={e => setFormData({...formData, canHaveContent: e.target.checked})}
+                          className="w-4 h-4 rounded text-blue-600 bg-slate-900 border-slate-700 focus:ring-blue-500"
+                        />
+                        <span className="text-xs font-semibold text-slate-300">
+                          È un Contenitore / Flight Case / Rack
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Categoria</label>
-                    <select 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm" 
-                      value={formData.category} 
-                      onChange={e => setFormData({ ...formData, category: e.target.value as Category })}
-                    >
-                      {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                {/* RIGHT: PROPRIETÀ FISICHE & DIMENSIONI (RIQUADRO A SÉ STANTE - 5 COLS) */}
+                <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+                    <Scale size={18} className="text-amber-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Proprietà Fisiche & Dimensioni</h3>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Cartella / Sottocategoria (Folder)</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm placeholder-slate-600" 
-                      value={formData.folder || ''} 
-                      onChange={e => setFormData({ ...formData, folder: e.target.value })} 
-                      placeholder="Es. Diffusori Passivi, Cavi RCA..." 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Alias / Ricerca Rapida</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm placeholder-slate-600 font-mono" 
-                      value={formData.alias || ''} 
-                      onChange={e => setFormData({ ...formData, alias: e.target.value })} 
-                      placeholder="Es. SB18, CDJ2000" 
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* SECTION 2: GESTIONE MAGAZZINO & TIPOLOGIA */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-4">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <MapPin size={14} className="text-emerald-400" /> Magazzino & Tipologia Scorte
-                </h3>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Metodo Calcolo Giacenza</label>
-                    <select 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm"
-                      value={formData.stockType || 'bulk'}
-                      onChange={e => setFormData({ ...formData, stockType: e.target.value as 'bulk' | 'serialized' })}
-                    >
-                      <option value="bulk">Bulk (Quantità Manuale)</option>
-                      <option value="serialized">Seriali / Matricole</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Giacenza Totale</label>
-                    <input 
-                      type="number" 
-                      min="0"
-                      disabled={formData.stockType === 'serialized'}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm text-right disabled:opacity-60" 
-                      value={formData.inStock ?? 0} 
-                      onChange={e => setFormData({ ...formData, inStock: parseInt(e.target.value, 10) || 0 })} 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Posizione a Magazzino</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm placeholder-slate-600 font-mono" 
-                      value={formData.location || ''} 
-                      onChange={e => setFormData({ ...formData, location: e.target.value })} 
-                      placeholder="Es. T2, R2, A-03" 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Tipo Materiale</label>
-                    <select 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm"
-                      value={formData.rentalSaleType || 'rental'}
-                      onChange={e => setFormData({ ...formData, rentalSaleType: e.target.value as 'rental' | 'sale' })}
-                    >
-                      <option value="rental">Noleggio (Rientra a magazzino)</option>
-                      <option value="sale">Vendita / Consumo (Non rientra)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 pt-2">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300 select-none">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 rounded text-blue-600 bg-slate-950 border-slate-700 focus:ring-blue-500 focus:ring-offset-0"
-                      checked={formData.canHaveContent || false}
-                      onChange={e => setFormData({ ...formData, canHaveContent: e.target.checked })}
-                    />
-                    <span>È un <strong>Contenitore / Baule / Rack</strong> (può ospitare altro materiale all'interno)</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* SECTION 3: PROPRIETÀ FISICHE & DIMENSIONI */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-4">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <PackageOpen size={14} className="text-cyan-400" /> Proprietà Fisiche & Dimensioni
-                </h3>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Lunghezza (cm)</label>
-                    <input 
-                      type="number" 
-                      step="0.1" 
-                      min="0"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                      value={lengthInput} 
-                      onChange={e => handleDimensionChange('length', e.target.value)} 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Larghezza (cm)</label>
-                    <input 
-                      type="number" 
-                      step="0.1" 
-                      min="0"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                      value={widthInput} 
-                      onChange={e => handleDimensionChange('width', e.target.value)} 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Altezza (cm)</label>
-                    <input 
-                      type="number" 
-                      step="0.1" 
-                      min="0"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                      value={heightInput} 
-                      onChange={e => handleDimensionChange('height', e.target.value)} 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Volume (m³)</label>
-                    <input 
-                      type="number" 
-                      step="0.001" 
-                      min="0"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                      value={volumeInput} 
-                      onChange={e => {
-                        setVolumeInput(e.target.value);
-                        setFormData(prev => ({ ...prev, volume: parseFloat(e.target.value) || 0 }));
-                      }} 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Peso (kg)</label>
+                  {/* PESO IN PRIMO PIANO */}
+                  <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Scale size={14} />
+                        Peso Singolo
+                      </label>
+                      <span className="text-xs font-mono font-bold text-slate-400">kg</span>
+                    </div>
                     <input 
                       type="number" 
                       step="0.01" 
-                      min="0"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
+                      min="0" 
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-base font-bold text-white focus:border-amber-500 outline-none text-right font-mono" 
                       value={weightInput} 
-                      onChange={e => {
-                        setWeightInput(e.target.value);
-                        setFormData(prev => ({ ...prev, weight: parseFloat(e.target.value) || 0 }));
-                      }} 
+                      onChange={e => setWeightInput(e.target.value)} 
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Pezzi per Imballo</label>
-                    <input 
-                      type="number" 
-                      min="1"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                      value={packedPerInput} 
-                      onChange={e => {
-                        setPackedPerInput(e.target.value);
-                        setFormData(prev => ({ ...prev, packedPer: parseInt(e.target.value, 10) || 1 }));
-                      }} 
-                    />
+                  {/* DIMENSIONI (L x W x H in cm) */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">
+                      Dimensioni Trasporto (cm)
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block mb-0.5">Lunghezza</span>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          placeholder="L (cm)" 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white focus:border-amber-500 outline-none text-right" 
+                          value={lengthInput} 
+                          onChange={e => setLengthInput(e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block mb-0.5">Larghezza</span>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          placeholder="W (cm)" 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white focus:border-amber-500 outline-none text-right" 
+                          value={widthInput} 
+                          onChange={e => setWidthInput(e.target.value)} 
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block mb-0.5">Altezza</span>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          placeholder="H (cm)" 
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs font-mono text-white focus:border-amber-500 outline-none text-right" 
+                          value={heightInput} 
+                          onChange={e => setHeightInput(e.target.value)} 
+                        />
+                      </div>
+                    </div>
                   </div>
+
+                  {/* VOLUME IN M³ CALCOLATO AUTOMATICAMENTE */}
+                  <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Box size={16} className="text-amber-400" />
+                      <div>
+                        <div className="text-xs font-bold text-white">Volume di Trasporto</div>
+                        <div className="text-[10px] text-slate-500">Calcolato automaticamente (L×W×H)</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-mono font-black text-amber-400 bg-amber-950/40 px-3 py-1.5 rounded-lg border border-amber-800/60">
+                      {volumeInput || '0'} m³
+                    </div>
+                  </div>
+
                 </div>
+
               </div>
 
-              {/* SECTION 4: ELETTRICO ED ECONOMICO */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* ELETTRICO */}
-                <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                    <Zap size={14} className="text-amber-400" /> Proprietà Elettriche
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400 font-medium">Consumo / Potenza (W)</label>
+              {/* BOTTOM ROW: PROPRIETÀ ELETTRICHE (LEFT) VS PREZZI & COSTI (RIGHT) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* LEFT: PROPRIETÀ ELETTRICHE (7 COLS) */}
+                <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+                    <Zap size={18} className="text-yellow-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Proprietà Elettriche & Calcolo Automatico</h3>
+                  </div>
+
+                  {/* Tipo Presa & Fornitura */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Tipo Linea
+                      </label>
+                      <select 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white focus:border-yellow-500 outline-none" 
+                        value={powerPhase} 
+                        onChange={e => handlePhaseChange(e.target.value as 'monofase' | 'trifase')}
+                      >
+                        <option value="monofase">Monofase (230V)</option>
+                        <option value="trifase">Pentapolare (400V)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Fornitura Richiesta
+                      </label>
+                      <select 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs font-bold text-white focus:border-yellow-500 outline-none" 
+                        value={powerSupplyRating} 
+                        onChange={e => setPowerSupplyRating(e.target.value)}
+                      >
+                        <option value="16A">16 Ampere</option>
+                        <option value="32A">32 Ampere</option>
+                        <option value="63A">63 Ampere</option>
+                        <option value="125A">125 Ampere</option>
+                        <option value="Standard">Standard / Libera</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Tipo Connettore
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder={powerPhase === 'monofase' ? 'Es. Schuko, True1' : 'Es. CEE 32A 5P'} 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:border-yellow-500 outline-none" 
+                        value={powerConnector} 
+                        onChange={e => setPowerConnector(e.target.value)} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Calcolo Bidirezionale Watt <-> Ampere */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-yellow-400 uppercase tracking-wider">
+                          Consumo / Potenza (W)
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-mono">Watt</span>
+                      </div>
                       <input 
                         type="number" 
-                        step="1" 
-                        min="0"
-                        placeholder="0 se non elettrico"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
+                        min="0" 
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-sm font-bold text-white focus:border-yellow-500 outline-none text-right font-mono" 
                         value={powerInput} 
-                        onChange={e => {
-                          setPowerInput(e.target.value);
-                          setFormData(prev => ({ ...prev, powerConsumption: parseFloat(e.target.value) || 0 }));
-                        }} 
+                        onChange={e => handlePowerChange(e.target.value)} 
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400 font-medium">Corrente Assorbita (A)</label>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-yellow-400 uppercase tracking-wider">
+                          Corrente Assorbita (A)
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-mono">Ampere</span>
+                      </div>
                       <input 
                         type="number" 
-                        step="0.1" 
-                        min="0"
-                        placeholder="0"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
+                        step="0.01" 
+                        min="0" 
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-sm font-bold text-white focus:border-yellow-500 outline-none text-right font-mono" 
                         value={currentInput} 
-                        onChange={e => {
-                          setCurrentInput(e.target.value);
-                          setFormData(prev => ({ ...prev, current: parseFloat(e.target.value) || 0 }));
-                        }} 
+                        onChange={e => handleCurrentChange(e.target.value)} 
                       />
                     </div>
                   </div>
                 </div>
 
-                {/* ECONOMICO */}
-                <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                    <DollarSign size={14} className="text-emerald-400" /> Prezzi di Listino & Noleggio
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400 font-medium">Prezzo Noleggio (€)</label>
+                {/* RIGHT: PREZZI DI ACQUISTO & NOLEGGIO (5 COLS) */}
+                <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800/80">
+                    <DollarSign size={18} className="text-emerald-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Prezzi & Costi</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* Prezzo Acquisto */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                          Prezzo di Acquisto
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-mono">€ (Costo Bene)</span>
+                      </div>
                       <input 
                         type="number" 
                         step="0.01" 
-                        min="0"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
-                        value={rentalPriceInput} 
-                        onChange={e => {
-                          setRentalPriceInput(e.target.value);
-                          setFormData(prev => ({ ...prev, rentalPrice: parseFloat(e.target.value) || 0 }));
-                        }} 
+                        min="0" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-bold text-white focus:border-emerald-500 outline-none text-right font-mono" 
+                        value={purchasePriceInput} 
+                        onChange={e => setPurchasePriceInput(e.target.value)} 
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400 font-medium">Costo Subnoleggio (€)</label>
+
+                    {/* Prezzo Noleggio Listino */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                          Prezzo Noleggio Listino
+                        </label>
+                        <span className="text-[10px] text-emerald-400 font-mono">€ / giorno</span>
+                      </div>
                       <input 
                         type="number" 
                         step="0.01" 
-                        min="0"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-sm text-right" 
+                        min="0" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-bold text-emerald-400 focus:border-emerald-500 outline-none text-right font-mono" 
+                        value={rentalPriceInput} 
+                        onChange={e => setRentalPriceInput(e.target.value)} 
+                      />
+                    </div>
+
+                    {/* Costo Subnoleggio */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          Costo Subnoleggio Fornitore
+                        </label>
+                        <span className="text-[10px] text-rose-400 font-mono">€ / giorno</span>
+                      </div>
+                      <input 
+                        type="number" 
+                        step="0.01" 
+                        min="0" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-300 focus:border-rose-500 outline-none text-right" 
                         value={subrentalCostInput} 
-                        onChange={e => {
-                          setSubrentalCostInput(e.target.value);
-                          setFormData(prev => ({ ...prev, subrentalCost: parseFloat(e.target.value) || 0 }));
-                        }} 
+                        onChange={e => setSubrentalCostInput(e.target.value)} 
                       />
                     </div>
                   </div>
                 </div>
+
               </div>
 
-              {/* DESCRIZIONE BASE */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Descrizione & Note Tecniche Generali</label>
+              {/* DESCRIZIONE TECNICA GENERALE IN BASSO */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">
+                  Descrizione & Specifiche Tecniche Generali
+                </label>
                 <textarea 
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none h-20 resize-none text-sm placeholder-slate-600" 
+                  rows={3} 
+                  placeholder="Inserisci dettagli, note generali sul materiale o specifiche utili..." 
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm text-slate-200 placeholder-slate-600 focus:border-blue-500 outline-none resize-y" 
                   value={formData.description || ''} 
-                  onChange={e => setFormData({ ...formData, description: e.target.value })} 
-                  placeholder="Specifiche tecniche di base..." 
+                  onChange={e => setFormData({...formData, description: e.target.value})} 
                 />
               </div>
 
             </div>
           )}
 
-          {/* ========================================================================= */}
+          {/* ========================================================= */}
           {/* TAB 2: SERIALI / MATRICOLE */}
-          {/* ========================================================================= */}
+          {/* ========================================================= */}
           {activeTab === 'serials' && (
-            <div className="space-y-4">
-              <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-3">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
                   <div>
-                    <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                      <Barcode size={16} className="text-emerald-400" /> Censimento Matricole & Pezzi Fisici
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <QrCode size={18} className="text-cyan-400" />
+                      Censimento Matricole & Seriali Fisici
                     </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Inserisci i singoli seriali fisici. Il <strong>Codice Univoco / QR Seriale</strong> (7 cifre, es. 1007000) è stampabile con QR e Barcode.
+                    <p className="text-xs text-slate-400 mt-1">
+                      Registra ogni pezzo fisico con il proprio codice univoco a 7 cifre (1000001+), serial number del costruttore e stato operativo.
                     </p>
                   </div>
-                  <span className="px-3 py-1 bg-emerald-950 border border-emerald-800/60 text-emerald-300 font-mono text-xs font-bold rounded-lg shrink-0">
-                    Totale: {tempInstances.length} (Attivi: {tempInstances.filter(i => i.active !== false).length})
+                  <div className="flex items-center gap-3">
+                    <span className="px-3 py-1 bg-slate-800 text-cyan-400 rounded-xl text-xs font-mono font-bold border border-slate-700">
+                      Totale: {tempInstances.length} matricole
+                    </span>
+                  </div>
+                </div>
+
+                {/* Form Aggiunta Seriale */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 mt-4">
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Codice QR (7 cifre)</label>
+                    <input
+                      type="text"
+                      placeholder="Auto (1000001+)"
+                      maxLength={7}
+                      value={instanceIdInput}
+                      onChange={e => setInstanceIdInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono font-bold outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Serial Number Produttore</label>
+                    <input
+                      type="text"
+                      placeholder="SN es. SN-8942-X"
+                      value={instanceSnInput}
+                      onChange={e => setInstanceSnInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Rif. Interno (Sigla / N°)</label>
+                    <input
+                      type="text"
+                      placeholder="Es. #01, Mixer-A"
+                      value={instanceRefInput}
+                      onChange={e => setInstanceRefInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleAddInstance}
+                      className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-cyan-900/20 transition-all active:scale-95"
+                    >
+                      <Plus size={15} />
+                      Aggiungi Seriale
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tabella Matricole */}
+                <div className="mt-4 overflow-x-auto custom-scrollbar">
+                  {tempInstances.length === 0 ? (
+                    <div className="text-center py-12 text-slate-500 text-xs bg-slate-950/50 rounded-xl border border-dashed border-slate-800">
+                      Nessuna matricola fisica registrata. L'articolo verrà gestito come materiale Bulk a quantità manuale ({formData.inStock || 1} pz).
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
+                          <th className="py-2.5 px-3">#</th>
+                          <th className="py-2.5 px-3">Codice QR (7 cifre)</th>
+                          <th className="py-2.5 px-3">Serial Number</th>
+                          <th className="py-2.5 px-3">Rif. Interno</th>
+                          <th className="py-2.5 px-3 text-center">Stato</th>
+                          <th className="py-2.5 px-3 text-right">Azioni</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 font-medium">
+                        {tempInstances.map((inst, idx) => (
+                          <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-2 px-3 text-slate-500 font-mono">{idx + 1}</td>
+                            <td className="py-2 px-3 font-mono font-bold text-emerald-400">{inst.id}</td>
+                            <td className="py-2 px-3 text-white font-mono">{inst.serialNumber || '-'}</td>
+                            <td className="py-2 px-3 text-slate-300">{inst.internalReference || '-'}</td>
+                            <td className="py-2 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleInstanceActive(idx)}
+                                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${
+                                  inst.active !== false 
+                                    ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800' 
+                                    : 'bg-rose-950/80 text-rose-400 border-rose-800'
+                                }`}
+                              >
+                                {inst.active !== false ? 'Attivo' : 'Fuori Uso'}
+                              </button>
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewCodeModal({ code: inst.id, name: `${formData.name || ''} (#${inst.internalReference || idx + 1})` })}
+                                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                                  title="Visualizza Codici"
+                                >
+                                  <Eye size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => printQRCode(inst.id, `${formData.name || ''} (#${inst.internalReference || idx + 1})`)}
+                                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                                  title="Stampa Etichetta QR"
+                                >
+                                  <Printer size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveInstance(idx)}
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors"
+                                  title="Elimina"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 3: ACCESSORI */}
+          {/* ========================================================= */}
+          {activeTab === 'accessories' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* SINISTRA: RICERCA MATERIALE DA AGGIUNGERE */}
+                <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col h-[520px]">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Search size={15} className="text-blue-400" />
+                      Aggiungi da Inventario
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setIsQuickCreateOpen(true)}
+                      className="text-xs text-emerald-400 hover:underline font-bold"
+                    >
+                      + Crea Rapido
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-slate-500" size={15} />
+                    <input 
+                      type="text" 
+                      placeholder="Cerca accessorio per nome..." 
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-blue-500" 
+                      value={accessorySearch} 
+                      onChange={e => setAccessorySearch(e.target.value)} 
+                    />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+                    {localInventory
+                      .filter(i => i.id !== initialData?.id)
+                      .filter(i => (i.name || '').toLowerCase().includes(accessorySearch.toLowerCase()) || (i.category || '').toLowerCase().includes(accessorySearch.toLowerCase()))
+                      .map(item => {
+                        const isAdded = (formData.accessories || []).some(a => a.itemId === item.id);
+                        return (
+                          <div 
+                            key={item.id} 
+                            onClick={() => !isAdded && handleAddAccessory(item.id)}
+                            className={`p-2.5 rounded-xl border flex items-center justify-between transition-colors cursor-pointer ${
+                              isAdded 
+                                ? 'bg-slate-950 border-slate-800 opacity-50 cursor-not-allowed' 
+                                : 'bg-slate-950 hover:bg-slate-800 border-slate-800/80'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1 mr-2">
+                              <div className="text-xs font-semibold text-white truncate">{item.name}</div>
+                              <div className="text-[10px] text-slate-500">{item.category} • Disponibili: {item.inStock}</div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isAdded}
+                              className={`p-1.5 rounded-lg text-xs font-bold transition-colors ${
+                                isAdded ? 'text-slate-600' : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white'
+                              }`}
+                            >
+                              <Plus size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* DESTRA: TABELLA ACCESSORI COLLEGATI */}
+                <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col h-[520px]">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <LinkIcon size={15} className="text-emerald-400" />
+                      Accessori Collegati ({formData.accessories?.length || 0})
+                    </h3>
+                    <span className="text-[11px] text-slate-500">
+                      Automatico = Inserimento diretto in distinta
+                    </span>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                    {(!formData.accessories || formData.accessories.length === 0) ? (
+                      <div className="text-center py-20 text-slate-500 text-xs">
+                        Nessun accessorio collegato a questo materiale. Seleziona gli accessori dalla colonna sinistra per abbinarli.
+                      </div>
+                    ) : (
+                      formData.accessories.map(acc => {
+                        const invItem = localInventory.find(i => i.id === acc.itemId);
+                        const isAuto = acc.automatic !== false;
+                        return (
+                          <div 
+                            key={acc.itemId}
+                            className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-white truncate">{invItem?.name || 'Accessorio rimosso'}</div>
+                              <div className="text-[10px] text-slate-500">{invItem?.category || 'Altro'}</div>
+                            </div>
+
+                            <div className="flex items-center gap-3 shrink-0">
+                              {/* Toggle Automatico */}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAccessoryAutomatic(acc.itemId)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                  isAuto 
+                                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800 hover:bg-emerald-900' 
+                                    : 'bg-amber-950/80 text-amber-300 border-amber-800 hover:bg-amber-900'
+                                }`}
+                                title={isAuto ? 'Incluso automaticamente alla distinta' : 'Chiede conferma all\'inserimento in distinta'}
+                              >
+                                {isAuto ? 'Automatico: Sì' : 'Opzionale (Chiedi)'}
+                              </button>
+
+                              {/* Quantità */}
+                              <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateAccessoryQty(acc.itemId, acc.quantity - 1)}
+                                  className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-white rounded bg-slate-800"
+                                >
+                                  -
+                                </button>
+                                <span className="w-7 text-center font-mono font-bold text-xs text-white">
+                                  {acc.quantity}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateAccessoryQty(acc.itemId, acc.quantity + 1)}
+                                  className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-white rounded bg-slate-800"
+                                >
+                                  +
+                                </button>
+                              </div>
+
+                              {/* Rimuovi */}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAccessory(acc.itemId)}
+                                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors"
+                                title="Rimuovi accessorio"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 4: MANUTENZIONI & ISPEZIONI */}
+          {/* ========================================================= */}
+          {activeTab === 'inspections' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Wrench size={18} className="text-blue-400" />
+                      Piani di Ispezione & Manutenzione Periodica
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Definisci i controlli ciclici obbligatori (es. Collaudo catene motori, Serraggio morsetti, Ispezione cavi) e le scadenze.
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 bg-slate-800 text-blue-400 rounded-xl text-xs font-mono font-bold border border-slate-700">
+                    {formData.periodicInspections?.length || 0} controlli
                   </span>
                 </div>
 
-                {/* ADD SERIAL ROW FORM */}
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-3 mt-2">
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                    <div className="sm:col-span-3 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Codice QR Seriale *</label>
-                      <input 
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-purple-300 focus:border-purple-500 outline-none font-mono font-bold text-xs"
-                        placeholder="Es. 1007001"
-                        maxLength={20}
-                        value={instanceIdInput}
-                        onChange={e => setInstanceIdInput(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-3 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">SN Costruttore</label>
-                      <input 
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-blue-500 outline-none font-mono text-xs"
-                        placeholder="Es. JHMP015129YY"
-                        maxLength={20}
-                        value={instanceSnInput}
-                        onChange={e => setInstanceSnInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && addInstance()}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Rif. Interno</label>
-                      <input 
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-blue-500 outline-none text-xs"
-                        placeholder="Es. 1, 2, DJ-A"
-                        value={instanceRefInput}
-                        onChange={e => setInstanceRefInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && addInstance()}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-3 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Data Acquisto</label>
-                      <input 
-                        type="date"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-blue-500 outline-none text-xs"
-                        value={instancePurchaseDateInput}
-                        onChange={e => setInstancePurchaseDateInput(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-1 flex items-end">
-                      <button 
-                        type="button"
-                        onClick={addInstance} 
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg flex items-center justify-center h-[36px] transition-all shadow-md shadow-emerald-900/30" 
-                        title="Aggiungi Seriale"
-                      >
-                        <Plus size={18}/> 
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* TABLE OF SERIALS */}
-                <div className="space-y-1.5 max-h-80 overflow-y-auto custom-scrollbar bg-slate-950 p-2 rounded-xl border border-slate-800">
-                  <div className="grid grid-cols-12 gap-2 px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-800">
-                    <div className="col-span-1 text-center">Stato</div>
-                    <div className="col-span-3">Codice Univoco / QR</div>
-                    <div className="col-span-3">SN Costruttore</div>
-                    <div className="col-span-2">Rif. / Acquisto</div>
-                    <div className="col-span-3 text-right">Stampa / Azioni</div>
-                  </div>
-
-                  {tempInstances.map((inst, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg border text-xs font-mono transition-colors ${
-                        inst.active === false 
-                          ? 'bg-slate-900/40 border-slate-800/50 opacity-60' 
-                          : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      {/* ACTIVE TOGGLE */}
-                      <div className="col-span-1 flex justify-center">
-                        <button 
-                          type="button"
-                          onClick={() => toggleInstanceActive(idx)}
-                          className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
-                            inst.active !== false 
-                              ? 'bg-emerald-600 text-white' 
-                              : 'bg-slate-800 text-slate-600'
-                          }`}
-                          title={inst.active !== false ? 'Matricola Attiva' : 'Matricola Inattiva / Dismessa'}
-                        >
-                          <CheckCircle2 size={13} />
-                        </button>
-                      </div>
-
-                      {/* CODICE UNIVOCO QR */}
-                      <div className="col-span-3 truncate text-purple-300 font-bold">
-                        {inst.id}
-                      </div>
-
-                      {/* SN COSTRUTTORE */}
-                      <div className="col-span-3 truncate text-slate-200">
-                        {inst.serialNumber || <span className="text-slate-600 italic">Nessun SN</span>}
-                      </div>
-
-                      {/* RIF / DATA */}
-                      <div className="col-span-2 text-[11px] truncate text-slate-400">
-                        {inst.internalReference && <span className="mr-1 font-bold text-blue-400">[{inst.internalReference}]</span>}
-                        {inst.purchaseDate || '-'}
-                      </div>
-
-                      {/* ACTIONS */}
-                      <div className="col-span-3 flex items-center justify-end gap-1">
-                        <button 
-                          type="button"
-                          onClick={() => printBarcode(inst.id, `${formData.name || 'Articolo'} (${inst.id})`)} 
-                          title="Stampa Barcode Seriale"
-                          className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition-colors"
-                        >
-                          <Barcode size={14} />
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => printQRCode(inst.id, `${formData.name || 'Articolo'} (${inst.id})`)} 
-                          title="Stampa QR Code Seriale"
-                          className="p-1.5 text-slate-400 hover:text-purple-400 hover:bg-slate-800 rounded transition-colors"
-                        >
-                          <QrCode size={14} />
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => removeInstance(idx)} 
-                          title="Rimuovi Seriale"
-                          className="p-1.5 text-slate-500 hover:text-rose-500 hover:bg-slate-800 rounded transition-colors"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-
-                  {tempInstances.length === 0 && (
-                    <div className="text-center py-10 text-slate-500 flex flex-col items-center gap-2">
-                      <Barcode size={32} className="opacity-20" />
-                      <span className="text-xs">Nessun seriale registrato. Inserisci il primo qui sopra.</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================================================= */}
-          {/* TAB 3: ACCESSORI */}
-          {/* ========================================================================= */}
-          {activeTab === 'accessories' && (
-            <div className="flex flex-col lg:flex-row gap-4 h-[480px]">
-              
-              {/* LEFT: INVENTORY SEARCH & SELECTOR */}
-              <div className="flex-1 flex flex-col bg-slate-900/60 p-3 rounded-xl border border-slate-800 h-full">
-                <div className="flex gap-2 mb-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-2.5 text-slate-500" size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="Cerca accessorio nell'inventario..." 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none focus:border-blue-500 placeholder-slate-600" 
-                      value={accessorySearch} 
-                      onChange={(e) => setAccessorySearch(e.target.value)} 
+                {/* Form Nuova Ispezione */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800 mt-4">
+                  <div className="md:col-span-5">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Nome Controllo / Ispezione</label>
+                    <input
+                      type="text"
+                      placeholder="Es. Verifica scatto differenziale, Collaudo..."
+                      value={inspectionNameInput}
+                      onChange={e => setInspectionNameInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
                     />
                   </div>
-                  {onCreateAccessory && (
-                    <button 
-                      type="button"
-                      onClick={openQuickCreate} 
-                      className="bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-300 border border-slate-700 rounded-lg px-2.5 flex items-center justify-center transition-colors text-xs font-bold gap-1 shrink-0" 
-                      title="Crea nuovo accessorio rapido"
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Ogni quanti</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={inspectionPeriodInput}
+                      onChange={e => setInspectionPeriodInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono font-bold text-center outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="md:col-span-3">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Frequenza</label>
+                    <select
+                      value={inspectionFrequencyInput}
+                      onChange={e => setInspectionFrequencyInput(e.target.value as any)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white outline-none focus:border-blue-500"
                     >
-                      <Plus size={14} /> Crea
+                      <option value="days">Giorni</option>
+                      <option value="months">Mesi</option>
+                      <option value="years">Anni</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-2 flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleAddInspection}
+                      disabled={!inspectionNameInput.trim()}
+                      className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
+                    >
+                      <Plus size={14} />
+                      Aggiungi
                     </button>
-                  )}
+                  </div>
                 </div>
 
-                <div className="flex-1 bg-slate-950 rounded-lg p-2 overflow-y-auto custom-scrollbar border border-slate-800/80">
-                  {searchResults.length > 0 ? (
-                    <div className="space-y-1">
-                      {searchResults.map(item => (
-                        <button 
-                          key={item.id} 
-                          type="button"
-                          onClick={() => addAccessory(item)} 
-                          className="w-full text-left p-2 hover:bg-cyan-900/20 border border-transparent hover:border-cyan-500/30 rounded-lg flex justify-between items-center group transition-colors"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-xs text-slate-200 truncate font-semibold group-hover:text-cyan-300">{item.name}</div>
-                            <div className="text-[10px] text-slate-500">{item.category} {item.folder ? `• ${item.folder}` : ''}</div>
-                          </div>
-                          <Plus size={14} className="text-slate-600 group-hover:text-cyan-400 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  ) : accessorySearch ? (
-                    <div className="text-center py-10 text-slate-500 flex flex-col items-center gap-2">
-                      <p className="text-xs">Nessun materiale trovato per "{accessorySearch}"</p>
-                      {onCreateAccessory && (
-                        <button 
-                          type="button"
-                          onClick={openQuickCreate} 
-                          className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-full inline-flex items-center gap-1 font-semibold"
-                        >
-                          <Plus size={12} /> Crea "{accessorySearch}"
-                        </button>
-                      )}
+                {/* Elenco Ispezioni Configurate */}
+                <div className="mt-4 space-y-2">
+                  {(!formData.periodicInspections || formData.periodicInspections.length === 0) ? (
+                    <div className="text-center py-12 text-slate-500 text-xs bg-slate-950/40 rounded-xl border border-dashed border-slate-800">
+                      Nessuna ispezione periodica configurata per questo articolo.
                     </div>
                   ) : (
-                    <div className="text-center py-12 text-slate-600 flex flex-col items-center gap-2">
-                      <Search size={28} className="opacity-20" />
-                      <p className="text-xs">Cerca un materiale a sinistra per aggiungerlo come accessorio.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* RIGHT: CONNECTED ACCESSORIES TABLE WITH AUTOMATIC SWITCH */}
-              <div className="w-full lg:w-[420px] flex flex-col bg-slate-900/60 p-3 rounded-xl border border-slate-800 h-full">
-                <div className="mb-2">
-                  <h3 className="font-bold text-white text-xs flex items-center justify-between">
-                    <span className="flex items-center gap-1.5"><Link size={14} className="text-cyan-400" /> Accessori Collegati</span>
-                    <span className="text-[10px] text-slate-400">{(formData.accessories || []).length} elementi</span>
-                  </h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    <strong>Automatico = Sì:</strong> aggiunto subito. <strong>No:</strong> richiesta di conferma.
-                  </p>
-                </div>
-
-                <div className="flex-1 bg-slate-950 rounded-lg p-2 overflow-y-auto custom-scrollbar border border-slate-800/80 space-y-1.5">
-                  {(formData.accessories || []).map((acc, idx) => {
-                    const accItem = inventory.find(i => i.id === acc.itemId) || localInventory.find(i => i.id === acc.itemId);
-                    const accName = accItem ? accItem.name : 'Articolo...';
-                    const isAuto = acc.automatic !== false;
-
-                    return (
-                      <div key={idx} className="bg-slate-900 p-2.5 rounded-lg border border-slate-800 space-y-2">
-                        <div className="flex justify-between items-start gap-2">
+                    formData.periodicInspections.map(ins => {
+                      const freqLabel = ins.frequency === 'days' ? 'giorni' : ins.frequency === 'months' ? 'mesi' : 'anni';
+                      return (
+                        <div key={ins.id} className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <div className="text-xs text-white font-semibold truncate">{accName}</div>
-                            <div className="text-[10px] text-slate-500">{accItem?.category || 'Accessorio'}</div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-white truncate">{ins.name}</span>
+                              <span className="px-2 py-0.5 bg-blue-950 text-blue-400 border border-blue-800/80 rounded text-[10px] font-mono font-bold">
+                                Ogni {ins.period} {freqLabel}
+                              </span>
+                            </div>
+                            {ins.description && (
+                              <p className="text-[11px] text-slate-400 mt-1">{ins.description}</p>
+                            )}
                           </div>
-                          <button 
-                            type="button"
-                            onClick={() => removeAccessory(acc.itemId)} 
-                            className="text-slate-500 hover:text-rose-500 p-0.5 transition-colors"
-                            title="Rimuovi accessorio"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
 
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-xs">
-                          {/* AUTOMATIC SWITCH */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-slate-400 font-medium">Automatico:</span>
+                          <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => toggleAccessoryAutomatic(acc.itemId)}
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
-                                isAuto 
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60' 
-                                  : 'bg-amber-950 text-amber-300 border border-amber-700/60'
+                              onClick={() => handleToggleInspectionActive(ins.id)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                                ins.active 
+                                  ? 'bg-emerald-950 text-emerald-400 border-emerald-800' 
+                                  : 'bg-slate-900 text-slate-500 border-slate-800'
                               }`}
                             >
-                              {isAuto ? 'Sì (Auto)' : 'No (Chiedi)'}
+                              {ins.active ? 'Attivo' : 'Sospeso'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveInspection(ins.id)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
-
-                          {/* QUANTITY */}
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-slate-400">Qtà:</span>
-                            <input 
-                              type="number" 
-                              min="1" 
-                              className="w-12 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white text-xs outline-none focus:border-blue-500 font-bold" 
-                              value={acc.quantity} 
-                              onChange={(e) => updateAccessoryQuantity(acc.itemId, parseInt(e.target.value, 10) || 1)} 
-                            />
-                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-
-                  {(!formData.accessories || formData.accessories.length === 0) && (
-                    <div className="text-center py-16 text-slate-600 flex flex-col items-center gap-2">
-                      <Link size={30} className="opacity-20" />
-                      <p className="text-xs">Nessun accessorio collegato.</p>
-                    </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
-
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* TAB 4: ISPEZIONI & MANUTENZIONI */}
-          {/* ========================================================================= */}
-          {activeTab === 'inspections' && (
-            <div className="space-y-4">
-              <div className="bg-slate-900/80 p-4 rounded-xl border border-slate-800 space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                  <div>
-                    <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                      <Wrench size={16} className="text-amber-400" /> Controlli Periodici & Manutenzioni
+          {/* ========================================================= */}
+          {/* TAB 5: NOTE & PROMEMORIA (SEPARATED FROM FILES) */}
+          {/* ========================================================= */}
+          {activeTab === 'notes' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* NOTE INTERNE */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                    <StickyNote size={17} className="text-amber-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Note Interne (Magazzino & Staff)</h3>
+                  </div>
+                  <p className="text-xs text-slate-500">Visibili solo internamente al personale aziendale:</p>
+                  <textarea 
+                    rows={4} 
+                    placeholder="Es. Attenzione alla ventola sinistra, tenere sempre nel baule n°3..." 
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:border-amber-500 outline-none resize-y" 
+                    value={formData.internalRemark || ''} 
+                    onChange={e => setFormData({...formData, internalRemark: e.target.value})} 
+                  />
+                </div>
+
+                {/* NOTE ESTERNE */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                    <FileText size={17} className="text-cyan-400" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Note Esterne (Schede & Clienti)</h3>
+                  </div>
+                  <p className="text-xs text-slate-500">Stampabili o visibili nelle schede esterne/offerte:</p>
+                  <textarea 
+                    rows={4} 
+                    placeholder="Es. Fornito con cavo alimentazione 1.5m e staffa standard..." 
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:border-cyan-500 outline-none resize-y" 
+                    value={formData.externalRemark || ''} 
+                    onChange={e => setFormData({...formData, externalRemark: e.target.value})} 
+                  />
+                </div>
+
+              </div>
+
+              {/* PROMEMORIA LAMPADINA ("COSE DA RICORDARE") */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Lightbulb size={18} className="text-amber-400 animate-pulse" />
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Promemoria Lampadina ("Cose da Ricordare")
                     </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Definisci i collaudi e le ispezioni obbligatorie (es. serraggi cavi, verifica quadri elettrici, controllo catene motori).
-                    </p>
                   </div>
+                  <span className="text-xs text-amber-400/90 font-mono">
+                    {formData.reminders?.length || 0} promemoria attivi
+                  </span>
                 </div>
 
-                {/* ADD INSPECTION FORM */}
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                    <div className="sm:col-span-5 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Nome Controllo *</label>
-                      <input 
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-amber-500 outline-none text-xs"
-                        placeholder="Es. Serraggi prolunghe, Verifica scatto differenziale"
-                        value={inspectionNameInput}
-                        onChange={e => setInspectionNameInput(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Periodo</label>
-                      <input 
-                        type="number"
-                        min="1"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-amber-500 outline-none text-xs text-right font-bold"
-                        value={inspectionPeriodInput}
-                        onChange={e => setInspectionPeriodInput(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-3 space-y-1">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Frequenza</label>
-                      <select 
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-amber-500 outline-none text-xs"
-                        value={inspectionFrequencyInput}
-                        onChange={e => setInspectionFrequencyInput(e.target.value as 'days' | 'months' | 'years')}
-                      >
-                        <option value="days">Giorni</option>
-                        <option value="months">Mesi</option>
-                        <option value="years">Anni</option>
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2 flex items-end">
-                      <button 
-                        type="button"
-                        onClick={addInspection} 
-                        disabled={!inspectionNameInput.trim()}
-                        className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-bold rounded-lg flex items-center justify-center gap-1.5 h-[36px] transition-all shadow-md shadow-amber-900/30 text-xs" 
-                      >
-                        <Plus size={16}/> Aggiungi
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Descrizione / Istruzioni Operative</label>
-                    <input 
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-300 focus:border-amber-500 outline-none text-xs placeholder-slate-600"
-                      placeholder="Es. Verifica dei serraggi sui morsetti cavi su prese e spine con dinamometrica..."
-                      value={inspectionDescInput}
-                      onChange={e => setInspectionDescInput(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {/* LIST OF INSPECTIONS */}
-                <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar bg-slate-950 p-2 rounded-xl border border-slate-800">
-                  {(formData.periodicInspections || []).map((insp) => (
-                    <div 
-                      key={insp.id} 
-                      className={`p-3 rounded-lg border flex justify-between items-start gap-3 transition-colors ${
-                        insp.active 
-                          ? 'bg-slate-900 border-slate-800 hover:border-slate-700' 
-                          : 'bg-slate-900/40 border-slate-800/50 opacity-60'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <button 
-                          type="button"
-                          onClick={() => toggleInspectionActive(insp.id)}
-                          className={`w-5 h-5 rounded mt-0.5 flex items-center justify-center shrink-0 transition-colors ${
-                            insp.active ? 'bg-amber-600 text-black' : 'bg-slate-800 text-slate-600'
-                          }`}
-                        >
-                          <CheckCircle2 size={13} />
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-white">{insp.name}</span>
-                            <span className="px-2 py-0.5 bg-amber-950 text-amber-300 border border-amber-800/50 rounded text-[10px] font-bold">
-                              Ogni {insp.period} {insp.frequency === 'days' ? 'Giorni' : insp.frequency === 'months' ? 'Mesi' : 'Anni'}
-                            </span>
-                          </div>
-                          {insp.description && (
-                            <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{insp.description}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button 
-                        type="button"
-                        onClick={() => removeInspection(insp.id)} 
-                        className="text-slate-500 hover:text-rose-500 p-1 transition-colors"
-                        title="Rimuovi Ispezione"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-
-                  {(!formData.periodicInspections || formData.periodicInspections.length === 0) && (
-                    <div className="text-center py-10 text-slate-500 flex flex-col items-center gap-2">
-                      <Wrench size={32} className="opacity-20" />
-                      <span className="text-xs">Nessuna ispezione o controllo periodico configurato.</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================================================= */}
-          {/* TAB 5: NOTE & DOCUMENTI */}
-          {/* ========================================================================= */}
-          {activeTab === 'remarks_docs' && (
-            <div className="space-y-6">
-              
-              {/* REMARKS (INTERNAL & EXTERNAL) */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-4">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <Info size={14} className="text-blue-400" /> Note Interne ed Esterne
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Nota Interna (Per personale e magazzinieri)</label>
-                    <textarea 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none h-24 resize-none text-xs placeholder-slate-600" 
-                      value={formData.internalRemark || ''} 
-                      onChange={e => setFormData({ ...formData, internalRemark: e.target.value })} 
-                      placeholder="Note riservate all'uso interno..." 
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 font-medium">Nota Esterna (Per schede tecniche e clienti)</label>
-                    <textarea 
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none h-24 resize-none text-xs placeholder-slate-600" 
-                      value={formData.externalRemark || ''} 
-                      onChange={e => setFormData({ ...formData, externalRemark: e.target.value })} 
-                      placeholder="Note visibili all'esterno..." 
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* REMINDERS (LIGHTBULB) */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-3">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <Lightbulb size={14} className="text-yellow-400" /> Cose da Ricordare (Promemoria Pop-up)
-                </h3>
                 <p className="text-xs text-slate-400">
-                  Note che appariranno con la lampadina gialla quando utilizzerai questo oggetto in lista o in magazzino.
+                  Questi promemoria compariranno automaticamente come pop-up / avviso quando l'articolo viene inserito in una lista o preparato a magazzino.
                 </p>
 
                 <div className="flex gap-2">
-                  <input 
-                    className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-yellow-500 outline-none text-xs"
-                    placeholder="Es. Richiede sempre il cavo di alimentazione True1..."
+                  <input
+                    type="text"
+                    placeholder="Es. Ricordarsi di pulire la lente prima del rientro..."
                     value={reminderInput}
                     onChange={e => setReminderInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addReminder()}
+                    onKeyDown={e => e.key === 'Enter' && handleAddReminder()}
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
                   />
-                  <button 
+                  <button
                     type="button"
-                    onClick={addReminder} 
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded-lg flex items-center gap-1.5 text-xs transition-colors"
+                    onClick={handleAddReminder}
+                    disabled={!reminderInput.trim()}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-md"
                   >
-                    <Plus size={16}/> Aggiungi
+                    <Plus size={15} />
+                    Aggiungi
                   </button>
                 </div>
 
-                <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar bg-slate-950 p-2 rounded-xl border border-slate-800">
-                  {(formData.reminders || []).map((rem, idx) => (
-                    <div key={idx} className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800 text-xs">
-                      <div className="flex items-center gap-2">
-                        <Lightbulb size={14} className="text-yellow-400 shrink-0" />
-                        <span className="text-slate-200">{rem}</span>
+                <div className="space-y-2 pt-1">
+                  {(!formData.reminders || formData.reminders.length === 0) ? (
+                    <div className="text-center py-6 text-slate-500 text-xs bg-slate-950/40 rounded-xl border border-dashed border-slate-800">
+                      Nessun promemoria configurato per questo materiale.
+                    </div>
+                  ) : (
+                    formData.reminders.map((rem, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-amber-950/20 border border-amber-900/40 rounded-xl">
+                        <div className="flex items-center gap-2.5 text-xs text-amber-200 min-w-0 flex-1 mr-2">
+                          <Lightbulb size={14} className="text-amber-400 shrink-0" />
+                          <span className="truncate">{rem}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveReminder(idx)}
+                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </div>
-                      <button 
-                        type="button"
-                        onClick={() => removeReminder(idx)} 
-                        className="text-slate-500 hover:text-rose-500 transition-colors p-0.5"
-                      >
-                        <X size={16}/>
-                      </button>
-                    </div>
-                  ))}
-
-                  {(!formData.reminders || formData.reminders.length === 0) && (
-                    <div className="text-center py-6 text-slate-500 text-xs">
-                      Nessun promemoria lampadina inserito.
-                    </div>
+                    ))
                   )}
                 </div>
               </div>
 
-              {/* DOCUMENTS & DRIVE LINKS */}
-              <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 space-y-3">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <FileText size={14} className="text-blue-400" /> Documenti & File Cloud (Drive, OneDrive, PDF)
-                </h3>
+            </div>
+          )}
 
-                <div className="flex flex-col sm:flex-row gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                  <div className="flex-1 space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nome File</label>
-                    <input 
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-white focus:border-blue-500 outline-none text-xs placeholder-slate-600"
-                      placeholder="Es. Manuale PDF, Scheda Tecnica"
+          {/* ========================================================= */}
+          {/* TAB 6: FILE & DOCUMENTI (SEPARATED FROM NOTES) */}
+          {/* ========================================================= */}
+          {activeTab === 'files' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Paperclip size={18} className="text-blue-400" />
+                      Documenti & File Esterni (Cloud Drive / Schede Tecniche)
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Collega PDF, manuali, schede tecniche e file da Google Drive, OneDrive o Dropbox con anteprima diretta nel browser.
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 bg-slate-800 text-blue-400 rounded-xl text-xs font-mono font-bold border border-slate-700">
+                    {formData.documents?.length || 0} file
+                  </span>
+                </div>
+
+                {/* Form Inserimento Documento */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <div className="sm:col-span-4">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Nome / Etichetta File</label>
+                    <input
+                      type="text"
+                      placeholder="Es. Manuale Utente PDF, Scheda Tecnica..."
                       value={docNameInput}
                       onChange={e => setDocNameInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addDocument()}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500"
                     />
                   </div>
-                  <div className="flex-[1.5] space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Link Esterno (URL) *</label>
-                    <input 
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-blue-300 focus:border-blue-500 outline-none text-xs placeholder-slate-600 font-mono"
-                      placeholder="https://drive.google.com/..."
+                  <div className="sm:col-span-6">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold mb-1 block">Link Esterno / Drive URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://drive.google.com/... o https://...pdf"
                       value={docUrlInput}
                       onChange={e => setDocUrlInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addDocument()}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono outline-none focus:border-blue-500"
                     />
                   </div>
-                  <div className="flex items-end shrink-0">
-                    <button 
+                  <div className="sm:col-span-2 flex items-end">
+                    <button
                       type="button"
-                      onClick={addDocument} 
+                      onClick={handleAddDocument}
                       disabled={!docUrlInput.trim()}
-                      className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-bold rounded-lg flex items-center justify-center gap-1 text-xs transition-all shadow-md shadow-blue-900/30"
+                      className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
                     >
-                      <Plus size={14}/> Aggiungi
+                      <Plus size={14} />
+                      Aggiungi
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar bg-slate-950 p-2 rounded-xl border border-slate-800">
-                  {(formData.documents || []).map((doc) => {
-                    const displayName = doc.name && doc.name.trim() ? doc.name.trim() : doc.url;
-                    return (
-                      <div key={doc.id} className="flex justify-between items-center bg-slate-900 p-2.5 rounded-lg border border-slate-800">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
-                          <FileText size={16} className="text-blue-400 shrink-0" />
+                {/* Elenco Documenti */}
+                <div className="space-y-2 pt-2">
+                  {(!formData.documents || formData.documents.length === 0) ? (
+                    <div className="text-center py-12 text-slate-500 text-xs bg-slate-950/40 rounded-xl border border-dashed border-slate-800">
+                      Nessun documento o link esterno allegato a questo articolo.
+                    </div>
+                  ) : (
+                    formData.documents.map(doc => (
+                      <div key={doc.id} className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
+                          <div className="w-8 h-8 rounded-lg bg-blue-900/30 border border-blue-800/40 flex items-center justify-center text-blue-400 shrink-0">
+                            <FileText size={16} />
+                          </div>
                           <div className="min-w-0 flex-1">
-                            <div className="text-xs font-semibold text-white truncate">{displayName}</div>
+                            <div className="text-xs font-bold text-white truncate">{doc.name}</div>
                             <div className="text-[10px] text-slate-500 font-mono truncate">{doc.url}</div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button 
+
+                        <div className="flex items-center gap-2">
+                          <button
                             type="button"
-                            onClick={() => openDocumentInBrowser(doc.url)} 
-                            className="px-2 py-1 bg-slate-800 hover:bg-blue-600 text-slate-200 hover:text-white rounded text-xs font-semibold flex items-center gap-1 transition-colors"
-                            title="Apri e visualizza nel browser"
+                            onClick={() => openDocumentInBrowser(doc.url)}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
                           >
-                            <Eye size={12} /> Apri
+                            <ExternalLink size={13} />
+                            Apri nel Browser
                           </button>
-                          <button 
+                          <button
                             type="button"
-                            onClick={() => removeDocument(doc.id)} 
-                            className="p-1 text-slate-400 hover:text-rose-400 rounded transition-colors"
-                            title="Rimuovi documento"
+                            onClick={() => handleRemoveDocument(doc.id)}
+                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors"
                           >
-                            <X size={14}/>
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </div>
-                    );
-                  })}
-
-                  {(!formData.documents || formData.documents.length === 0) && (
-                    <div className="text-center py-6 text-slate-500 text-xs">
-                      Nessun documento o link archiviato.
-                    </div>
+                    ))
                   )}
                 </div>
               </div>
-
             </div>
           )}
 
         </div>
-
       </div>
 
-      {/* QUICK CREATE ACCESSORY MODAL */}
-      {renderQuickCreateForm()}
+      {/* ========================================================= */}
+      {/* MODAL GESTIONE CATEGORIE */}
+      {/* ========================================================= */}
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => {
+          setIsCategoryModalOpen(false);
+          refreshCategories();
+        }}
+        onCategoriesUpdated={refreshCategories}
+      />
 
-      {/* CODE PREVIEW & PRINT MODAL */}
-      <Modal isOpen={isCodePreviewOpen} onClose={() => setIsCodePreviewOpen(false)} title={`QR Code Prodotto: ${formData.qrCode || ''}`} size="md">
-        <div className="space-y-6 text-center p-1">
-          {formData.name && (
-            <div className="text-sm font-semibold text-white truncate max-w-sm mx-auto">
-              {formData.name}
-            </div>
-          )}
-          
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Codice a Barre (Code 128)</div>
-            <div 
-              className="bg-white p-3 rounded-lg flex items-center justify-center overflow-x-auto max-w-full inline-block mx-auto shadow-md" 
-              dangerouslySetInnerHTML={{ __html: generateBarcodeSVG(formData.qrCode || '', 60, 2) }} 
+      {/* ========================================================= */}
+      {/* MODAL CREAZIONE RAPIDA ACCESSORIO */}
+      {/* ========================================================= */}
+      <Modal isOpen={isQuickCreateOpen} onClose={() => setIsQuickCreateOpen(false)} title="Nuovo Accessorio Rapido" size="md">
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome Accessorio *</label>
+            <input 
+              type="text" 
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none text-sm" 
+              value={quickForm.name || ''} 
+              onChange={e => setQuickForm({...quickForm, name: e.target.value})} 
+              autoFocus 
             />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <button 
-                type="button" 
-                onClick={() => printBarcode(formData.qrCode || '', formData.name || '')} 
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 mx-auto transition-all shadow-lg shadow-emerald-900/30 active:scale-95"
+              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Categoria</label>
+              <select 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-xs" 
+                value={quickForm.category || Category.CABLES} 
+                onChange={e => setQuickForm({...quickForm, category: e.target.value as any})}
               >
-                <Printer size={15} /> Stampa Barcode
-              </button>
+                {categoryDefs.map(c => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Giacenza Iniziale</label>
+              <input 
+                type="number" 
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-right text-xs" 
+                value={quickForm.inStock || 10} 
+                onChange={e => setQuickForm({...quickForm, inStock: parseInt(e.target.value, 10) || 0})} 
+              />
             </div>
           </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button 
+              type="button"
+              onClick={() => setIsQuickCreateOpen(false)} 
+              className="px-4 py-2 text-slate-400 hover:text-white rounded-lg text-xs font-semibold"
+            >
+              Annulla
+            </button>
+            <button 
+              type="button"
+              onClick={handleCreateAndAddAccessory} 
+              disabled={!quickForm.name} 
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold"
+            >
+              Crea & Collega
+            </button>
+          </div>
+        </div>
+      </Modal>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 shadow-inner">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">QR Code</div>
-            <div 
-              className="bg-white p-3 rounded-lg flex items-center justify-center overflow-hidden inline-block mx-auto shadow-md" 
-              dangerouslySetInnerHTML={{ __html: generateQRCodeSVG(formData.qrCode || '', 160) }} 
-            />
-            <div>
-              <button 
-                type="button" 
-                onClick={() => printQRCode(formData.qrCode || '', formData.name || '')} 
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 mx-auto transition-all shadow-lg shadow-purple-900/30 active:scale-95"
+      {/* ========================================================= */}
+      {/* MODAL ANTEPRIMA CODICI BARCODE & QR */}
+      {/* ========================================================= */}
+      <Modal isOpen={!!previewCodeModal} onClose={() => setPreviewCodeModal(null)} title="Anteprima Codici & Etichette" size="md">
+        <div className="space-y-6 text-center">
+          <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+            <div className="text-sm font-bold text-white">{previewCodeModal?.name}</div>
+            <div className="text-xs font-mono text-emerald-400 mt-0.5">Codice: {previewCodeModal?.code}</div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Barcode 128 */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-between">
+              <span className="text-[10px] text-slate-500 font-bold uppercase mb-2">Barcode Code 128</span>
+              <div dangerouslySetInnerHTML={{ __html: previewCodeModal ? generateBarcodeSVG(previewCodeModal.code) : '' }} />
+              <button
+                type="button"
+                onClick={() => previewCodeModal && printBarcode(previewCodeModal.code, previewCodeModal.name)}
+                className="mt-3 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1"
               >
-                <Printer size={15} /> Stampa QR Code
+                <Printer size={13} />
+                Stampa Barcode
+              </button>
+            </div>
+
+            {/* QR Code */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-between">
+              <span className="text-[10px] text-slate-500 font-bold uppercase mb-2">QR Code 2D</span>
+              <div dangerouslySetInnerHTML={{ __html: previewCodeModal ? generateQRCodeSVG(previewCodeModal.code) : '' }} />
+              <button
+                type="button"
+                onClick={() => previewCodeModal && printQRCode(previewCodeModal.code, previewCodeModal.name)}
+                className="mt-3 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center gap-1"
+              >
+                <Printer size={13} />
+                Stampa QR
               </button>
             </div>
           </div>
 
           <div className="flex justify-end pt-2 border-t border-slate-800">
-            <button type="button" onClick={() => setIsCodePreviewOpen(false)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm transition-colors">Chiudi</button>
+            <button
+              type="button"
+              onClick={() => setPreviewCodeModal(null)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+            >
+              Chiudi
+            </button>
           </div>
         </div>
       </Modal>
 
-    </Modal>
+    </div>
   );
-
-  function renderQuickCreateForm() {
-    return (
-      <Modal isOpen={isQuickCreateOpen} onClose={() => setIsQuickCreateOpen(false)} title="Nuovo Accessorio Rapido" size="lg">
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome</label>
-            <input type="text" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickForm.name || ''} onChange={e => setQuickForm({...quickForm, name: e.target.value})} placeholder="Es. Gancio Aliscaf" autoFocus />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Categoria</label>
-              <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none" value={quickForm.category} onChange={e => setQuickForm({...quickForm, category: e.target.value as Category})}>
-                {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Stock Totale</label>
-              <input type="number" className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:border-blue-500 outline-none text-right" value={quickForm.inStock || 0} onChange={e => setQuickForm({...quickForm, inStock: parseInt(e.target.value, 10) || 0})} />
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-col-reverse md:flex-row justify-end gap-3 pt-6 border-t border-slate-800 mt-4">
-          <button onClick={() => setIsQuickCreateOpen(false)} className="w-full md:w-auto px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-center font-medium">Annulla</button>
-          <button onClick={handleCreateAndAddAccessory} disabled={!quickForm.name} className="w-full md:w-auto px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold transition-colors shadow-lg shadow-blue-900/20 text-center">Crea Accessorio</button>
-        </div>
-      </Modal>
-    );
-  }
 };

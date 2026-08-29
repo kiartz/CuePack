@@ -7,6 +7,7 @@ import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from
 import { openDocumentInBrowser } from '../utils/documentViewer';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
+import { getCategoryDefinitions } from '../utils/categories';
 import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
 
 interface InventoryViewProps {
@@ -47,11 +48,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       .map(item => {
         const name = (item.name || '').toLowerCase();
         const cat = (item.category || '').toLowerCase();
+        const subcat = (item.subcategory || item.folder || '').toLowerCase();
+        const alias = (item.alias || '').toLowerCase();
+        const loc = (item.location || '').toLowerCase();
         const desc = (item.description || '').toLowerCase();
         const pcode = (item.productCode || '').toLowerCase();
         const icodes = (item.instances || []).map(inst => inst.id.toLowerCase()).join(' ');
         
-        const combinedText = `${name} ${cat} ${desc} ${pcode} ${icodes}`;
+        const combinedText = `${name} ${cat} ${subcat} ${alias} ${loc} ${desc} ${pcode} ${icodes}`;
         const isMatch = searchTokens.every(token => combinedText.includes(token));
         
         if (!isMatch) return { item, score: -1, nameMatches: 0 }; 
@@ -332,8 +336,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                onChange={(e) => setSelectedCategory(e.target.value)}
              >
                <option value="All">Tutte le Categorie ({items.length})</option>
-               {Object.values(Category).map(c => {
-                 const count = items.filter(i => i.category === c).length;
+               {Array.from(new Set([
+                 ...getCategoryDefinitions().map(c => c.name),
+                 ...Object.values(Category),
+                 ...items.map(i => i.category).filter(Boolean)
+               ])).map(c => {
+                 const count = items.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
                  return <option key={c} value={c}>{c} ({count})</option>;
                })}
              </select>
@@ -560,17 +568,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                              {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                       ) : (
-                          <span className={`px-1.5 py-0.5 rounded text-xs font-bold border cursor-pointer
-                            ${item.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
-                            item.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
-                            item.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
-                            item.category === Category.REGIA ? 'bg-teal-900/20 text-teal-500 border-teal-900/30' :
-                            'bg-slate-800 text-slate-400 border-slate-700'
-                            }`}
-                            title="Doppio click per cambiare categoria"
-                          >
-                            {item.category}
-                          </span>
+                          <div className="flex flex-col gap-0.5 items-start">
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-bold border cursor-pointer
+                              ${item.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
+                              item.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
+                              item.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
+                              item.category === Category.REGIA ? 'bg-teal-900/20 text-teal-500 border-teal-900/30' :
+                              'bg-slate-800 text-slate-400 border-slate-700'
+                              }`}
+                              title="Doppio click per cambiare categoria"
+                            >
+                              {item.category}
+                            </span>
+                            {(item.subcategory || item.folder) && (
+                              <span className="text-[10px] text-slate-400 truncate max-w-[120px]" title={item.subcategory || item.folder}>
+                                {item.subcategory || item.folder}
+                              </span>
+                            )}
+                          </div>
                       )}
                     </td>
 
