@@ -9,8 +9,9 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { 
   batchWriteItems, addOrUpdateItem, deleteItem, 
-  COLL_DATABASES, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection 
+  COLL_DATABASES, COLL_INVENTORY, COLL_KITS, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection 
 } from '../firebase';
+import { getDbBadgeStyle, getDbDotColor, DB_COLORS } from '../utils/databaseColors';
 
 interface HomeViewProps {
   inventory: InventoryItem[];
@@ -39,6 +40,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [isNewDbModalOpen, setIsNewDbModalOpen] = useState(false);
   const [newDbForm, setNewDbForm] = useState({
     name: '',
+    code: '',
+    color: 'blue',
     description: '',
     cloneCurrent: false,
     setAsDefault: false
@@ -47,6 +50,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [editingDb, setEditingDb] = useState<InventoryDatabase | null>(null);
   const [editDbForm, setEditDbForm] = useState({
     name: '',
+    code: '',
+    color: 'emerald',
     description: ''
   });
 
@@ -80,10 +85,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const handleCreateDatabase = async () => {
     if (!newDbForm.name.trim()) return;
 
+    const rawCode = (newDbForm.code.trim() || newDbForm.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3) || 'DB').toUpperCase();
     const newDbId = `db_${generateId().toLowerCase()}`;
     const newDbObj: InventoryDatabase = {
       id: newDbId,
       name: newDbForm.name.trim(),
+      code: rawCode,
+      color: newDbForm.color || 'blue',
       description: newDbForm.description.trim() || undefined,
       isDefault: newDbForm.setAsDefault,
       createdAt: new Date().toISOString()
@@ -102,16 +110,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
       // Save database metadata
       await addOrUpdateItem(COLL_DATABASES, newDbObj);
 
-      // Clone current inventory/kits if requested
-      if (newDbForm.cloneCurrent) {
-        const targetInventoryCol = getInventoryCollection(newDbId);
-        const targetKitsCol = getKitsCollection(newDbId);
-        if (inventory.length > 0) {
-          await batchWriteItems(targetInventoryCol, inventory);
-        }
-        if (kits.length > 0) {
-          await batchWriteItems(targetKitsCol, kits);
-        }
+      // Clone current inventory if requested into unified collection
+      if (newDbForm.cloneCurrent && inventory.length > 0) {
+        const clonedItems = inventory.map(item => ({
+          ...item,
+          id: generateId(),
+          databaseId: newDbId
+        }));
+        await batchWriteItems(COLL_INVENTORY, clonedItems);
       }
 
       // Switch to new database
@@ -120,8 +126,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
       }
 
       setIsNewDbModalOpen(false);
-      setNewDbForm({ name: '', description: '', cloneCurrent: false, setAsDefault: false });
-      alert(`Database "${newDbObj.name}" creato e attivato con successo!`);
+      setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
+      alert(`Database "${newDbObj.name}" [${newDbObj.code}] creato e attivato con successo!`);
     } catch (err) {
       console.error("Errore creazione database:", err);
       alert("Si è verificato un errore durante la creazione del database.");
@@ -132,9 +138,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
     if (!editingDb || !editDbForm.name.trim()) return;
 
     try {
+      const rawCode = (editDbForm.code.trim() || editingDb.code || editDbForm.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3) || 'DB').toUpperCase();
       const updated: InventoryDatabase = {
         ...editingDb,
         name: editDbForm.name.trim(),
+        code: rawCode,
+        color: editDbForm.color || editingDb.color || 'blue',
         description: editDbForm.description.trim() || undefined
       };
 
@@ -250,14 +259,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 const existing = nameMap.get(key);
                 
                 if (existing) {
-                    itemsToWrite.push({ ...importedItem, id: existing.id });
+                    itemsToWrite.push({ ...importedItem, id: existing.id, databaseId: importedItem.databaseId || activeDatabaseId });
                 } else {
-                    itemsToWrite.push({ ...importedItem, id: importedItem.id || generateId() });
+                    itemsToWrite.push({ ...importedItem, id: importedItem.id || generateId(), databaseId: importedItem.databaseId || activeDatabaseId });
                 }
              });
              
              if (itemsToWrite.length > 0) {
-                 await batchWriteItems(targetInventoryCol, itemsToWrite);
+                 await batchWriteItems(COLL_INVENTORY, itemsToWrite);
              }
         }
 
@@ -373,12 +382,18 @@ export const HomeView: React.FC<HomeViewProps> = ({
                             <div className="space-y-2">
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className={`text-[10px] font-mono font-black px-1.5 py-0.5 rounded border shrink-0 ${getDbBadgeStyle(dbItem.color)}`}>
+                                                {dbItem.code || 'DB'}
+                                            </span>
                                             <h3 className="font-bold text-slate-200 truncate text-base">{dbItem.name}</h3>
                                         </div>
                                         {dbItem.description && (
                                             <p className="text-xs text-slate-400 mt-1 line-clamp-2">{dbItem.description}</p>
                                         )}
+                                        <div className="flex items-center gap-3 text-xs text-slate-400 mt-2">
+                                            <span><strong className="text-slate-200">{inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === dbItem.id).length}</strong> articoli</span>
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
                                         {isDefault && (
@@ -424,7 +439,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                     <button 
                                       onClick={() => {
                                         setEditingDb(dbItem);
-                                        setEditDbForm({ name: dbItem.name, description: dbItem.description || '' });
+                                        setEditDbForm({
+                                          name: dbItem.name,
+                                          code: dbItem.code || '',
+                                          color: dbItem.color || 'blue',
+                                          description: dbItem.description || ''
+                                        });
                                       }}
                                       className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
                                       title="Modifica nome e descrizione"
@@ -513,16 +533,58 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Crea un nuovo archivio di inventario isolato. Potrai importare nuovi prodotti o caricarlo da Rentman mantenendo separato il database principale.
             </p>
 
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome Database *</label>
-              <input 
-                type="text" 
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none"
-                placeholder="Es. Rentman Import, Magazzino Service 2..."
-                value={newDbForm.name}
-                onChange={e => setNewDbForm({ ...newDbForm, name: e.target.value })}
-                autoFocus
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome Database *</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none"
+                  placeholder="Es. Rentman Import, Magazzino Service 2..."
+                  value={newDbForm.name}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const autoCode = !newDbForm.code ? val.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() : newDbForm.code;
+                    setNewDbForm({ ...newDbForm, name: val, code: autoCode });
+                  }}
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Sigla (3-4 Car.) *</label>
+                <input 
+                  type="text" 
+                  maxLength={4}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white font-mono font-bold focus:border-blue-500 outline-none uppercase"
+                  placeholder="PRI"
+                  value={newDbForm.code}
+                  onChange={e => setNewDbForm({ ...newDbForm, code: e.target.value.toUpperCase().slice(0, 4) })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Colore Badge</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {DB_COLORS.map(c => {
+                  const isSelected = newDbForm.color === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setNewDbForm({ ...newDbForm, color: c.id })}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
+                        isSelected 
+                          ? `${c.badge} ring-2 ring-blue-500` 
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+                      <span className="truncate">{c.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -543,7 +605,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   onChange={e => setNewDbForm({ ...newDbForm, cloneCurrent: e.target.checked })}
                   className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 bg-slate-950 w-4 h-4"
                 />
-                <span>Copia materiali e kit attuali nel nuovo database</span>
+                <span>Copia materiali attuali nel nuovo database</span>
               </label>
 
               <label className="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer">
@@ -585,15 +647,52 @@ export const HomeView: React.FC<HomeViewProps> = ({
           size="md"
         >
           <div className="space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome Database *</label>
-              <input 
-                type="text" 
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none"
-                value={editDbForm.name}
-                onChange={e => setEditDbForm({ ...editDbForm, name: e.target.value })}
-                autoFocus
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Nome Database *</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-blue-500 outline-none"
+                  value={editDbForm.name}
+                  onChange={e => setEditDbForm({ ...editDbForm, name: e.target.value })}
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Sigla (3-4 Car.) *</label>
+                <input 
+                  type="text" 
+                  maxLength={4}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white font-mono font-bold focus:border-blue-500 outline-none uppercase"
+                  value={editDbForm.code}
+                  onChange={e => setEditDbForm({ ...editDbForm, code: e.target.value.toUpperCase().slice(0, 4) })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-400 uppercase font-bold tracking-wider">Colore Badge</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {DB_COLORS.map(c => {
+                  const isSelected = editDbForm.color === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setEditDbForm({ ...editDbForm, color: c.id })}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
+                        isSelected 
+                          ? `${c.badge} ring-2 ring-blue-500` 
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+                      <span className="truncate">{c.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-1">

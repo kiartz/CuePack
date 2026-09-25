@@ -21,6 +21,7 @@ import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { getShareUrlParams } from '../utils/share';
 import { useTheme } from '../context/ThemeContext';
+import { getDbBadgeStyle } from '../utils/databaseColors';
 
 type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material' | 'logistica-personale' | 'logistica-mezzi' | 'logistica-hotel' | 'utility-calcolo-elettrico' | 'utility-pixelmap' | 'utility-calcolo-ledwall' | 'utility-calcolo-stripled';
 
@@ -115,12 +116,33 @@ export default function AuthenticatedApp() {
   useEffect(() => {
     const unsubDatabases = onSnapshot(collection(db, COLL_DATABASES), (snapshot) => {
       const dbs: InventoryDatabase[] = [];
-      snapshot.forEach(doc => dbs.push(doc.data() as InventoryDatabase));
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data() as InventoryDatabase;
+        const normalizedCode = data.code || (data.id === DEFAULT_DATABASE_ID ? 'PRI' : (data.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || 'DB'));
+        const normalizedColor = data.color || (data.id === DEFAULT_DATABASE_ID ? 'emerald' : 'blue');
+
+        // Auto-update if code or color was missing
+        if (!data.code || !data.color) {
+          addOrUpdateItem(COLL_DATABASES, {
+            ...data,
+            code: normalizedCode,
+            color: normalizedColor
+          });
+        }
+
+        dbs.push({
+          ...data,
+          code: normalizedCode,
+          color: normalizedColor
+        });
+      });
 
       if (dbs.length === 0) {
         const defaultDbObj: InventoryDatabase = {
           id: DEFAULT_DATABASE_ID,
           name: 'Database Principale',
+          code: 'PRI',
+          color: 'emerald',
           description: 'Database predefinito di produzione',
           isDefault: true,
           createdAt: new Date().toISOString()
@@ -132,6 +154,8 @@ export default function AuthenticatedApp() {
           const defaultDbObj: InventoryDatabase = {
             id: DEFAULT_DATABASE_ID,
             name: 'Database Principale',
+            code: 'PRI',
+            color: 'emerald',
             description: 'Database predefinito di produzione',
             isDefault: !dbs.some(d => d.isDefault),
             createdAt: new Date().toISOString()
@@ -148,55 +172,58 @@ export default function AuthenticatedApp() {
     return () => unsubDatabases();
   }, []);
 
-  // 2. Dynamic Inventory, Kits, Templates Listener for Active Database
+  // 2. Unified Inventory, Kits, Templates Listeners
   useEffect(() => {
-    const inventoryCol = getInventoryCollection(activeDatabaseId);
-    const kitsCol = getKitsCollection(activeDatabaseId);
-    const templatesCol = getTemplatesCollection(activeDatabaseId);
-
-    // 2.1 Inventory Listener
-    const unsubInventory = onSnapshot(collection(db, inventoryCol), (snapshot) => {
+    // 2.1 Inventory Listener (Always listens to unified COLL_INVENTORY)
+    const unsubInventory = onSnapshot(collection(db, COLL_INVENTORY), (snapshot) => {
         const items: InventoryItem[] = [];
-        snapshot.forEach(doc => items.push(doc.data() as InventoryItem));
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as InventoryItem;
+          items.push({
+            ...data,
+            id: docSnap.id,
+            databaseId: data.databaseId || DEFAULT_DATABASE_ID
+          });
+        });
         setInventory(items);
         
-        // SEEDING: only for default DB if completely empty
-        if (activeDatabaseId === DEFAULT_DATABASE_ID && snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[inventoryCol]) {
+        // SEEDING: only if completely empty
+        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_INVENTORY]) {
              console.log("Seeding Database with Initial Inventory...");
-             hasAttemptedSeeding.current[inventoryCol] = true;
-             batchWriteItems(inventoryCol, INITIAL_INVENTORY);
+             hasAttemptedSeeding.current[COLL_INVENTORY] = true;
+             batchWriteItems(COLL_INVENTORY, INITIAL_INVENTORY.map(i => ({ ...i, databaseId: DEFAULT_DATABASE_ID })));
         }
     }, (error) => {
-        console.error(`Inventory Sync Error (${inventoryCol}):`, error);
+        console.error(`Inventory Sync Error:`, error);
         setDbError("Errore di connessione al Database.");
     });
 
     // 2.2 Kits Listener
-    const unsubKits = onSnapshot(collection(db, kitsCol), (snapshot) => {
+    const unsubKits = onSnapshot(collection(db, COLL_KITS), (snapshot) => {
         const items: Kit[] = [];
-        snapshot.forEach(doc => items.push(doc.data() as Kit));
+        snapshot.forEach(docSnap => items.push(docSnap.data() as Kit));
         setKits(items);
 
-        if (activeDatabaseId === DEFAULT_DATABASE_ID && snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[kitsCol]) {
+        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_KITS]) {
              console.log("Seeding Database with Initial Kits...");
-             hasAttemptedSeeding.current[kitsCol] = true;
-             batchWriteItems(kitsCol, INITIAL_KITS);
+             hasAttemptedSeeding.current[COLL_KITS] = true;
+             batchWriteItems(COLL_KITS, INITIAL_KITS);
         }
-    }, (error) => console.error(`Kits Sync Error (${kitsCol}):`, error));
+    }, (error) => console.error(`Kits Sync Error:`, error));
 
     // 2.3 Templates Listener
-    const unsubTemplates = onSnapshot(collection(db, templatesCol), (snapshot) => {
+    const unsubTemplates = onSnapshot(collection(db, COLL_TEMPLATES), (snapshot) => {
         const items: Template[] = [];
-        snapshot.forEach(doc => items.push(doc.data() as Template));
+        snapshot.forEach(docSnap => items.push(docSnap.data() as Template));
         setTemplates(items);
-    }, (error) => console.error(`Templates Sync Error (${templatesCol}):`, error));
+    }, (error) => console.error(`Templates Sync Error:`, error));
 
     return () => {
         unsubInventory();
         unsubKits();
         unsubTemplates();
     };
-  }, [activeDatabaseId]);
+  }, []);
 
   // 3. Lists and Master Checklist (Global)
   useEffect(() => {
@@ -416,6 +443,7 @@ export default function AuthenticatedApp() {
             items={inventory} 
             packingLists={packingLists}
             activeDatabaseId={activeDatabaseId}
+            databases={databases}
         />;
       case 'kits':
         return <KitsView 
@@ -517,11 +545,20 @@ export default function AuthenticatedApp() {
         {!isSidebarCollapsed ? (
           <div className="px-3 py-2 bg-slate-950/80 border-b border-slate-800/80 flex items-center justify-between gap-2 shrink-0">
             <div className="flex items-center gap-2 min-w-0">
-              <Database size={14} className="text-emerald-400 shrink-0" />
-              <div className="truncate text-xs">
-                <span className="text-[9px] uppercase font-bold text-slate-500 block leading-none">DB ATTIVO</span>
-                <span className="font-bold text-slate-200 truncate block text-xs mt-0.5">{databases.find(d => d.id === activeDatabaseId)?.name || 'Principale'}</span>
-              </div>
+              {(() => {
+                const currentDb = databases.find(d => d.id === activeDatabaseId);
+                return (
+                  <>
+                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 ${getDbBadgeStyle(currentDb?.color)}`}>
+                      {currentDb?.code || 'PRI'}
+                    </span>
+                    <div className="truncate text-xs">
+                      <span className="text-[9px] uppercase font-bold text-slate-500 block leading-none">DB ATTIVO</span>
+                      <span className="font-bold text-slate-200 truncate block text-xs mt-0.5">{currentDb?.name || 'Principale'}</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             <button 
               onClick={() => setCurrentView('home')}
@@ -533,8 +570,10 @@ export default function AuthenticatedApp() {
           </div>
         ) : (
           <div className="p-2 border-b border-slate-800/80 flex justify-center shrink-0" title={`DB: ${databases.find(d => d.id === activeDatabaseId)?.name || 'Principale'}`}>
-            <button onClick={() => setCurrentView('home')} className="p-1.5 rounded bg-slate-950 text-emerald-400 hover:text-white border border-slate-800" title="Vai alla gestione Database">
-              <Database size={15} />
+            <button onClick={() => setCurrentView('home')} className="p-1 rounded bg-slate-950 hover:text-white border border-slate-800 flex items-center justify-center" title="Vai alla gestione Database">
+              <span className={`text-[9px] font-mono font-black px-1 rounded ${getDbBadgeStyle(databases.find(d => d.id === activeDatabaseId)?.color)}`}>
+                {databases.find(d => d.id === activeDatabaseId)?.code || 'DB'}
+              </span>
             </button>
           </div>
         )}

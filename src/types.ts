@@ -59,6 +59,7 @@ export interface InventoryItem {
   folder?: string; // Retrocompatibilità con vecchie versioni / importazioni
   alias?: string; // Alias / Nome breve (es. "SB18", "CDJ2000")
   location?: string; // Posizione a magazzino (es. "T2", "R2", "A-01")
+  databaseId?: string; // ID del database di inventario a cui appartiene l'articolo (es. 'default')
   stockType?: 'bulk' | 'serialized'; // Tipo scorta
   inStock: number;
   
@@ -245,6 +246,8 @@ export interface ChecklistCategory {
 export interface InventoryDatabase {
   id: string; // 'default' o id univoco (es. 'db_rentman')
   name: string; // Nome del database (es. "Database Principale", "Rentman Import")
+  code: string; // Sigla breve a 3-4 caratteri per badge compatti (es. 'PRI', 'RNT')
+  color?: string; // Colore badge (es. 'emerald', 'blue', 'amber', 'purple', 'rose', 'cyan', 'indigo')
   description?: string;
   isDefault?: boolean;
   createdAt: string;

@@ -40,19 +40,16 @@ export const COLL_DATABASES = 'databases_meta';
 
 export const DEFAULT_DATABASE_ID = 'default';
 
-export const getInventoryCollection = (dbId?: string): string => {
-  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_INVENTORY;
-  return `${COLL_INVENTORY}_${dbId}`;
+export const getInventoryCollection = (_dbId?: string): string => {
+  return COLL_INVENTORY;
 };
 
-export const getKitsCollection = (dbId?: string): string => {
-  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_KITS;
-  return `${COLL_KITS}_${dbId}`;
+export const getKitsCollection = (_dbId?: string): string => {
+  return COLL_KITS;
 };
 
-export const getTemplatesCollection = (dbId?: string): string => {
-  if (!dbId || dbId === DEFAULT_DATABASE_ID) return COLL_TEMPLATES;
-  return `${COLL_TEMPLATES}_${dbId}`;
+export const getTemplatesCollection = (_dbId?: string): string => {
+  return COLL_TEMPLATES;
 };
 
 // --- Generic Helper Functions ---
