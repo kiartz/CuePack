@@ -243,6 +243,8 @@ export interface ChecklistCategory {
 }
 
 // --- MULTI-DATABASE TYPES ---
+export const DEFAULT_DATABASE_ID = 'default';
+
 export interface InventoryDatabase {
   id: string; // 'default' o id univoco (es. 'db_rentman')
   name: string; // Nome del database (es. "Database Principale", "Rentman Import")

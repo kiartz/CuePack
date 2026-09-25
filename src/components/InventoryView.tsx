@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink } from 'lucide-react';
-import { InventoryItem, Category, PackingList, ListComponent } from '../types';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database } from 'lucide-react';
+import { InventoryItem, Category, PackingList, ListComponent, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
@@ -9,15 +9,18 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { getCategoryDefinitions } from '../utils/categories';
 import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
+import { getDbBadgeStyle, getDbDotColor } from '../utils/databaseColors';
 
 interface InventoryViewProps {
   items: InventoryItem[];
   packingLists: PackingList[];
   activeDatabaseId?: string;
+  databases?: InventoryDatabase[];
 }
 
-export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId }) => {
+export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId, databases = [] }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDatabase, setSelectedDatabase] = useState<string>('All');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -83,6 +86,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             });
         }
 
+        const matchesDatabase = selectedDatabase === 'All' || (item.databaseId || DEFAULT_DATABASE_ID) === selectedDatabase;
+        if (!matchesDatabase) return { item, score: -1, nameMatches: 0 };
+
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
         if (!matchesCategory) return { item, score: -1, nameMatches: 0 };
 
@@ -97,12 +103,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       .map(result => result.item);
 
       return results;
-  }, [items, searchTerm, selectedCategory]);
+  }, [items, searchTerm, selectedCategory, selectedDatabase]);
 
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedCategory]);
+  }, [searchTerm, selectedCategory, selectedDatabase]);
 
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredItems.slice(
@@ -327,6 +333,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario Materiali</h1>
 
         <div className="flex flex-wrap md:flex-nowrap items-center gap-2 w-full xl:w-auto">
+          {/* Database Filter */}
+          <div className="relative flex-grow sm:flex-none">
+             <Database className="absolute left-3 top-2.5 text-slate-500" size={16} />
+             <select 
+               className="bg-slate-900 border border-slate-700 text-slate-300 pl-8 pr-7 py-2 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
+               value={selectedDatabase}
+               onChange={(e) => setSelectedDatabase(e.target.value)}
+             >
+               <option value="All">Tutti i Database ({items.length})</option>
+               {(databases && databases.length > 0 ? databases : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'blue' }]).map(db => {
+                 const count = items.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
+                 return (
+                   <option key={db.id} value={db.id}>
+                     [{db.code}] {db.name} ({count})
+                   </option>
+                 );
+               })}
+             </select>
+          </div>
+
           {/* Category Filter */}
           <div className="relative flex-grow sm:flex-none">
              <Filter className="absolute left-3 top-2.5 text-slate-500" size={16} />
@@ -438,19 +464,42 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                   >
                     {/* NAME COLUMN */}
                     <td className="py-2 px-3" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'name'); }}>
-                      {editingCell?.itemId === item.id && editingCell?.field === 'name' ? (
-                          <input 
-                            ref={editInputRef as React.RefObject<HTMLInputElement>}
-                            type="text"
-                            className="w-full bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveInlineEdit}
-                            onKeyDown={handleKeyDown}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                      ) : (
+                      {(() => {
+                        const dbId = item.databaseId || DEFAULT_DATABASE_ID;
+                        const db = (databases || []).find(d => d.id === dbId);
+                        const code = db?.code || (dbId === DEFAULT_DATABASE_ID ? 'PRI' : dbId.slice(0, 3).toUpperCase());
+                        const color = db?.color || 'blue';
+                        const dbBadge = (
+                          <span 
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${getDbBadgeStyle(color)}`}
+                            title={`Database: ${db?.name || dbId}`}
+                          >
+                            <span className={`w-1 h-1 rounded-full ${getDbDotColor(color)}`} />
+                            {code}
+                          </span>
+                        );
+
+                        if (editingCell?.itemId === item.id && editingCell?.field === 'name') {
+                          return (
+                            <div className="flex items-center gap-2">
+                              {dbBadge}
+                              <input 
+                                ref={editInputRef as React.RefObject<HTMLInputElement>}
+                                type="text"
+                                className="w-full bg-slate-950 border border-blue-500 rounded px-1 py-0.5 text-xs text-white outline-none"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={saveInlineEdit}
+                                onKeyDown={handleKeyDown}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                          );
+                        }
+
+                        return (
                           <div className="flex items-center gap-2" title="Doppio click per rinominare">
+                            {dbBadge}
                             <div className="font-medium text-white">{item.name}</div>
                             {item.accessories && item.accessories.length > 0 && (
                             <button 
@@ -494,8 +543,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                               )}
                             </div>
                             )}
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })()}
                       {(!editingCell || editingCell.itemId !== item.id || editingCell?.field !== 'name') && (
                           <div className="flex flex-col gap-0.5 mt-0.5">
                               {item.description && (
@@ -697,7 +747,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         inventory={items} // Pass full inventory for accessories selection
         onCreateAccessory={handleCreateAccessory}
         title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"}
-        activeDatabaseId={activeDatabaseId}
+        activeDatabaseId={selectedDatabase !== 'All' ? selectedDatabase : activeDatabaseId}
+        databases={databases}
       />
       
       <ConfirmationModal

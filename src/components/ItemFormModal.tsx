@@ -6,7 +6,9 @@ import {
   ItemDocument, 
   ItemAccessory, 
   PeriodicInspection, 
-  ItemInstance 
+  ItemInstance,
+  InventoryDatabase,
+  DEFAULT_DATABASE_ID
 } from '../types';
 import { 
   Plus, 
@@ -40,8 +42,10 @@ import {
   Paperclip,
   Trash2,
   Check,
-  Settings
+  Settings,
+  Database
 } from 'lucide-react';
+import { getDbBadgeStyle, getDbDotColor } from '../utils/databaseColors';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
 import { 
@@ -63,6 +67,7 @@ interface ItemFormModalProps {
   title: string;
   initialName?: string;
   activeDatabaseId?: string;
+  databases?: InventoryDatabase[];
 }
 
 // Generate product code (internal code, e.g. 1, 2, 067..., starts from 1, NOT printed)
@@ -158,10 +163,14 @@ export const generateProductQrCode = (
 type ActiveTab = 'data' | 'serials' | 'accessories' | 'inspections' | 'notes' | 'files';
 
 export const ItemFormModal: React.FC<ItemFormModalProps> = ({ 
-  isOpen, onClose, onSave, initialData, inventory = [], onCreateAccessory, title, initialName, activeDatabaseId 
+  isOpen, onClose, onSave, initialData, inventory = [], onCreateAccessory, title, initialName, activeDatabaseId, databases = [] 
 }) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('data');
   const [formData, setFormData] = useState<Partial<InventoryItem>>({});
+
+  const defaultDatabaseId = useMemo(() => {
+    return databases.find(d => d.isDefault)?.id || activeDatabaseId || DEFAULT_DATABASE_ID;
+  }, [databases, activeDatabaseId]);
   
   // Category management
   const [categoryDefs, setCategoryDefs] = useState<CategoryDefinition[]>(getCategoryDefinitions());
@@ -242,9 +251,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         }
 
         const currentSubcat = initialData.subcategory || initialData.folder || '';
+        const initialDbId = initialData.databaseId || defaultDatabaseId;
 
         setFormData({
           ...initialData,
+          databaseId: initialDbId,
           productCode: initialProductCode,
           qrCode: initialQrCode,
           subcategory: currentSubcat,
@@ -274,6 +285,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         
         setFormData({
           name: initialName || '',
+          databaseId: defaultDatabaseId,
           productCode: autoProductCode,
           qrCode: autoQrCode,
           category: Category.AUDIO,
@@ -314,7 +326,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       }
       setLocalInventory(inventory);
     }
-  }, [isOpen, initialData, inventory, initialName]);
+  }, [isOpen, initialData, inventory, initialName, defaultDatabaseId]);
 
   // Recalculate transport volume (m³) when L x W x H change
   useEffect(() => {
@@ -370,6 +382,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     return getSubcategoriesForCategory(catName);
   }, [formData.category, categoryDefs]);
 
+  const currentDbId = formData.databaseId || defaultDatabaseId;
+  const currentDb = useMemo(() => {
+    return databases.find(d => d.id === currentDbId);
+  }, [databases, currentDbId]);
+
   // Handle adding custom subcategory inline
   const handleAddSubcategoryInline = () => {
     const trimmed = newSubcatInput.trim();
@@ -401,6 +418,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
     onSave({
       name: formData.name,
+      databaseId: formData.databaseId || defaultDatabaseId,
       productCode: finalProductCode,
       qrCode: finalQrCode,
       category: formData.category || Category.OTHER,
@@ -909,12 +927,12 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
               {/* MIDDLE ROW: CATEGORIA & MAGAZZINO (LEFT) VS PROPRIETÀ FISICHE (RIGHT) */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
                 
-                {/* LEFT: CATEGORIA & MAGAZZINO (7 COLS) */}
+                {/* LEFT: DATABASE, CATEGORIA & MAGAZZINO (7 COLS) */}
                 <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
                     <div className="flex items-center gap-2">
                       <MapPin size={18} className="text-emerald-400" />
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Categoria & Magazzino</h3>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Database, Categoria & Magazzino</h3>
                     </div>
                     <button
                       type="button"
@@ -924,6 +942,36 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       <Settings size={13} />
                       Gestisci Categorie
                     </button>
+                  </div>
+
+                  {/* Database di Appartenenza */}
+                  <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Database size={14} className="text-blue-400" />
+                        Database di Appartenenza <span className="text-rose-500">*</span>
+                      </label>
+                      {currentDb && (
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${getDbBadgeStyle(currentDb.color)}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${getDbDotColor(currentDb.color)}`} />
+                          {currentDb.code}
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-semibold text-white focus:border-blue-500 outline-none transition-colors"
+                      value={formData.databaseId || defaultDatabaseId}
+                      onChange={e => setFormData({ ...formData, databaseId: e.target.value })}
+                    >
+                      {(databases.length > 0 ? databases : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'blue', isDefault: true }]).map(db => (
+                        <option key={db.id} value={db.id}>
+                          [{db.code}] {db.name} {db.isDefault ? '(Predefinito)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-400">
+                      Indica a quale archivio o inventario appartiene questo materiale.
+                    </p>
                   </div>
 
                   {/* Categoria Macro & Sottocategoria */}

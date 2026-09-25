@@ -38,7 +38,7 @@ export const COLL_LISTS = 'packing_lists';
 export const COLL_CHECKLIST_CONFIG = 'checklist_config';
 export const COLL_DATABASES = 'databases_meta';
 
-export const DEFAULT_DATABASE_ID = 'default';
+export { DEFAULT_DATABASE_ID } from './types';
 
 export const getInventoryCollection = (_dbId?: string): string => {
   return COLL_INVENTORY;
