@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown } from 'lucide-react';
-import { PackingList, ListComponent, WarehouseState, ListZone, ListSection } from '../types';
-import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db } from '../firebase';
+import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database } from 'lucide-react';
+import { PackingList, ListComponent, WarehouseState, ListZone, ListSection, InventoryItem, InventoryDatabase } from '../types';
+import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db, DEFAULT_DATABASE_ID } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -77,6 +77,8 @@ interface PrepMaterialViewProps {
   onOpenTemplateModal?: (list: PackingList) => void;
   initialListId?: string | null;
   onListOpened?: () => void;
+  inventory?: InventoryItem[];
+  databases?: InventoryDatabase[];
 }
 
 export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({ 
@@ -84,10 +86,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     onDuplicateFromArchive,
     onOpenTemplateModal,
     initialListId,
-    onListOpened
+    onListOpened,
+    inventory = [],
+    databases = []
 }) => {
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [prepDatabaseFilter, setPrepDatabaseFilter] = useState<string>('All');
   const [activeListAction, setActiveListAction] = useState<'archive' | 'restore' | 'delete' | 'duplicate' | null>(null);
   const [activeWarehouseMode, setActiveWarehouseMode] = useState<'distinta' | 'carico' | 'rientro' | null>(() => {
     if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -293,6 +298,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
   }, [lists, searchTerm, showArchived]);
   
+  const getComponentDatabaseId = (comp: { databaseId?: string; referenceId?: string }): string => {
+    if (comp.databaseId) return comp.databaseId;
+    if (comp.referenceId && inventory && inventory.length > 0) {
+      const inv = inventory.find(i => i.id === comp.referenceId);
+      if (inv?.databaseId) return inv.databaseId;
+    }
+    return DEFAULT_DATABASE_ID;
+  };
+  
   // --- AGGREGATION LOGIC FOR TOTALS VIEW ---
   const aggregatedData = useMemo(() => {
       if (!activeList || !activeList.zones) return null;
@@ -355,6 +369,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
           zone.sections.forEach(section => {
               const processComp = (comp: ListComponent, multiplier: number) => {
+                  if (prepDatabaseFilter !== 'All') {
+                      const compDbId = getComponentDatabaseId(comp);
+                      if (compDbId !== prepDatabaseFilter) return;
+                  }
                   const ws = comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
                   const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
                   
@@ -462,7 +480,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       });
 
       return zoneMap;
-  }, [activeList]);
+  }, [activeList, prepDatabaseFilter, inventory]);
 
   // Calculate Stats for Highlighted Item in Active Zone (Depends on aggregatedData)
   const highlightStats = useMemo(() => {
@@ -1483,20 +1501,40 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                   </button>
               </div>
               
-              {/* ITEM SEARCH */}
-              <div className={`relative flex-1 max-w-xs mx-4 transition-all duration-300 ${isSearchExpanded ? 'block w-full' : 'hidden'} md:block`}>
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                  <input 
-                      placeholder="Cerca nel materiale..." 
-                      className="w-full bg-slate-800 border border-slate-700 text-white pl-9 pr-8 py-1.5 rounded-lg text-sm outline-none focus:border-blue-500 transition-all"
-                      value={itemSearch}
-                      onChange={e => handleSearchChange(e.target.value)}
-                  />
-                  {itemSearch && (
-                      <button onClick={() => handleSearchChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-                          <X size={14} />
-                      </button>
+              {/* ITEM SEARCH & DB FILTER */}
+              <div className="flex items-center gap-2 mx-4">
+                  {databases && databases.length > 1 && (
+                      <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700/60 rounded-lg px-2.5 py-1.5 shrink-0">
+                          <Database size={13} className="text-blue-400 shrink-0" />
+                          <select
+                              value={prepDatabaseFilter}
+                              onChange={(e) => setPrepDatabaseFilter(e.target.value)}
+                              className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[130px] truncate"
+                              title="Filtra materiale per database"
+                          >
+                              <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
+                              {databases.map(db => (
+                                  <option key={db.id} value={db.id} className="bg-slate-900 text-white">
+                                      [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
+                                  </option>
+                              ))}
+                          </select>
+                      </div>
                   )}
+                  <div className={`relative flex-1 max-w-xs transition-all duration-300 ${isSearchExpanded ? 'block w-full' : 'hidden'} md:block`}>
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                      <input 
+                          placeholder="Cerca nel materiale..." 
+                          className="w-full bg-slate-800 border border-slate-700 text-white pl-9 pr-8 py-1.5 rounded-lg text-sm outline-none focus:border-blue-500 transition-all"
+                          value={itemSearch}
+                          onChange={e => handleSearchChange(e.target.value)}
+                      />
+                      {itemSearch && (
+                          <button onClick={() => handleSearchChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                              <X size={14} />
+                          </button>
+                      )}
+                  </div>
               </div>
           </div>
 
@@ -1630,6 +1668,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                             }
                                             return [comp];
                                         }).map((comp, compIdx) => {
+                                            if (prepDatabaseFilter !== 'All') {
+                                                const compDbId = getComponentDatabaseId(comp);
+                                                if (compDbId !== prepDatabaseFilter) return null;
+                                            }
                                             const isKit = comp.type === 'kit';
                                             
                                             // IF KIT: Render Header + Contents

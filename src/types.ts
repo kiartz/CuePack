@@ -143,6 +143,7 @@ export interface ListComponent {
   rentalType?: 'internal_shortage' | 'external_rental'; 
   externalRentalVendor?: string;
   isTemporary?: boolean;
+  databaseId?: string;
 }
 
 // --- TEMPLATES ---

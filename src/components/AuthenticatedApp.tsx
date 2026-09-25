@@ -487,6 +487,8 @@ export default function AuthenticatedApp() {
       case 'prep-material':
         return <PrepMaterialView 
             lists={packingLists} 
+            inventory={inventory}
+            databases={databases}
             onOpenTemplateModal={handleOpenNewProjectModal}
             initialListId={prepMaterialListToOpenId}
             onListOpened={() => setPrepMaterialListToOpenId(null)}

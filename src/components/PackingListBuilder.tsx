@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -150,6 +150,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const [pickerSearch, setPickerSearch] = useState('');
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [pickerDatabaseFilter, setPickerDatabaseFilter] = useState<string>('All');
   
   // LIST LOCAL SEARCH STATE
   const [listSearch, setListSearch] = useState('');
@@ -590,14 +591,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const filteredPickerItems = useMemo(() => {
       const searchTerms = (pickerSearch || '').toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
       
+      const dbFilteredInventory = inventory.filter(item => {
+          if (pickerDatabaseFilter === 'All') return true;
+          const itemDb = item.databaseId || DEFAULT_DATABASE_ID;
+          return itemDb === pickerDatabaseFilter;
+      });
+
       // If no search, return inventory sorted by name (limited)
       if (searchTerms.length === 0) {
-          return inventory
+          return dbFilteredInventory
             .filter(i => selectedCategory === 'All' || i.category === selectedCategory)
             .sort((a, b) => a.name.localeCompare(b.name));
       }
 
-      return inventory.map(item => {
+      return dbFilteredInventory.map(item => {
              const name = (item.name || '').toLowerCase();
              const category = (item.category || '').toLowerCase();
              const desc = (item.description || '').toLowerCase();
@@ -654,7 +661,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             return a.item.name.localeCompare(b.item.name);
         })
         .map(x => x.item);
-  }, [inventory, pickerSearch, selectedCategory]);
+  }, [inventory, pickerSearch, selectedCategory, pickerDatabaseFilter]);
 
   const filteredPickerKits = useMemo(() => {
       const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
@@ -1498,6 +1505,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         return {
           type: 'item', referenceId: i.id, name: i.name, category: i.category,
+          databaseId: i.databaseId || DEFAULT_DATABASE_ID,
           contents: rawAccessories.map(acc => {
               const invItem = inventory.find(inv => inv.id === acc.itemId);
               return { itemId: acc.itemId, name: invItem?.name || '?', quantity: acc.quantity, category: invItem?.category || 'Altro', prepNote: (acc as any).prepNote || '' };
@@ -2727,7 +2735,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             className="w-full text-left px-4 py-2.5 hover:bg-slate-800 border-b border-slate-800 flex justify-between items-center group cursor-pointer transition-colors"
                           >
                             <div className="flex-1 min-w-0 pr-2">
-                                <div className="text-sm text-white flex items-center gap-2 truncate">
+                                <div className="text-sm text-white flex items-center gap-1.5 truncate">
+                                    {(() => {
+                                        if (!databases || databases.length <= 1) return null;
+                                        const itemDb = databases.find(d => d.id === (item.databaseId || DEFAULT_DATABASE_ID));
+                                        if (!itemDb) return null;
+                                        return (
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${itemDb.color || 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+                                                {itemDb.code || itemDb.name.slice(0, 3).toUpperCase()}
+                                            </span>
+                                        );
+                                    })()}
                                     <span className="truncate">{item.name}</span>
                                     {qtyInZone > 0 && (
                                         <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 rounded font-bold shrink-0">
@@ -2782,6 +2800,24 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 
                 {/* Category & Action Buttons Row */}
                 <div className="flex items-center gap-2">
+                    {databases && databases.length > 1 && (
+                        <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 shrink-0">
+                            <Database size={13} className="text-blue-400 shrink-0" />
+                            <select
+                                value={pickerDatabaseFilter}
+                                onChange={(e) => setPickerDatabaseFilter(e.target.value)}
+                                className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[120px] truncate"
+                                title="Filtra ricerca materiale per database"
+                            >
+                                <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
+                                {databases.map(db => (
+                                    <option key={db.id} value={db.id} className="bg-slate-900 text-white">
+                                        [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="bg-slate-950 border border-slate-700 text-white px-2 py-2 rounded-lg text-sm flex-1 sm:w-32 outline-none">
                         <option value="All">Tutte</option>
                         {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
@@ -2941,6 +2977,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                               title="Clicca per evidenziare ovunque"
                                           >
                                               {comp.name} 
+                                              {(() => {
+                                                  if (!databases || databases.length <= 1) return null;
+                                                  const compDbId = comp.databaseId || inventory.find(i => i.id === comp.referenceId)?.databaseId || DEFAULT_DATABASE_ID;
+                                                  const compDb = databases.find(d => d.id === compDbId);
+                                                  if (!compDb) return null;
+                                                  return (
+                                                      <span 
+                                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${compDb.color || 'bg-slate-800 text-slate-300 border-slate-700'}`}
+                                                          title={`Database: ${compDb.name}`}
+                                                      >
+                                                          {compDb.code || compDb.name.slice(0, 3).toUpperCase()}
+                                                      </span>
+                                                  );
+                                              })()}
                                               {(() => {
                                                   if (comp.type !== 'item') return null;
                                                   const d = calculateAvailableQuantity(
