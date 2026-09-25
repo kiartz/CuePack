@@ -76,8 +76,8 @@ export interface InventoryItem {
 
 ### STEP 3: Liste Cross-Database & Filtri Magazzino
 - In `PackingListBuilder.tsx`:
-  - Rimozione di blocchi/avvisi vincolanti legati a un singolo database per evento.
-  - Ricerca articoli su tutto l'inventario cross-database.
+  - Rimozione di blocchi/avvisi vincolanti legati a un singolo database per evento: le liste possono contenere materiali mescolati liberamente da qualsiasi DB.
+  - **Filtro Database nel Picker di Ricerca**: aggiunta di un selettore/filtro rapido per Database (es. "Tutti i DB" oppure un singolo database come "PRI", "RNT"). Se selezionato un DB specifico, la ricerca nel catalogo troverà SOLO i materiali appartenenti a quel database; se impostato su "Tutti", cercherà su tutti i DB.
   - Badge sigla DB compatto (es. `[PRI]`, `[RNT]`) a ingombro minimo accanto a nome/codice nella distinta e nel dropdown di ricerca.
 - In `PrepMaterialView.tsx`:
   - Nessuna sigla o badge DB sulle righe di preparazione (massima pulizia visiva).

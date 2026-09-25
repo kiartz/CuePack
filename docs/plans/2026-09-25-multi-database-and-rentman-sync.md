@@ -54,7 +54,8 @@
 
 **Details:**
 1. In `PackingListBuilder.tsx`:
-   - Rimuovere le restrizioni di selezione del database dell'evento: l'evento può contenere articoli da qualsiasi DB.
+   - Rimuovere le restrizioni rigide sul database dell'evento: l'evento può contenere articoli da qualsiasi DB mescolati insieme.
+   - **Filtro Database nel Picker di Ricerca Materiale**: aggiungere un selettore/filtro rapido per Database (es. "Tutti i DB" oppure selezionare uno specifico database come "PRI - Principale", "RNT - Rentman"). Se selezionato un DB specifico, la ricerca nel catalogo troverà SOLO i materiali appartenenti a quel database; se impostato su "Tutti", cercherà ovunque.
    - Nel picker di ricerca articoli: mostrare accanto al nome il piccolo badge con la sigla del DB (es. `[PRI]`, `[RNT]`).
    - Nelle righe dei materiali inseriti nella distinta: inserire un piccolo badge poco ingombrante con la sigla DB (es. `PRI`, `RNT` in stile micro-pill 10px).
 2. In `PrepMaterialView.tsx`:
