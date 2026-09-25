@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { generateId } from '../utils';
 import { Plus, Search, Trash2, Copy, Blocks, ChevronLeft, ChevronRight } from 'lucide-react';
-import { InventoryItem, Kit, Template, Category, PackingList } from '../types';
+import { InventoryItem, Kit, Template, Category, PackingList, InventoryDatabase } from '../types';
 import { TemplateFormModal } from './TemplateFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { addOrUpdateItem, deleteItem, COLL_TEMPLATES, getTemplatesCollection } from '../firebase';
@@ -12,9 +12,10 @@ interface TemplatesViewProps {
   kits: Kit[];
   lists: PackingList[];
   activeDatabaseId?: string;
+  databases?: InventoryDatabase[];
 }
 
-export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, inventory, kits, lists, activeDatabaseId }) => {
+export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, inventory, kits, lists, activeDatabaseId, databases }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -268,6 +269,8 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, invento
         inventory={inventory}
         kits={kits}
         title={editingTemplate ? "Modifica Template" : "Nuovo Template"}
+        databases={databases}
+        activeDatabaseId={activeDatabaseId}
       />
       
       <ConfirmationModal

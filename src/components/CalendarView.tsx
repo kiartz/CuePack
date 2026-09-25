@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { PackingList } from '../types';
+import { PackingList, InventoryDatabase } from '../types';
 import { Calendar as CalendarIcon, User, MapPin, ChevronLeft, ChevronRight, Clock, Plus, Trash2, Truck, Wrench, Star, Anchor } from 'lucide-react';
 import { EventSummaryModal } from './EventSummaryModal';
 import { EventFormModal } from './EventFormModal';
@@ -8,6 +8,8 @@ import { addOrUpdateItem, COLL_LISTS } from '../firebase';
 interface CalendarViewProps {
   lists: PackingList[];
   onOpenEvent: (id: string) => void;
+  databases?: InventoryDatabase[];
+  activeDatabaseId?: string;
 }
 
 const COLUMN_WIDTH = 120;
@@ -29,7 +31,7 @@ const parseLocalDate = (dateStr?: string) => {
   return new Date(dateStr);
 };
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent }) => {
+export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, databases, activeDatabaseId }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [summaryEventId, setSummaryEventId] = useState<string | null>(null);
   const [editEventId, setEditEventId] = useState<string | null>(null);
@@ -433,6 +435,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent }
             isOpen={!!editEventId}
             onClose={() => setEditEventId(null)}
             initialData={lists.find(l => l.id === editEventId) || {}}
+            databases={databases}
+            activeDatabaseId={activeDatabaseId}
             onSave={async (data) => {
                 await addOrUpdateItem(COLL_LISTS, data as PackingList);
                 setEditEventId(null);

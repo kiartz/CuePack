@@ -168,9 +168,15 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [activeTab, setActiveTab] = useState<ActiveTab>('data');
   const [formData, setFormData] = useState<Partial<InventoryItem>>({});
 
+  const effectiveDatabases = useMemo(() => {
+    return (databases && databases.length > 0)
+      ? databases
+      : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
+  }, [databases]);
+
   const defaultDatabaseId = useMemo(() => {
-    return databases.find(d => d.isDefault)?.id || activeDatabaseId || DEFAULT_DATABASE_ID;
-  }, [databases, activeDatabaseId]);
+    return effectiveDatabases.find(d => d.isDefault)?.id || activeDatabaseId || DEFAULT_DATABASE_ID;
+  }, [effectiveDatabases, activeDatabaseId]);
   
   // Category management
   const [categoryDefs, setCategoryDefs] = useState<CategoryDefinition[]>(getCategoryDefinitions());
@@ -384,8 +390,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
   const currentDbId = formData.databaseId || defaultDatabaseId;
   const currentDb = useMemo(() => {
-    return databases.find(d => d.id === currentDbId);
-  }, [databases, currentDbId]);
+    return effectiveDatabases.find(d => d.id === currentDbId) || effectiveDatabases[0];
+  }, [effectiveDatabases, currentDbId]);
 
   // Handle adding custom subcategory inline
   const handleAddSubcategoryInline = () => {
@@ -954,7 +960,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       {currentDb && (
                         <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${getDbBadgeStyle(currentDb.color)}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${getDbDotColor(currentDb.color)}`} />
-                          {currentDb.code}
+                          {currentDb.code || currentDb.name.slice(0, 3).toUpperCase()}
                         </span>
                       )}
                     </div>
@@ -963,9 +969,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       value={formData.databaseId || defaultDatabaseId}
                       onChange={e => setFormData({ ...formData, databaseId: e.target.value })}
                     >
-                      {(databases.length > 0 ? databases : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'blue', isDefault: true }]).map(db => (
+                      {effectiveDatabases.map(db => (
                         <option key={db.id} value={db.id}>
-                          [{db.code}] {db.name} {db.isDefault ? '(Predefinito)' : ''}
+                          [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} {db.isDefault ? '(Predefinito)' : ''}
                         </option>
                       ))}
                     </select>

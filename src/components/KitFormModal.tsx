@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
 import { Plus, Search, X, Lightbulb } from 'lucide-react';
-import { InventoryItem, Kit, Category } from '../types';
+import { InventoryItem, Kit, Category, InventoryDatabase } from '../types';
 import { Modal } from './Modal';
 import { ItemFormModal } from './ItemFormModal';
 import { addOrUpdateItem, COLL_INVENTORY } from '../firebase';
@@ -13,10 +13,12 @@ interface KitFormModalProps {
   initialData?: Kit | null;
   inventory: InventoryItem[];
   title: string;
+  databases?: InventoryDatabase[];
+  activeDatabaseId?: string;
 }
 
 export const KitFormModal: React.FC<KitFormModalProps> = ({ 
-  isOpen, onClose, onSave, initialData, inventory, title 
+  isOpen, onClose, onSave, initialData, inventory, title, databases, activeDatabaseId 
 }) => {
   const [formData, setFormData] = useState<Partial<Kit>>({ items: [] });
   const [itemSearch, setItemSearch] = useState('');
@@ -224,6 +226,8 @@ export const KitFormModal: React.FC<KitFormModalProps> = ({
         }}
         title="Nuovo Materiale" 
         inventory={inventory} 
+        databases={databases}
+        activeDatabaseId={activeDatabaseId}
       />
     
       {/* REMINDERS MODAL */}

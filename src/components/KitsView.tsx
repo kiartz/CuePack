@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
 import { Plus, Search, Edit2, Trash2, Copy, Package, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
-import { InventoryItem, Kit, Category } from '../types';
+import { InventoryItem, Kit, Category, InventoryDatabase } from '../types';
 import { KitFormModal } from './KitFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { addOrUpdateItem, deleteItem, COLL_KITS, getKitsCollection } from '../firebase';
@@ -10,9 +10,10 @@ interface KitsViewProps {
   kits: Kit[];
   inventory: InventoryItem[];
   activeDatabaseId?: string;
+  databases?: InventoryDatabase[];
 }
 
-export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory, activeDatabaseId }) => {
+export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory, activeDatabaseId, databases }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -251,6 +252,8 @@ export const KitsView: React.FC<KitsViewProps> = ({ kits, inventory, activeDatab
         initialData={editingKit}
         inventory={inventory}
         title={editingKit ? "Modifica Kit" : "Nuovo Kit"}
+        databases={databases}
+        activeDatabaseId={activeDatabaseId}
       />
       
       <ConfirmationModal

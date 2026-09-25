@@ -450,6 +450,7 @@ export default function AuthenticatedApp() {
             kits={kits} 
             inventory={inventory} 
             activeDatabaseId={activeDatabaseId}
+            databases={databases}
         />;
       case 'templates':
         return <TemplatesView 
@@ -458,10 +459,13 @@ export default function AuthenticatedApp() {
             kits={kits} 
             lists={packingLists}
             activeDatabaseId={activeDatabaseId}
+            databases={databases}
         />;
       case 'calendar':
         return <CalendarView 
             lists={packingLists}
+            databases={databases}
+            activeDatabaseId={activeDatabaseId}
             onOpenEvent={(id) => {
                setActiveListId(id);
                setCurrentView('lists');

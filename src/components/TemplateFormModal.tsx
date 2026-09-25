@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { generateId } from '../utils';
 import { Plus, Search, X, Lightbulb, Blocks, Layers, Package } from 'lucide-react';
-import { InventoryItem, Kit, Category, Template, TemplateComponent } from '../types';
+import { InventoryItem, Kit, Category, Template, TemplateComponent, InventoryDatabase } from '../types';
 import { Modal } from './Modal';
 import { ItemFormModal } from './ItemFormModal';
 import { addOrUpdateItem, COLL_TEMPLATES, COLL_INVENTORY } from '../firebase';
@@ -14,10 +14,12 @@ interface TemplateFormModalProps {
   inventory: InventoryItem[];
   kits: Kit[];
   title: string;
+  databases?: InventoryDatabase[];
+  activeDatabaseId?: string;
 }
 
 export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({ 
-  isOpen, onClose, onSave, initialData, inventory, kits, title 
+  isOpen, onClose, onSave, initialData, inventory, kits, title, databases, activeDatabaseId 
 }) => {
   const [formData, setFormData] = useState<Partial<Template>>({ items: [] });
   const [itemSearch, setItemSearch] = useState('');
@@ -323,6 +325,8 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         onCreateAccessory={handleCreateInventoryItemOnly}
         title="Nuovo Materiale" 
         inventory={inventory} 
+        databases={databases}
+        activeDatabaseId={activeDatabaseId}
       />
     </Modal>
   );

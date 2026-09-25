@@ -24,6 +24,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+
+  const effectiveDatabases = useMemo(() => {
+    return (databases && databases.length > 0)
+      ? databases
+      : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
+  }, [databases]);
   
   // Inline Editing State
   const [editingCell, setEditingCell] = useState<{ itemId: string, field: keyof InventoryItem } | null>(null);
@@ -342,11 +348,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                onChange={(e) => setSelectedDatabase(e.target.value)}
              >
                <option value="All">Tutti i Database ({items.length})</option>
-               {(databases && databases.length > 0 ? databases : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'blue' }]).map(db => {
+               {effectiveDatabases.map(db => {
                  const count = items.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
                  return (
                    <option key={db.id} value={db.id}>
-                     [{db.code}] {db.name} ({count})
+                     [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
                    </option>
                  );
                })}
@@ -748,7 +754,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         onCreateAccessory={handleCreateAccessory}
         title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"}
         activeDatabaseId={selectedDatabase !== 'All' ? selectedDatabase : activeDatabaseId}
-        databases={databases}
+        databases={effectiveDatabases}
       />
       
       <ConfirmationModal

@@ -16,6 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
+import { getDbBadgeStyle } from '../utils/databaseColors';
 import { calculateAvailableQuantity } from '../utils/availability';
 import { openDocumentInBrowser } from '../utils/documentViewer';
 
@@ -151,6 +152,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [pickerDatabaseFilter, setPickerDatabaseFilter] = useState<string>('All');
+
+  const effectiveDatabases = useMemo(() => {
+    return (databases && databases.length > 0)
+      ? databases
+      : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
+  }, [databases]);
   
   // LIST LOCAL SEARCH STATE
   const [listSearch, setListSearch] = useState('');
@@ -2148,7 +2155,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             isOpen={isEventModalOpen} 
             onClose={() => setIsEventModalOpen(false)} 
             initialData={eventFormData}
-            databases={databases}
+            databases={effectiveDatabases}
             activeDatabaseId={activeDatabaseId}
             onSave={(data) => {
                 setEventFormData(data);
@@ -2737,11 +2744,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             <div className="flex-1 min-w-0 pr-2">
                                 <div className="text-sm text-white flex items-center gap-1.5 truncate">
                                     {(() => {
-                                        if (!databases || databases.length <= 1) return null;
-                                        const itemDb = databases.find(d => d.id === (item.databaseId || DEFAULT_DATABASE_ID));
+                                        const itemDbId = item.databaseId || DEFAULT_DATABASE_ID;
+                                        const itemDb = effectiveDatabases.find(d => d.id === itemDbId);
                                         if (!itemDb) return null;
                                         return (
-                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${itemDb.color || 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${getDbBadgeStyle(itemDb.color)}`}>
                                                 {itemDb.code || itemDb.name.slice(0, 3).toUpperCase()}
                                             </span>
                                         );
@@ -2800,24 +2807,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 
                 {/* Category & Action Buttons Row */}
                 <div className="flex items-center gap-2">
-                    {databases && databases.length > 1 && (
-                        <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 shrink-0">
-                            <Database size={13} className="text-blue-400 shrink-0" />
-                            <select
-                                value={pickerDatabaseFilter}
-                                onChange={(e) => setPickerDatabaseFilter(e.target.value)}
-                                className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[120px] truncate"
-                                title="Filtra ricerca materiale per database"
-                            >
-                                <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
-                                {databases.map(db => (
-                                    <option key={db.id} value={db.id} className="bg-slate-900 text-white">
-                                        [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
+                    <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 shrink-0">
+                        <Database size={13} className="text-blue-400 shrink-0" />
+                        <select
+                            value={pickerDatabaseFilter}
+                            onChange={(e) => setPickerDatabaseFilter(e.target.value)}
+                            className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[120px] truncate"
+                            title="Filtra ricerca materiale per database"
+                        >
+                            <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
+                            {effectiveDatabases.map(db => (
+                                <option key={db.id} value={db.id} className="bg-slate-900 text-white">
+                                    [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                     <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="bg-slate-950 border border-slate-700 text-white px-2 py-2 rounded-lg text-sm flex-1 sm:w-32 outline-none">
                         <option value="All">Tutte</option>
                         {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
@@ -2978,13 +2983,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                           >
                                               {comp.name} 
                                               {(() => {
-                                                  if (!databases || databases.length <= 1) return null;
                                                   const compDbId = comp.databaseId || inventory.find(i => i.id === comp.referenceId)?.databaseId || DEFAULT_DATABASE_ID;
-                                                  const compDb = databases.find(d => d.id === compDbId);
+                                                  const compDb = effectiveDatabases.find(d => d.id === compDbId);
                                                   if (!compDb) return null;
                                                   return (
                                                       <span 
-                                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${compDb.color || 'bg-slate-800 text-slate-300 border-slate-700'}`}
+                                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border leading-none shrink-0 ${getDbBadgeStyle(compDb.color)}`}
                                                           title={`Database: ${compDb.name}`}
                                                       >
                                                           {compDb.code || compDb.name.slice(0, 3).toUpperCase()}
@@ -3556,7 +3560,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           </div>
       </Modal>
 
-      <ItemFormModal isOpen={isNewItemModalOpen} onClose={() => setIsNewItemModalOpen(false)} onSave={handleCreateNewItem} title="Nuovo Materiale" inventory={inventory} onCreateAccessory={handleCreateInventoryItemOnly} initialName={pickerSearch} />
+      <ItemFormModal 
+        isOpen={isNewItemModalOpen} 
+        onClose={() => setIsNewItemModalOpen(false)} 
+        onSave={handleCreateNewItem} 
+        title="Nuovo Materiale" 
+        inventory={inventory} 
+        onCreateAccessory={handleCreateInventoryItemOnly} 
+        initialName={pickerSearch} 
+        databases={effectiveDatabases}
+        activeDatabaseId={pickerDatabaseFilter !== 'All' ? pickerDatabaseFilter : (activeList?.databaseId || activeDatabaseId)}
+      />
 
       {/* MASTER EDIT MODALS */}
       <ItemFormModal 
@@ -3572,6 +3586,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         inventory={inventory} 
         onCreateAccessory={handleCreateInventoryItemOnly}
         title="Modifica Materiale Master" 
+        databases={effectiveDatabases}
+        activeDatabaseId={activeList?.databaseId || activeDatabaseId}
       />
 
       <KitFormModal
@@ -3655,7 +3671,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           isOpen={isEventModalOpen} 
           onClose={() => setIsEventModalOpen(false)} 
           initialData={eventFormData}
-          databases={databases}
+          databases={effectiveDatabases}
           activeDatabaseId={activeDatabaseId}
           onSave={(data) => {
               setEventFormData(data);

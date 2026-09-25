@@ -93,6 +93,12 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [prepDatabaseFilter, setPrepDatabaseFilter] = useState<string>('All');
+
+  const effectiveDatabases = useMemo(() => {
+    return (databases && databases.length > 0)
+      ? databases
+      : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
+  }, [databases]);
   const [activeListAction, setActiveListAction] = useState<'archive' | 'restore' | 'delete' | 'duplicate' | null>(null);
   const [activeWarehouseMode, setActiveWarehouseMode] = useState<'distinta' | 'carico' | 'rientro' | null>(() => {
     if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -1503,24 +1509,22 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
               
               {/* ITEM SEARCH & DB FILTER */}
               <div className="flex items-center gap-2 mx-4">
-                  {databases && databases.length > 1 && (
-                      <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700/60 rounded-lg px-2.5 py-1.5 shrink-0">
-                          <Database size={13} className="text-blue-400 shrink-0" />
-                          <select
-                              value={prepDatabaseFilter}
-                              onChange={(e) => setPrepDatabaseFilter(e.target.value)}
-                              className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[130px] truncate"
-                              title="Filtra materiale per database"
-                          >
-                              <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
-                              {databases.map(db => (
-                                  <option key={db.id} value={db.id} className="bg-slate-900 text-white">
-                                      [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
-                                  </option>
-                              ))}
-                          </select>
-                      </div>
-                  )}
+                  <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700/60 rounded-lg px-2.5 py-1.5 shrink-0">
+                      <Database size={13} className="text-blue-400 shrink-0" />
+                      <select
+                          value={prepDatabaseFilter}
+                          onChange={(e) => setPrepDatabaseFilter(e.target.value)}
+                          className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[130px] truncate"
+                          title="Filtra materiale per database"
+                      >
+                          <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
+                          {effectiveDatabases.map(db => (
+                              <option key={db.id} value={db.id} className="bg-slate-900 text-white">
+                                  [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
+                              </option>
+                          ))}
+                      </select>
+                  </div>
                   <div className={`relative flex-1 max-w-xs transition-all duration-300 ${isSearchExpanded ? 'block w-full' : 'hidden'} md:block`}>
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <input 
