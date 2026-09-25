@@ -19,7 +19,8 @@ import {
   FileCheck,
   ShieldCheck,
   ShieldAlert,
-  PackageCheck
+  PackageCheck,
+  Info
 } from 'lucide-react';
 import { InventoryItem, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ParsedRentmanItem, RentmanParseResult, parseRentmanFile } from '../utils/rentmanParser';
@@ -219,15 +220,48 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     const computedDiffs: DiffItem[] = [];
 
     for (const parsed of parseResult.items) {
-      // Priority 1: Match on Product QR Code
-      // Priority 2: Match on Product Code
-      // Priority 3: Match on Item Name
-      const existing = targetDbItems.find(ex => {
-        if (parsed.qrCode && ex.qrCode && parsed.qrCode.toLowerCase() === ex.qrCode.toLowerCase()) return true;
-        if (parsed.productCode && ex.productCode && parsed.productCode.toLowerCase() === ex.productCode.toLowerCase()) return true;
-        if (parsed.name && ex.name && parsed.name.trim().toLowerCase() === ex.name.trim().toLowerCase()) return true;
-        return false;
-      });
+      // Find candidate among still UNMATCHED items in target database
+      const available = targetDbItems.filter(ex => !matchedExistingIds.has(ex.id));
+
+      // Match Strategy (Tiered Priority):
+      // 1. Rentman ID match (if present on both)
+      let existing: InventoryItem | undefined;
+      if (parsed.rentmanId) {
+        existing = available.find(ex => (ex as any).rentmanId && String((ex as any).rentmanId).trim() === String(parsed.rentmanId).trim());
+      }
+
+      // 2. Product Code match (strong unique catalog code, e.g. "2658", "2659")
+      if (!existing && parsed.productCode) {
+        const normPCode = parsed.productCode.trim().toLowerCase();
+        existing = available.find(ex => ex.productCode && ex.productCode.trim().toLowerCase() === normPCode);
+      }
+
+      // 3. Product QR Code / RFID match (handling single or comma-separated lists)
+      if (!existing && parsed.qrCode) {
+        const pQrs = parsed.qrCode.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        existing = available.find(ex => {
+          if (!ex.qrCode) return false;
+          // Must not contradict distinct product codes
+          if (parsed.productCode && ex.productCode && parsed.productCode.trim().toLowerCase() !== ex.productCode.trim().toLowerCase()) {
+            return false;
+          }
+          const exQrs = ex.qrCode.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+          return pQrs.some(q => exQrs.includes(q));
+        });
+      }
+
+      // 4. Exact Name match (ONLY IF product codes and QR codes do not conflict!)
+      if (!existing && parsed.name) {
+        const normPName = parsed.name.trim().toLowerCase();
+        existing = available.find(ex => {
+          if (!ex.name || ex.name.trim().toLowerCase() !== normPName) return false;
+          // If both have product codes and they differ, they are strictly different items!
+          if (parsed.productCode && ex.productCode && parsed.productCode.trim().toLowerCase() !== ex.productCode.trim().toLowerCase()) {
+            return false;
+          }
+          return true;
+        });
+      }
 
       if (!existing) {
         // NEW Item
@@ -1062,14 +1096,37 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 {/* Nuovi */}
                 <div 
                   onClick={() => setFilterTab('new')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
                     filterTab === 'new' 
                       ? 'bg-emerald-950/40 border-emerald-500 shadow-md ring-1 ring-emerald-500' 
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-400">🟢 Nuovi da Aggiungere</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-emerald-400">🟢 Nuovi da Aggiungere</span>
+                      <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          type="button" 
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-emerald-300 hover:bg-emerald-900/40 transition-colors"
+                          title="Informazioni"
+                        >
+                          <Info size={12} />
+                        </button>
+                        <div className="absolute z-50 left-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
+                          <div className="flex items-center gap-1.5 font-bold text-emerald-400 text-xs mb-1">
+                            <CheckCircle2 size={13} />
+                            <span>Nuovi da Aggiungere</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Articoli presenti nel file Excel che non esistono ancora in questo database CuePack.
+                          </p>
+                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
+                            <strong className="text-white">Cosa succede:</strong> Cliccando filtri la lista mostrando solo i nuovi articoli. Premendo "Applica Sincronizzazione" verranno aggiunti all'inventario con codici, prezzi, specifiche e matricole.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <span className="text-lg font-bold font-mono text-white">{counts.new}</span>
                   </div>
                   <button 
@@ -1084,14 +1141,37 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 {/* Modificati */}
                 <div 
                   onClick={() => setFilterTab('modified')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
                     filterTab === 'modified' 
                       ? 'bg-amber-950/40 border-amber-500 shadow-md ring-1 ring-amber-500' 
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-amber-400">🟡 Con Modifiche</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-amber-400">🟡 Con Modifiche</span>
+                      <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          type="button" 
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-amber-300 hover:bg-amber-900/40 transition-colors"
+                          title="Informazioni"
+                        >
+                          <Info size={12} />
+                        </button>
+                        <div className="absolute z-50 left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-400 text-xs mb-1">
+                            <RefreshCw size={13} />
+                            <span>Con Modifiche Rilevate</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Articoli già presenti nel database per cui il file Excel riporta differenze (prezzi, giacenze, ubicazioni, pesi, matricole).
+                          </p>
+                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
+                            <strong className="text-white">Cosa succede:</strong> Cliccando vedi le differenze prima/dopo per ogni campo. I valori che hai personalizzato su CuePack vengono protetti in automatico. Puoi decidere quali campi accettare e quali mantenere.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <span className="text-lg font-bold font-mono text-white">{counts.modified}</span>
                   </div>
                   <button 
@@ -1106,14 +1186,40 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 {/* Non Presenti / Orphan */}
                 <div 
                   onClick={() => setFilterTab('orphan')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
                     filterTab === 'orphan' 
                       ? 'bg-rose-950/40 border-rose-500 shadow-md ring-1 ring-rose-500' 
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-rose-400">🔴 Non nel File</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-rose-400">🔴 Non nel File</span>
+                      <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          type="button" 
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-300 hover:bg-rose-900/40 transition-colors"
+                          title="Informazioni"
+                        >
+                          <Info size={12} />
+                        </button>
+                        <div className="absolute z-50 left-0 sm:left-auto sm:right-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
+                          <div className="flex items-center gap-1.5 font-bold text-rose-400 text-xs mb-1">
+                            <AlertCircle size={13} />
+                            <span>Non Presenti nel File</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Articoli salvati nel tuo database CuePack che non compaiono in questo file Excel.
+                          </p>
+                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400 space-y-1">
+                            <strong className="text-white block">Cosa puoi fare:</strong>
+                            <p className="text-slate-300 leading-tight">• <strong>Mantieni:</strong> lascia l'articolo invariato nel DB.</p>
+                            <p className="text-slate-300 leading-tight">• <strong>Azzera Giacenza:</strong> imposta disponibilità a 0 se dismesso.</p>
+                            <p className="text-slate-300 leading-tight">• <strong>Elimina dal DB:</strong> rimuove l'articolo dal catalogo.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <span className="text-lg font-bold font-mono text-white">{counts.orphan}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">Presenti solo nel DB</p>
@@ -1122,14 +1228,37 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 {/* Invariati */}
                 <div 
                   onClick={() => setFilterTab('unchanged')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
                     filterTab === 'unchanged' 
                       ? 'bg-slate-800 border-slate-600 shadow-md ring-1 ring-slate-600' 
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-400">⚪ Invariati</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-400">⚪ Invariati</span>
+                      <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
+                        <button 
+                          type="button" 
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                          title="Informazioni"
+                        >
+                          <Info size={12} />
+                        </button>
+                        <div className="absolute z-50 right-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
+                          <div className="flex items-center gap-1.5 font-bold text-slate-300 text-xs mb-1">
+                            <Check size={13} />
+                            <span>Dati Già Allineati</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Articoli i cui dati in CuePack e nel file Excel sono già perfettamente identici.
+                          </p>
+                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
+                            <strong className="text-white">Cosa succede:</strong> I dati coincidono al 100%. Non necessitano di alcun aggiornamento e sono deselezionati di default.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <span className="text-lg font-bold font-mono text-white">{counts.unchanged}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">Dati già allineati</p>
@@ -1152,6 +1281,27 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                             {counts.userModified} articoli modificati da te
                           </span>
                         )}
+                        <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
+                          <button 
+                            type="button" 
+                            className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+                            title="Informazioni sui preset"
+                          >
+                            <Info size={12} />
+                          </button>
+                          <div className="absolute z-50 left-0 top-full mt-2 w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
+                            <span className="font-bold text-white text-xs block mb-1">Come funzionano i Preset:</span>
+                            <p className="text-[10px] text-slate-300 leading-relaxed mb-1.5">
+                              • <strong className="text-blue-300">Proteggi Valori CuePack:</strong> preserva tutti i nomi, pesi o specifiche che hai corretto a mano su CuePack, impedendo a Excel di sovrascriverli.
+                            </p>
+                            <p className="text-[10px] text-slate-300 leading-relaxed mb-1.5">
+                              • <strong className="text-emerald-300">Solo Giacenze & Matricole:</strong> aggiorna da Excel solo quantità e seriali arrivati in azienda, lasciando intatti i nomi e i dettagli aggiustati.
+                            </p>
+                            <p className="text-[10px] text-slate-300 leading-relaxed">
+                              • <strong className="text-amber-300">Sovrascrivi Tutto:</strong> resetta tutti i valori al file Excel originale.
+                            </p>
+                          </div>
+                        </div>
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 font-mono">
                         <span className="text-blue-400 font-bold">🛡️ {counts.protectedDiffs} valori CuePack protetti</span>
