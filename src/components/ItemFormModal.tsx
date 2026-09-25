@@ -944,22 +944,22 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     </button>
                   </div>
 
-                  {/* Database di Appartenenza */}
-                  <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <Database size={14} className="text-blue-400" />
+                  {/* Database di Appartenenza (Compatto) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Database size={13} className="text-blue-400" />
                         Database di Appartenenza <span className="text-rose-500">*</span>
                       </label>
                       {currentDb && (
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${getDbBadgeStyle(currentDb.color)}`}>
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${getDbBadgeStyle(currentDb.color)}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${getDbDotColor(currentDb.color)}`} />
                           {currentDb.code}
                         </span>
                       )}
                     </div>
                     <select
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-semibold text-white focus:border-blue-500 outline-none transition-colors"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:border-blue-500 outline-none"
                       value={formData.databaseId || defaultDatabaseId}
                       onChange={e => setFormData({ ...formData, databaseId: e.target.value })}
                     >
@@ -969,9 +969,6 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                         </option>
                       ))}
                     </select>
-                    <p className="text-[11px] text-slate-400">
-                      Indica a quale archivio o inventario appartiene questo materiale.
-                    </p>
                   </div>
 
                   {/* Categoria Macro & Sottocategoria */}

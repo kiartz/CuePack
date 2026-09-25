@@ -212,9 +212,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const activeList = (localList && localList.id === activeListId) ? localList : rawActiveList;
   const pendingWritesRef = useRef(0);
 
-  // Clear local optimistic cache whenever activeListId changes
+  // Clear local optimistic cache whenever activeListId changes to another list
   useEffect(() => {
-    setLocalList(null);
+    setLocalList(prev => (prev && prev.id === activeListId ? prev : null));
     activeListRef.current = null;
   }, [activeListId]);
 
@@ -497,9 +497,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const highlightedTotal = useMemo(() => {
     if (!activeList || !highlightedItemName) return 0;
     let total = 0;
-    activeList.zones.forEach(zone => {
-      zone.sections.forEach(section => {
-        section.components.forEach(comp => {
+    (activeList.zones || []).forEach(zone => {
+      (zone.sections || []).forEach(section => {
+        (section.components || []).forEach(comp => {
           if (comp.name === highlightedItemName) {
             total += comp.quantity;
           }
@@ -698,32 +698,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return filtered.sort((a, b) => new Date(b.eventDate || 0).getTime() - new Date(a.eventDate || 0).getTime());
   }, [lists, listFilter]);
 
-  // Database Mismatch State
+  // Database Mismatch State (Disabled in unified multi-database mode where DBs can be mixed)
   const [dbMismatchList, setDbMismatchList] = useState<{ list: PackingList; targetDbId: string; targetDbName: string } | null>(null);
 
-  // Detect database mismatch when activeList changes or is loaded
   useEffect(() => {
-    if (activeListId && rawActiveList && viewMode === 'edit') {
-      const listDbId = rawActiveList.databaseId || DEFAULT_DATABASE_ID;
-      const currentDbId = activeDatabaseId || DEFAULT_DATABASE_ID;
-
-      if (listDbId !== currentDbId) {
-        const targetDb = (databases || []).find(d => d.id === listDbId) || { 
-          id: listDbId, 
-          name: listDbId === DEFAULT_DATABASE_ID ? 'Database Principale' : listDbId 
-        };
-        setDbMismatchList({
-          list: rawActiveList,
-          targetDbId: listDbId,
-          targetDbName: targetDb.name
-        });
-      } else {
-        setDbMismatchList(null);
-      }
-    } else {
-      setDbMismatchList(null);
-    }
-  }, [activeListId, rawActiveList?.databaseId, activeDatabaseId, databases, viewMode]);
+    setDbMismatchList(null);
+  }, [activeListId]);
 
   const handleConfirmDbSwitch = () => {
     if (dbMismatchList && setActiveDatabaseId) {
@@ -742,6 +722,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const handleListSelect = (listId: string) => {
     setLocalList(null);
     activeListRef.current = null;
+    setActiveZoneId('');
+    setActiveSectionId('');
     setActiveListId(listId);
     setViewMode('edit');
   };
@@ -749,6 +731,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const handleBackToList = () => {
     setLocalList(null);
     activeListRef.current = null;
+    setActiveZoneId('');
+    setActiveSectionId('');
     setViewMode('list');
     setActiveListId('');
   };
@@ -1142,8 +1126,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       
       // If new list, switch to it
       if (!eventFormData.id) {
+           setLocalList(listToSave);
+           setActiveZoneId(listToSave.zones?.[0]?.id || '');
+           setActiveSectionId(listToSave.zones?.[0]?.sections?.[0]?.id || '');
            setActiveListId(listToSave.id);
            setViewMode('edit');
+      } else if (listToSave.id === activeListId) {
+           setLocalList(listToSave);
       }
   };
 
@@ -2062,7 +2051,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
              <button onClick={() => setActiveListAction(p => p === 'duplicate' ? null : 'duplicate')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'duplicate' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Copia"><ClipboardCopy size={18}/> <span className="hidden sm:inline">Copia</span></button>
              <button onClick={() => setActiveListAction(p => p === 'edit' ? null : 'edit')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'edit' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Modifica"><Edit2 size={18}/> <span className="hidden sm:inline">Modifica</span></button>
              <button onClick={() => setActiveListAction(p => p === 'delete' ? null : 'delete')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'delete' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Elimina"><Trash2 size={18}/> <span className="hidden sm:inline">Elimina</span></button>
-             <button onClick={() => { handleCreateList(); setViewMode('edit'); setActiveListAction(null); }} className="bg-purple-600 hover:bg-purple-500 text-white p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:w-auto gap-2 font-medium transition-colors xl:ml-auto" title="Nuovo Evento"><Plus size={20} /> <span className="hidden sm:inline">Nuovo Evento</span></button>
+             <button onClick={() => { handleCreateList(); setActiveListAction(null); }} className="bg-purple-600 hover:bg-purple-500 text-white p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:w-auto gap-2 font-medium transition-colors xl:ml-auto" title="Nuovo Evento"><Plus size={20} /> <span className="hidden sm:inline">Nuovo Evento</span></button>
           </div>
         </div>
         <div className="flex flex-col gap-2 overflow-y-auto">
@@ -2207,6 +2196,21 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   }
 
   // BUILDER VIEW
+  if (viewMode === 'edit' && !activeList) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-400 gap-3">
+        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm font-medium">Caricamento evento in corso...</p>
+        <button
+          onClick={handleBackToList}
+          className="mt-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition-colors"
+        >
+          Torna all'elenco eventi
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col p-4 overflow-hidden">
       <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
