@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { 
   X, 
   UploadCloud, 
@@ -6,26 +6,24 @@ import {
   Check, 
   CheckCircle2, 
   AlertCircle, 
-  AlertTriangle, 
   ArrowRight, 
   ArrowLeft, 
   RefreshCw, 
   Database, 
-  Trash2, 
   Plus, 
   Sparkles, 
-  Filter, 
   Search, 
   Layers,
   ChevronDown,
   ChevronUp,
-  FileCheck
+  FileCheck,
+  ShieldCheck
 } from 'lucide-react';
-import { InventoryItem, InventoryDatabase, ItemInstance, Category, DEFAULT_DATABASE_ID } from '../types';
+import { InventoryItem, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ParsedRentmanItem, RentmanParseResult, parseRentmanFile } from '../utils/rentmanParser';
 import { getDbBadgeStyle } from '../utils/databaseColors';
 import { db, COLL_INVENTORY, COLL_DATABASES } from '../firebase';
-import { collection, doc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { doc, writeBatch } from 'firebase/firestore';
 import { generateId } from '../utils';
 
 export type DiffStatus = 'new' | 'modified' | 'unchanged' | 'orphan';
@@ -52,7 +50,8 @@ interface RentmanSyncModalProps {
   onClose: () => void;
   inventory: InventoryItem[];
   databases: InventoryDatabase[];
-  activeDatabaseId?: string;
+  targetDatabaseId?: string; // Specific DB passed from DB card or active DB
+  activeDatabaseId?: string; // Fallback active DB
   setActiveDatabaseId?: (dbId: string) => void;
   onSyncComplete?: (targetDbId: string) => void;
 }
@@ -72,10 +71,12 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
   onClose,
   inventory,
   databases,
-  activeDatabaseId = DEFAULT_DATABASE_ID,
+  targetDatabaseId: propTargetDbId,
+  activeDatabaseId,
   setActiveDatabaseId,
   onSyncComplete
 }) => {
+  const initialDbId = propTargetDbId || activeDatabaseId || DEFAULT_DATABASE_ID;
   // Stage control
   const [stage, setStage] = useState<'upload' | 'configure' | 'diff' | 'syncing' | 'complete'>('upload');
   
@@ -88,8 +89,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Configuration state
-  const [syncMode, setSyncMode] = useState<'new_db' | 'merge_db'>('merge_db');
-  const [targetDbId, setTargetDbId] = useState<string>(activeDatabaseId);
+  const [selectedDbId, setSelectedDbId] = useState<string>(initialDbId);
+  const [syncMode, setSyncMode] = useState<'target_db' | 'new_db'>('target_db');
   const [newDbForm, setNewDbForm] = useState({
     name: 'Rentman Import',
     code: 'RNT',
@@ -114,7 +115,47 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     targetDbName: string;
   } | null>(null);
 
-  if (!isOpen) return null;
+  // Synchronize target DB when propTargetDbId or activeDatabaseId changes
+  useEffect(() => {
+    const target = propTargetDbId || activeDatabaseId;
+    if (target) {
+      setSelectedDbId(target);
+      setSyncMode('target_db');
+    }
+  }, [propTargetDbId, activeDatabaseId]);
+
+  // Reset state when modal is opened or closed
+  useEffect(() => {
+    if (isOpen) {
+      setStage('upload');
+      setParseResult(null);
+      setDiffItems([]);
+      setFileName('');
+      setFileSize(0);
+      setSearchTerm('');
+      setFilterTab('all');
+      setSyncSummary(null);
+      setParseError(null);
+    }
+  }, [isOpen]);
+
+  // Targeted database info
+  const effectiveDb = useMemo(() => {
+    return databases.find(d => d.id === selectedDbId) || databases[0] || {
+      id: DEFAULT_DATABASE_ID,
+      name: 'Database Principale',
+      code: 'PRI',
+      color: 'emerald',
+      isDefault: true
+    };
+  }, [databases, selectedDbId]);
+
+  // Existing items belonging EXCLUSIVELY to the targeted database
+  const targetDbItems = useMemo(() => {
+    return inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === effectiveDb.id);
+  }, [inventory, effectiveDb.id]);
+
+  const isInitialImport = targetDbItems.length === 0;
 
   // Handle Drag & Drop / File Select
   const handleFileUpload = async (file: File) => {
@@ -149,12 +190,12 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     }
   };
 
-  // Run the Diff Engine
+  // Run the Diff Engine or Initial Import Setup
   const proceedToDiff = () => {
     if (!parseResult) return;
 
-    if (syncMode === 'new_db') {
-      // In new DB mode, all items from file are treated as NEW
+    if (syncMode === 'new_db' || isInitialImport) {
+      // All items from file are treated as NEW in this target DB
       const items: DiffItem[] = parseResult.items.map(item => ({
         key: item.id,
         status: 'new',
@@ -167,8 +208,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       return;
     }
 
-    // Merge Mode: compare with target DB inventory
-    const targetInventory = inventory.filter(item => (item.databaseId || DEFAULT_DATABASE_ID) === targetDbId);
+    // Merge Mode: compare strictly with the target DB inventory
     const matchedExistingIds = new Set<string>();
     const computedDiffs: DiffItem[] = [];
 
@@ -176,7 +216,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       // Priority 1: Match on Product QR Code
       // Priority 2: Match on Product Code
       // Priority 3: Match on Item Name
-      const existing = targetInventory.find(ex => {
+      const existing = targetDbItems.find(ex => {
         if (parsed.qrCode && ex.qrCode && parsed.qrCode.toLowerCase() === ex.qrCode.toLowerCase()) return true;
         if (parsed.productCode && ex.productCode && parsed.productCode.toLowerCase() === ex.productCode.toLowerCase()) return true;
         if (parsed.name && ex.name && parsed.name.trim().toLowerCase() === ex.name.trim().toLowerCase()) return true;
@@ -268,7 +308,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     }
 
     // Check Orphan items in target DB (items present in DB but absent from file)
-    for (const existing of targetInventory) {
+    for (const existing of targetDbItems) {
       if (!matchedExistingIds.has(existing.id)) {
         computedDiffs.push({
           key: existing.id,
@@ -286,45 +326,39 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
   };
 
   // Mass selection helpers
-  const selectAll = (targetStatus?: DiffStatus) => {
+  const selectAll = useCallback((targetStatus?: DiffStatus) => {
     setDiffItems(prev => prev.map(item => {
       if (targetStatus && item.status !== targetStatus) return item;
       return { ...item, selected: true };
     }));
-  };
+  }, []);
 
-  const deselectAll = () => {
+  const deselectAll = useCallback(() => {
     setDiffItems(prev => prev.map(item => ({ ...item, selected: false })));
-  };
+  }, []);
 
-  const toggleItem = (key: string) => {
+  const toggleItem = useCallback((key: string) => {
     setDiffItems(prev => prev.map(item => 
       item.key === key ? { ...item, selected: !item.selected } : item
     ));
-  };
+  }, []);
 
-  const setOrphanAction = (key: string, action: 'keep' | 'zero_stock' | 'delete') => {
+  const setOrphanAction = useCallback((key: string, action: 'keep' | 'zero_stock' | 'delete') => {
     setDiffItems(prev => prev.map(item =>
       item.key === key ? { ...item, orphanAction: action, selected: action !== 'keep' } : item
     ));
-  };
+  }, []);
 
-  const setAllOrphanActions = (action: 'keep' | 'zero_stock' | 'delete') => {
-    setDiffItems(prev => prev.map(item =>
-      item.status === 'orphan' ? { ...item, orphanAction: action, selected: action !== 'keep' } : item
-    ));
-  };
-
-  const toggleExpand = (key: string) => {
+  const toggleExpand = useCallback((key: string) => {
     setExpandedKeys(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  };
+  }, []);
 
-  // KPI counters
+  // KPI counters (always called unconditionally)
   const counts = useMemo(() => {
     const res = { all: diffItems.length, new: 0, modified: 0, unchanged: 0, orphan: 0, selected: 0 };
     for (const item of diffItems) {
@@ -337,7 +371,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     return res;
   }, [diffItems]);
 
-  // Filtered Items for the Table
+  // Filtered Items for the Table (always called unconditionally)
   const filteredItems = useMemo(() => {
     return diffItems.filter(item => {
       // Tab filter
@@ -361,8 +395,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     setIsParsing(true);
 
     try {
-      let finalTargetDbId = targetDbId;
-      let finalDbName = '';
+      let finalTargetDbId = effectiveDb.id;
+      let finalDbName = effectiveDb.name;
 
       // 1. If New Database mode, create the database record in Firestore first
       if (syncMode === 'new_db') {
@@ -388,9 +422,6 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
         if (setActiveDatabaseId) {
           setActiveDatabaseId(newDbId);
         }
-      } else {
-        const found = databases.find(d => d.id === targetDbId);
-        finalDbName = found?.name || 'Database Principale';
       }
 
       // 2. Prepare items to add/update/delete
@@ -425,7 +456,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           const fullItem: InventoryItem = {
             ...item.parsedItem,
             id: newDocId,
-            databaseId: finalTargetDbId
+            databaseId: finalTargetDbId // STRICTLY ASSIGNED TO THIS DATABASE
           };
           currentBatchOps.push({ type: 'set', ref: docRef, data: cleanObject(fullItem) });
           addedCount++;
@@ -437,7 +468,6 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
             ...item.parsedItem,
             id: item.existingItem.id,
             databaseId: finalTargetDbId,
-            // Preserve cuepack attachments if present
             reminders: item.existingItem.reminders || item.parsedItem.reminders,
             documents: item.existingItem.documents || item.parsedItem.documents,
             accessories: item.existingItem.accessories || item.parsedItem.accessories
@@ -527,6 +557,9 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     setSyncSummary(null);
   };
 
+  // Crucial: Early return is placed HERE after ALL hooks are called!
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 overflow-hidden">
       <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -538,14 +571,18 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
               <FileSpreadsheet size={24} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                Rentman Sync & Diff Studio
-                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                  Excel .xlsx
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white">
+                  {isInitialImport ? 'Importa Catalogo Rentman' : 'Sincronizza Catalogo Rentman'}
+                </h2>
+                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${getDbBadgeStyle(effectiveDb.color)}`}>
+                  [{effectiveDb.code}] {effectiveDb.name}
                 </span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Confronta, riconcilia e sincronizza il catalogo Rentman nel database CuePack
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {isInitialImport 
+                  ? `Importazione iniziale: i materiali verranno registrati solo nel database "${effectiveDb.name}"` 
+                  : `Sincronizzazione e Diff: aggiorna esclusivamente il database "${effectiveDb.name}"`}
               </p>
             </div>
           </div>
@@ -555,9 +592,11 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
             <div className="hidden md:flex items-center gap-1.5 text-xs font-semibold">
               <span className={`px-2.5 py-1 rounded-lg ${stage === 'upload' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>1. File</span>
               <span className="text-slate-600">→</span>
-              <span className={`px-2.5 py-1 rounded-lg ${stage === 'configure' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>2. Modalità</span>
+              <span className={`px-2.5 py-1 rounded-lg ${stage === 'configure' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>2. Verifica</span>
               <span className="text-slate-600">→</span>
-              <span className={`px-2.5 py-1 rounded-lg ${stage === 'diff' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>3. Diff & Selezione</span>
+              <span className={`px-2.5 py-1 rounded-lg ${stage === 'diff' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                {isInitialImport ? '3. Anteprima' : '3. Diff Studio'}
+              </span>
               <span className="text-slate-600">→</span>
               <span className={`px-2.5 py-1 rounded-lg ${stage === 'complete' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'}`}>4. Report</span>
             </div>
@@ -577,6 +616,31 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           {/* ================= STAGE 1: UPLOAD ================= */}
           {stage === 'upload' && (
             <div className="h-full flex flex-col justify-center items-center max-w-2xl mx-auto py-8">
+              
+              {/* Database Context Banner */}
+              <div className="w-full mb-6 p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck size={18} className="text-emerald-400 shrink-0" />
+                  <div className="text-xs">
+                    <span className="text-slate-400">Database di destinazione selezionato: </span>
+                    <strong className="text-white">[{effectiveDb.code}] {effectiveDb.name}</strong>
+                    <span className="text-slate-500 ml-2">({targetDbItems.length} materiali attuali)</span>
+                  </div>
+                </div>
+
+                {databases.length > 1 && (
+                  <select 
+                    value={selectedDbId}
+                    onChange={(e) => setSelectedDbId(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1 font-bold outline-none focus:border-blue-500"
+                  >
+                    {databases.map(d => (
+                      <option key={d.id} value={d.id}>[{d.code}] {d.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
               <div 
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleDrop}
@@ -590,7 +654,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                   Trascina qui il file Excel di Rentman
                 </h3>
                 <p className="text-xs text-slate-400 max-w-md mb-6">
-                  Seleziona o trascina il file di esportazione completa delle attrezzature generato da Rentman (formato <span className="text-emerald-400 font-mono font-semibold">.xlsx</span> o <span className="text-emerald-400 font-mono font-semibold">.xls</span>).
+                  Seleziona il file <span className="text-emerald-400 font-mono font-semibold">.xlsx</span> esportato da Rentman per il database <strong className="text-slate-200">{effectiveDb.name}</strong>. Gli altri database rimarranno inalterati al 100%.
                 </p>
 
                 <input 
@@ -626,28 +690,28 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full mt-8">
                 <div className="p-3.5 bg-slate-800/40 border border-slate-800 rounded-xl">
                   <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold mb-1">
-                    <Sparkles size={14} /> Seriali Aggregati
+                    <Sparkles size={14} /> Isolamento Totale
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Tutte le matricole e le istanze fisiche esportate su righe multiple vengono unite automaticamente.
+                    L'importazione e la sincronizzazione agiscono esclusivamente sul database selezionato.
                   </p>
                 </div>
 
                 <div className="p-3.5 bg-slate-800/40 border border-slate-800 rounded-xl">
                   <div className="flex items-center gap-2 text-blue-400 text-xs font-bold mb-1">
-                    <Layers size={14} /> Categorie Automatiche
+                    <Layers size={14} /> Seriali Aggregati
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Le cartelle di Rentman vengono mappate in modo intelligente su Audio, Luci, Video, Strutture e Cavi.
+                    Le matricole Rentman su righe multiple vengono unite in ciascun articolo con le proprie date e stato attivo.
                   </p>
                 </div>
 
                 <div className="p-3.5 bg-slate-800/40 border border-slate-800 rounded-xl">
                   <div className="flex items-center gap-2 text-amber-400 text-xs font-bold mb-1">
-                    <CheckCircle2 size={14} /> Diff Prima/Dopo
+                    <RefreshCw size={14} /> Prima Importazione o Diff
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Visualizza in anticipo ogni differenza di prezzo, giacenza e posizione prima di salvare.
+                    Se il DB è vuoto importa direttamente tutto; se già popolato ti mostra le modifiche prima di salvare.
                   </p>
                 </div>
               </div>
@@ -682,136 +746,109 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 </div>
               </div>
 
-              {/* Mode Selection */}
+              {/* Destination Mode */}
               <div className="space-y-3">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Scegli come importare i materiali
+                  Destinazione dell'importazione
                 </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Option Merge */}
-                  <div 
-                    onClick={() => setSyncMode('merge_db')}
-                    className={`p-5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                      syncMode === 'merge_db' 
-                        ? 'bg-blue-950/30 border-blue-500 shadow-lg shadow-blue-950/40 ring-1 ring-blue-500' 
-                        : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-bold text-white flex items-center gap-2">
-                          <RefreshCw size={18} className="text-blue-400" />
-                          Sincronizza / Unisci
-                        </span>
-                        {syncMode === 'merge_db' && <Check size={18} className="text-blue-400" />}
+                {/* Targeted Database Card */}
+                <div className="p-5 rounded-xl border bg-slate-950/80 border-slate-700 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Database className="text-emerald-400" size={20} />
+                      <div>
+                        <span className="text-xs text-slate-400 block uppercase font-bold text-[10px]">Database di Destinazione:</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${getDbBadgeStyle(effectiveDb.color)}`}>
+                            {effectiveDb.code}
+                          </span>
+                          <span className="text-sm font-bold text-white">{effectiveDb.name}</span>
+                        </div>
                       </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Confronta l'export con un database già presente. Aggiorna giacenze, posizioni e seriali mantenendo note e documenti.
-                      </p>
                     </div>
 
-                    {syncMode === 'merge_db' && (
-                      <div className="mt-4 pt-3 border-t border-slate-800">
-                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
-                          Database di Destinazione:
-                        </label>
-                        <select 
-                          value={targetDbId} 
-                          onChange={(e) => setTargetDbId(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-bold text-white outline-none focus:border-blue-500"
-                        >
-                          {databases.map(dbItem => (
-                            <option key={dbItem.id} value={dbItem.id}>
-                              [{dbItem.code}] {dbItem.name} {dbItem.isDefault ? '(Predefinito)' : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                    <div className="text-right">
+                      <span className="text-xs text-slate-400 block">Articoli già nel DB:</span>
+                      <strong className="text-sm font-bold text-white">{targetDbItems.length}</strong>
+                    </div>
                   </div>
 
-                  {/* Option New DB */}
-                  <div 
-                    onClick={() => setSyncMode('new_db')}
-                    className={`p-5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                      syncMode === 'new_db' 
-                        ? 'bg-emerald-950/30 border-emerald-500 shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-500' 
-                        : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-bold text-white flex items-center gap-2">
-                          <Plus size={18} className="text-emerald-400" />
-                          Crea Nuovo Database
-                        </span>
-                        {syncMode === 'new_db' && <Check size={18} className="text-emerald-400" />}
+                  <div className="pt-3 border-t border-slate-800/80 text-xs text-slate-400">
+                    {isInitialImport ? (
+                      <div className="flex items-center gap-2 text-emerald-400 font-semibold">
+                        <CheckCircle2 size={16} />
+                        Questo database è attualmente vuoto. Tutti i {parseResult.totalItems} articoli verranno importati da zero in questo archivio.
                       </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Importa l'intero file in un nuovo archivio isolato (es. "Magazzino Rentman"), senza toccare il database attuale.
-                      </p>
-                    </div>
-
-                    {syncMode === 'new_db' && (
-                      <div className="mt-4 pt-3 border-t border-slate-800 space-y-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-400 mb-1">
-                            Nome del Database:
-                          </label>
-                          <input 
-                            type="text" 
-                            value={newDbForm.name}
-                            onChange={(e) => setNewDbForm(prev => ({ ...prev, name: e.target.value }))}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-emerald-500"
-                            placeholder="Es. Rentman Import"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-400 mb-1">
-                              Sigla (3-4 car.):
-                            </label>
-                            <input 
-                              type="text" 
-                              maxLength={4}
-                              value={newDbForm.code}
-                              onChange={(e) => setNewDbForm(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-white uppercase outline-none focus:border-emerald-500"
-                              placeholder="RNT"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-400 mb-1">
-                              Colore Badge:
-                            </label>
-                            <select 
-                              value={newDbForm.color}
-                              onChange={(e) => setNewDbForm(prev => ({ ...prev, color: e.target.value }))}
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-emerald-500"
-                            >
-                              {COLOR_OPTIONS.map(c => (
-                                <option key={c.value} value={c.value}>{c.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <label className="flex items-center gap-2 pt-1 cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={newDbForm.isDefault}
-                            onChange={(e) => setNewDbForm(prev => ({ ...prev, isDefault: e.target.checked }))}
-                            className="w-4 h-4 rounded text-emerald-600 bg-slate-900 border-slate-700"
-                          />
-                          <span className="text-xs text-slate-300">Imposta come archivio predefinito</span>
-                        </label>
+                    ) : (
+                      <div className="flex items-center gap-2 text-blue-400 font-semibold">
+                        <RefreshCw size={16} />
+                        Questo database contiene già {targetDbItems.length} articoli. Procedendo verrà avviato il confronto (Diff Studio) per rilevare variazioni di prezzi, quantità e posizioni.
                       </div>
                     )}
                   </div>
                 </div>
+
+                {/* Option to create a new DB instead */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSyncMode(syncMode === 'new_db' ? 'target_db' : 'new_db')}
+                    className="text-xs text-slate-400 hover:text-white flex items-center gap-1.5 underline"
+                  >
+                    <Plus size={14} />
+                    {syncMode === 'new_db' ? 'Usa il database selezionato sopra' : 'Oppure crea un Nuovo Database indipendente per questo file'}
+                  </button>
+
+                  {syncMode === 'new_db' && (
+                    <div className="mt-3 p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                          Nome del Nuovo Database:
+                        </label>
+                        <input 
+                          type="text" 
+                          value={newDbForm.name}
+                          onChange={(e) => setNewDbForm(prev => ({ ...prev, name: e.target.value }))}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-emerald-500"
+                          placeholder="Es. Rentman Service Esterno"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                            Sigla (3-4 car.):
+                          </label>
+                          <input 
+                            type="text" 
+                            maxLength={4}
+                            value={newDbForm.code}
+                            onChange={(e) => setNewDbForm(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono font-bold text-white uppercase outline-none focus:border-emerald-500"
+                            placeholder="RNT"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 mb-1">
+                            Colore Badge:
+                          </label>
+                          <select 
+                            value={newDbForm.color}
+                            onChange={(e) => setNewDbForm(prev => ({ ...prev, color: e.target.value }))}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-emerald-500"
+                          >
+                            {COLOR_OPTIONS.map(c => (
+                              <option key={c.value} value={c.value}>{c.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
 
               {/* Navigation buttons */}
@@ -825,9 +862,19 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                 <button 
                   onClick={proceedToDiff}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-900/30 transition-all active:scale-95"
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-emerald-900/30 transition-all active:scale-95"
                 >
-                  Procedi al Confronto (Diff Studio) <ArrowRight size={16} />
+                  {isInitialImport || syncMode === 'new_db' ? (
+                    <>
+                      <span>Anteprima e Importazione</span>
+                      <ArrowRight size={16} />
+                    </>
+                  ) : (
+                    <>
+                      <span>Confronta Modifiche (Diff Studio)</span>
+                      <ArrowRight size={16} />
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -838,6 +885,24 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           {stage === 'diff' && (
             <div className="h-full flex flex-col space-y-4">
               
+              {/* Top Target DB Reminder */}
+              <div className="flex items-center justify-between bg-slate-950/80 border border-slate-800 px-4 py-2 rounded-xl text-xs shrink-0">
+                <div className="flex items-center gap-2">
+                  <Database size={15} className="text-emerald-400" />
+                  <span className="text-slate-400">Database di destinazione:</span>
+                  <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${getDbBadgeStyle(effectiveDb.color)}`}>
+                    {effectiveDb.code}
+                  </span>
+                  <strong className="text-white">{effectiveDb.name}</strong>
+                </div>
+
+                <div className="text-slate-400">
+                  {isInitialImport 
+                    ? '✨ Modalità Prima Importazione: tutti gli articoli selezionati verranno registrati in questo archivio'
+                    : '🔄 Modalità Sincronizzazione: confronto con gli articoli preesistenti nel database'}
+                </div>
+              </div>
+
               {/* Top KPI Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
                 
@@ -940,14 +1005,16 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                   >
                     Nuovi ({counts.new})
                   </button>
-                  <button 
-                    onClick={() => setFilterTab('modified')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      filterTab === 'modified' ? 'bg-amber-900/40 text-amber-300 border border-amber-700/50' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Modificati ({counts.modified})
-                  </button>
+                  {counts.modified > 0 && (
+                    <button 
+                      onClick={() => setFilterTab('modified')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        filterTab === 'modified' ? 'bg-amber-900/40 text-amber-300 border border-amber-700/50' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Modificati ({counts.modified})
+                    </button>
+                  )}
                   {counts.orphan > 0 && (
                     <button 
                       onClick={() => setFilterTab('orphan')}
@@ -1182,7 +1249,9 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                     className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-emerald-900/30 transition-all active:scale-95"
                   >
                     <CheckCircle2 size={18} />
-                    Applica Sincronizzazione ({counts.selected})
+                    {isInitialImport 
+                      ? `Importa ${counts.selected} Articoli in [${effectiveDb.code}]` 
+                      : `Applica Sincronizzazione in [${effectiveDb.code}] (${counts.selected})`}
                   </button>
                 </div>
               </div>
@@ -1200,7 +1269,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
               <div className="space-y-2">
                 <h3 className="text-lg font-bold text-white">Sincronizzazione in corso...</h3>
                 <p className="text-xs text-slate-400">
-                  Scrittura atomica dei lotti in Firestore con aggiornamento del catalogo.
+                  Scrittura atomica dei lotti in Firestore nel database <strong className="text-white">"{effectiveDb.name}"</strong>.
                 </p>
               </div>
 
@@ -1226,9 +1295,11 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <h3 className="text-xl font-bold text-white">Sincronizzazione Completata!</h3>
+                <h3 className="text-xl font-bold text-white">
+                  {isInitialImport ? 'Importazione Completata!' : 'Sincronizzazione Completata!'}
+                </h3>
                 <p className="text-xs text-slate-400">
-                  Il catalogo nel database <strong className="text-white">"{syncSummary.targetDbName}"</strong> è stato aggiornato con successo.
+                  Il catalogo nel database <strong className="text-white">"{syncSummary.targetDbName}"</strong> è stato aggiornato con successo. Gli altri database sono rimasti intatti.
                 </p>
               </div>
 

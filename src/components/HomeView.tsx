@@ -3,7 +3,7 @@ import { generateId } from '../utils';
 import { 
   Download, Upload, LayoutDashboard, Database, Package, FileText, 
   AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2,
-  FileSpreadsheet
+  FileSpreadsheet, RefreshCw
 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, InventoryDatabase } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -59,6 +59,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const [dbToDelete, setDbToDelete] = useState<InventoryDatabase | null>(null);
   const [isRentmanSyncModalOpen, setIsRentmanSyncModalOpen] = useState(false);
+  const [selectedDbForRentman, setSelectedDbForRentman] = useState<string | null>(null);
 
   // --- Statistics ---
   const totalItems = inventory.length;
@@ -358,13 +359,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5">
                   <button 
-                    onClick={() => setIsRentmanSyncModalOpen(true)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/30 active:scale-95 shrink-0"
-                    title="Importa o sincronizza catalogo da file Excel Rentman (.xlsx)"
-                  >
-                    <FileSpreadsheet size={18} /> Sincronizza Rentman
-                  </button>
-                  <button 
                     onClick={() => {
                       setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
                       setIsNewDbModalOpen(true);
@@ -381,6 +375,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 {databases.map((dbItem) => {
                     const isActive = dbItem.id === activeDatabaseId;
                     const isDefault = !!dbItem.isDefault;
+                    const dbItemsCount = inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === dbItem.id).length;
 
                     return (
                         <div 
@@ -404,7 +399,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                             <p className="text-xs text-slate-400 mt-1 line-clamp-2">{dbItem.description}</p>
                                         )}
                                         <div className="flex items-center gap-3 text-xs text-slate-400 mt-2">
-                                            <span><strong className="text-slate-200">{inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === dbItem.id).length}</strong> articoli</span>
+                                            <span><strong className="text-slate-200">{dbItemsCount}</strong> articoli</span>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
@@ -422,7 +417,38 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                 </div>
                             </div>
 
-                            <div className="pt-4 border-t border-slate-800/60 mt-4 flex items-center justify-between gap-2">
+                            {/* Rentman Per-Database Action */}
+                            <div className="pt-3 border-t border-slate-800/60 mt-3">
+                                {dbItemsCount === 0 ? (
+                                    <button 
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedDbForRentman(dbItem.id);
+                                        setIsRentmanSyncModalOpen(true);
+                                      }}
+                                      className="w-full py-1.5 px-3 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/60 hover:border-emerald-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-98"
+                                      title={`Importa per la prima volta materiale Rentman nel database "${dbItem.name}"`}
+                                    >
+                                      <FileSpreadsheet size={14} className="text-emerald-400" />
+                                      <span>Importa da Rentman</span>
+                                    </button>
+                                ) : (
+                                    <button 
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedDbForRentman(dbItem.id);
+                                        setIsRentmanSyncModalOpen(true);
+                                      }}
+                                      className="w-full py-1.5 px-3 bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-800/60 hover:border-cyan-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-98"
+                                      title={`Sincronizza e riconcilia catalogo Rentman nel database "${dbItem.name}"`}
+                                    >
+                                      <RefreshCw size={13} className="text-cyan-400" />
+                                      <span>Sincronizza Rentman</span>
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="pt-3 border-t border-slate-800/60 mt-3 flex items-center justify-between gap-2">
                                 <div>
                                     {!isActive ? (
                                         <button 
@@ -750,9 +776,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* --- RENTMAN SYNC & DIFF STUDIO MODAL --- */}
         <RentmanSyncModal 
           isOpen={isRentmanSyncModalOpen}
-          onClose={() => setIsRentmanSyncModalOpen(false)}
+          onClose={() => {
+            setIsRentmanSyncModalOpen(false);
+            setSelectedDbForRentman(null);
+          }}
           inventory={inventory}
           databases={databases}
+          targetDatabaseId={selectedDbForRentman || activeDatabaseId}
           activeDatabaseId={activeDatabaseId}
           setActiveDatabaseId={setActiveDatabaseId}
         />
