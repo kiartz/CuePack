@@ -96,6 +96,11 @@ export interface InventoryItem {
   documents?: ItemDocument[];
   instances?: ItemInstance[];
   periodicInspections?: PeriodicInspection[];
+
+  // Tracciamento Modifiche Manuali Utente su CuePack
+  userModifiedFields?: string[]; // Campi modificati manualmente dall'utente (es. ['name', 'weight', 'inStock'])
+  lastModifiedByUserAt?: string; // Timestamp ISO dell'ultima modifica manuale
+  isCustomized?: boolean; // Flag che indica se l'articolo è stato personalizzato o creato manualmente su CuePack
 }
 
 export interface KitComponent {

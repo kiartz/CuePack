@@ -422,6 +422,43 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
     const finalSubcat = (formData.subcategory || formData.folder || '').trim();
 
+    // Track user modified fields if editing or creating
+    const modifiedFieldsSet = new Set<string>(initialData?.userModifiedFields || []);
+    if (initialData) {
+      if (formData.name !== initialData.name) modifiedFieldsSet.add('name');
+      if ((formData.category || Category.OTHER) !== initialData.category) modifiedFieldsSet.add('category');
+      if (finalSubcat !== (initialData.subcategory || initialData.folder || '')) {
+        modifiedFieldsSet.add('subcategory');
+        modifiedFieldsSet.add('folder');
+      }
+      if ((formData.alias || '').trim() !== (initialData.alias || '').trim()) modifiedFieldsSet.add('alias');
+      if ((formData.location || '').trim() !== (initialData.location || '').trim()) modifiedFieldsSet.add('location');
+      if ((parseInt(formData.inStock?.toString() || '0', 10) || 0) !== (initialData.inStock || 0)) modifiedFieldsSet.add('inStock');
+      if ((parseFloat(weightInput) || 0) !== (initialData.weight || 0)) modifiedFieldsSet.add('weight');
+      if ((parseFloat(powerInput) || 0) !== (initialData.powerConsumption || 0)) modifiedFieldsSet.add('powerConsumption');
+      if ((parseFloat(currentInput) || 0) !== (initialData.current || 0)) modifiedFieldsSet.add('current');
+      if (powerPhase !== initialData.powerPhase) modifiedFieldsSet.add('powerPhase');
+      if (powerSupplyRating !== initialData.powerSupplyRating) modifiedFieldsSet.add('powerSupplyRating');
+      if (powerConnector.trim() !== (initialData.powerConnector || '').trim()) modifiedFieldsSet.add('powerConnector');
+      if ((parseFloat(purchasePriceInput) || 0) !== (initialData.purchasePrice || 0)) modifiedFieldsSet.add('purchasePrice');
+      if ((parseFloat(rentalPriceInput) || 0) !== (initialData.rentalPrice || 0)) modifiedFieldsSet.add('rentalPrice');
+      if ((parseFloat(subrentalCostInput) || 0) !== (initialData.subrentalCost || 0)) modifiedFieldsSet.add('subrentalCost');
+      if ((formData.description || '').trim() !== (initialData.description || '').trim()) modifiedFieldsSet.add('description');
+      if ((formData.internalRemark || '').trim() !== (initialData.internalRemark || '').trim()) modifiedFieldsSet.add('internalRemark');
+      if ((formData.externalRemark || '').trim() !== (initialData.externalRemark || '').trim()) modifiedFieldsSet.add('externalRemark');
+      if (finalProductCode !== (initialData.productCode || '')) modifiedFieldsSet.add('productCode');
+      if (finalQrCode !== (initialData.qrCode || '')) modifiedFieldsSet.add('qrCode');
+      if (JSON.stringify(tempInstances) !== JSON.stringify(initialData.instances || [])) modifiedFieldsSet.add('instances');
+      if (JSON.stringify(formData.accessories || []) !== JSON.stringify(initialData.accessories || [])) modifiedFieldsSet.add('accessories');
+    } else {
+      modifiedFieldsSet.add('name');
+      if (formData.category) modifiedFieldsSet.add('category');
+      if (finalSubcat) modifiedFieldsSet.add('subcategory');
+      if (formData.location) modifiedFieldsSet.add('location');
+      if (parseFloat(weightInput) > 0) modifiedFieldsSet.add('weight');
+      if (parseInt(formData.inStock?.toString() || '0', 10) > 0) modifiedFieldsSet.add('inStock');
+    }
+
     onSave({
       name: formData.name,
       databaseId: formData.databaseId || defaultDatabaseId,
@@ -470,7 +507,12 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       reminders: formData.reminders || [],
       documents: formData.documents || [],
       instances: tempInstances,
-      periodicInspections: formData.periodicInspections || []
+      periodicInspections: formData.periodicInspections || [],
+
+      // Tracciamento Modifiche Manuali Utente su CuePack
+      userModifiedFields: Array.from(modifiedFieldsSet),
+      lastModifiedByUserAt: new Date().toISOString(),
+      isCustomized: modifiedFieldsSet.size > 0 || !initialData
     });
     onClose();
   };

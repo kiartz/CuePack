@@ -17,7 +17,9 @@ import {
   ChevronDown,
   ChevronUp,
   FileCheck,
-  ShieldCheck
+  ShieldCheck,
+  ShieldAlert,
+  PackageCheck
 } from 'lucide-react';
 import { InventoryItem, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ParsedRentmanItem, RentmanParseResult, parseRentmanFile } from '../utils/rentmanParser';
@@ -33,6 +35,8 @@ export interface FieldDiff {
   label: string;
   oldValue: any;
   newValue: any;
+  isUserModified?: boolean; // Se questo campo è stato modificato dall'utente su CuePack
+  applyChange: boolean; // Se true applica il valore Excel; se false preserva il valore CuePack
 }
 
 export interface DiffItem {
@@ -43,6 +47,7 @@ export interface DiffItem {
   existingItem?: InventoryItem;
   diffs: FieldDiff[];
   orphanAction?: 'keep' | 'zero_stock' | 'delete';
+  hasUserModifications?: boolean; // Articolo personalizzato/modificato dall'utente su CuePack
 }
 
 interface RentmanSyncModalProps {
@@ -101,7 +106,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
   // Diff & Selection state
   const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
-  const [filterTab, setFilterTab] = useState<'all' | 'new' | 'modified' | 'orphan' | 'unchanged'>('all');
+  const [filterTab, setFilterTab] = useState<'all' | 'new' | 'modified' | 'user_modified' | 'orphan' | 'unchanged'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
@@ -112,6 +117,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     updated: number;
     zeroed: number;
     deleted: number;
+    protectedFields: number;
     targetDbName: string;
   } | null>(null);
 
@@ -235,54 +241,68 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       } else {
         matchedExistingIds.add(existing.id);
         const diffs: FieldDiff[] = [];
+        const userFields = new Set<string>(existing.userModifiedFields || []);
+        const hasUserMods = !!(existing.isCustomized || userFields.size > 0);
+
+        const addDiff = (field: string, label: string, oldValue: any, newValue: any) => {
+          const isUserMod = userFields.has(field);
+          diffs.push({
+            field,
+            label,
+            oldValue,
+            newValue,
+            isUserModified: isUserMod,
+            applyChange: !isUserMod // Default: Protect user modified fields!
+          });
+        };
 
         if (parsed.name !== existing.name) {
-          diffs.push({ field: 'name', label: 'Nome', oldValue: existing.name, newValue: parsed.name });
+          addDiff('name', 'Nome', existing.name, parsed.name);
         }
         if (parsed.inStock !== existing.inStock) {
-          diffs.push({ field: 'inStock', label: 'Giacenza', oldValue: existing.inStock, newValue: parsed.inStock });
+          addDiff('inStock', 'Giacenza', existing.inStock, parsed.inStock);
         }
         if ((parsed.location || '') !== (existing.location || '')) {
-          diffs.push({ field: 'location', label: 'Ubicazione', oldValue: existing.location || 'Nessuna', newValue: parsed.location || 'Nessuna' });
+          addDiff('location', 'Ubicazione', existing.location || 'Nessuna', parsed.location || 'Nessuna');
         }
         if ((parsed.category || '') !== (existing.category || '')) {
-          diffs.push({ field: 'category', label: 'Categoria', oldValue: existing.category, newValue: parsed.category });
+          addDiff('category', 'Categoria', existing.category, parsed.category);
         }
         if ((parsed.subcategory || '') !== (existing.subcategory || '')) {
-          diffs.push({ field: 'subcategory', label: 'Sottocategoria', oldValue: existing.subcategory || 'Nessuna', newValue: parsed.subcategory || 'Nessuna' });
+          addDiff('subcategory', 'Sottocategoria', existing.subcategory || 'Nessuna', parsed.subcategory || 'Nessuna');
         }
         if ((parsed.alias || '') !== (existing.alias || '')) {
-          diffs.push({ field: 'alias', label: 'Alias', oldValue: existing.alias || 'Nessuno', newValue: parsed.alias || 'Nessuno' });
+          addDiff('alias', 'Alias', existing.alias || 'Nessuno', parsed.alias || 'Nessuno');
         }
         if ((parsed.weight || 0) !== (existing.weight || 0)) {
-          diffs.push({ field: 'weight', label: 'Peso (kg)', oldValue: existing.weight || 0, newValue: parsed.weight || 0 });
+          addDiff('weight', 'Peso (kg)', existing.weight || 0, parsed.weight || 0);
         }
         if ((parsed.powerConsumption || 0) !== (existing.powerConsumption || 0)) {
-          diffs.push({ field: 'powerConsumption', label: 'Potenza (W)', oldValue: existing.powerConsumption || 0, newValue: parsed.powerConsumption || 0 });
+          addDiff('powerConsumption', 'Potenza (W)', existing.powerConsumption || 0, parsed.powerConsumption || 0);
         }
         if ((parsed.current || 0) !== (existing.current || 0)) {
-          diffs.push({ field: 'current', label: 'Corrente (A)', oldValue: existing.current || 0, newValue: parsed.current || 0 });
+          addDiff('current', 'Corrente (A)', existing.current || 0, parsed.current || 0);
         }
         if ((parsed.rentalPrice || 0) !== (existing.rentalPrice || 0)) {
-          diffs.push({ field: 'rentalPrice', label: 'Prezzo Noleggio (€)', oldValue: existing.rentalPrice || 0, newValue: parsed.rentalPrice || 0 });
+          addDiff('rentalPrice', 'Prezzo Noleggio (€)', existing.rentalPrice || 0, parsed.rentalPrice || 0);
         }
         if ((parsed.purchasePrice || 0) !== (existing.purchasePrice || 0)) {
-          diffs.push({ field: 'purchasePrice', label: 'Prezzo Acquisto (€)', oldValue: existing.purchasePrice || 0, newValue: parsed.purchasePrice || 0 });
+          addDiff('purchasePrice', 'Prezzo Acquisto (€)', existing.purchasePrice || 0, parsed.purchasePrice || 0);
         }
         if ((parsed.subrentalCost || 0) !== (existing.subrentalCost || 0)) {
-          diffs.push({ field: 'subrentalCost', label: 'Costo Subnoleggio (€)', oldValue: existing.subrentalCost || 0, newValue: parsed.subrentalCost || 0 });
+          addDiff('subrentalCost', 'Costo Subnoleggio (€)', existing.subrentalCost || 0, parsed.subrentalCost || 0);
         }
 
         // Compare instances/serial numbers
         const parsedInstCount = parsed.instances?.length || 0;
         const existInstCount = existing.instances?.length || 0;
         if (parsedInstCount !== existInstCount) {
-          diffs.push({
-            field: 'instances',
-            label: 'Matricole/Seriali',
-            oldValue: `${existInstCount} seriali`,
-            newValue: `${parsedInstCount} seriali (${parsedInstCount > existInstCount ? '+' : ''}${parsedInstCount - existInstCount})`
-          });
+          addDiff(
+            'instances',
+            'Matricole/Seriali',
+            `${existInstCount} seriali`,
+            `${parsedInstCount} seriali (${parsedInstCount > existInstCount ? '+' : ''}${parsedInstCount - existInstCount})`
+          );
         }
 
         if (diffs.length > 0) {
@@ -292,7 +312,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
             selected: true,
             parsedItem: parsed,
             existingItem: existing,
-            diffs
+            diffs,
+            hasUserModifications: hasUserMods
           });
         } else {
           computedDiffs.push({
@@ -301,7 +322,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
             selected: false,
             parsedItem: parsed,
             existingItem: existing,
-            diffs: []
+            diffs: [],
+            hasUserModifications: hasUserMods
           });
         }
       }
@@ -316,7 +338,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           selected: false,
           existingItem: existing,
           diffs: [],
-          orphanAction: 'keep'
+          orphanAction: 'keep',
+          hasUserModifications: !!(existing.isCustomized || (existing.userModifiedFields && existing.userModifiedFields.length > 0))
         });
       }
     }
@@ -358,12 +381,105 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     });
   }, []);
 
+  // Toggle single field diff: apply Excel vs preserve CuePack
+  const toggleFieldDiff = useCallback((itemKey: string, fieldName: string) => {
+    setDiffItems(prev => prev.map(item => {
+      if (item.key !== itemKey) return item;
+      return {
+        ...item,
+        diffs: item.diffs.map(d => 
+          d.field === fieldName ? { ...d, applyChange: !d.applyChange } : d
+        )
+      };
+    }));
+  }, []);
+
+  // Protect all customized fields on a single item
+  const protectItemCustomFields = useCallback((itemKey: string) => {
+    setDiffItems(prev => prev.map(item => {
+      if (item.key !== itemKey) return item;
+      return {
+        ...item,
+        diffs: item.diffs.map(d => ({
+          ...d,
+          applyChange: d.isUserModified ? false : true
+        }))
+      };
+    }));
+  }, []);
+
+  // Overwrite all fields of a single item with Excel
+  const overwriteItemWithExcel = useCallback((itemKey: string) => {
+    setDiffItems(prev => prev.map(item => {
+      if (item.key !== itemKey) return item;
+      return {
+        ...item,
+        diffs: item.diffs.map(d => ({
+          ...d,
+          applyChange: true
+        }))
+      };
+    }));
+  }, []);
+
+  // Mass action: Protect ALL user-modified fields across all items
+  const massProtectAllUserModifications = useCallback(() => {
+    setDiffItems(prev => prev.map(item => ({
+      ...item,
+      diffs: item.diffs.map(d => ({
+        ...d,
+        applyChange: d.isUserModified ? false : d.applyChange
+      }))
+    })));
+  }, []);
+
+  // Mass action: Update ONLY stock and serials, protecting all other fields (name, weight, location, etc.)
+  const massUpdateOnlyStockAndSerials = useCallback(() => {
+    setDiffItems(prev => prev.map(item => ({
+      ...item,
+      diffs: item.diffs.map(d => ({
+        ...d,
+        applyChange: (d.field === 'inStock' || d.field === 'instances')
+      }))
+    })));
+  }, []);
+
+  // Mass action: Overwrite all diffs with Excel values
+  const massOverwriteAllWithExcel = useCallback(() => {
+    setDiffItems(prev => prev.map(item => ({
+      ...item,
+      diffs: item.diffs.map(d => ({
+        ...d,
+        applyChange: true
+      }))
+    })));
+  }, []);
+
   // KPI counters (always called unconditionally)
   const counts = useMemo(() => {
-    const res = { all: diffItems.length, new: 0, modified: 0, unchanged: 0, orphan: 0, selected: 0 };
+    const res = { 
+      all: diffItems.length, 
+      new: 0, 
+      modified: 0, 
+      unchanged: 0, 
+      orphan: 0, 
+      selected: 0,
+      userModified: 0,
+      protectedDiffs: 0,
+      overwritingDiffs: 0
+    };
     for (const item of diffItems) {
       if (item.status === 'new') res.new++;
-      if (item.status === 'modified') res.modified++;
+      if (item.status === 'modified') {
+        res.modified++;
+        if (item.hasUserModifications || item.diffs.some(d => d.isUserModified)) {
+          res.userModified++;
+        }
+        for (const d of item.diffs) {
+          if (!d.applyChange) res.protectedDiffs++;
+          else res.overwritingDiffs++;
+        }
+      }
       if (item.status === 'unchanged') res.unchanged++;
       if (item.status === 'orphan') res.orphan++;
       if (item.selected) res.selected++;
@@ -375,7 +491,11 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
   const filteredItems = useMemo(() => {
     return diffItems.filter(item => {
       // Tab filter
-      if (filterTab !== 'all' && item.status !== filterTab) return false;
+      if (filterTab === 'user_modified') {
+        if (!item.hasUserModifications && !item.diffs.some(d => d.isUserModified)) return false;
+      } else if (filterTab !== 'all' && item.status !== filterTab) {
+        return false;
+      }
 
       // Text search
       if (searchTerm.trim()) {
@@ -432,6 +552,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       let updatedCount = 0;
       let zeroedCount = 0;
       let deletedCount = 0;
+      let protectedFieldsCount = 0;
 
       const BATCH_SIZE = 300; // Safe below Firestore 500 limit
       const batches: { type: 'set' | 'update' | 'delete', ref: any, data?: any }[][] = [];
@@ -462,16 +583,47 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           addedCount++;
         } else if (item.status === 'modified' && item.parsedItem && item.existingItem) {
           const docRef = doc(db, COLL_INVENTORY, item.existingItem.id);
-          // Merge keeping any custom existing fields like reminders and documents
+          
+          // Baseline: start from existing item so custom relations/fields are preserved
           const mergedItem: InventoryItem = {
             ...item.existingItem,
-            ...item.parsedItem,
             id: item.existingItem.id,
             databaseId: finalTargetDbId,
             reminders: item.existingItem.reminders || item.parsedItem.reminders,
             documents: item.existingItem.documents || item.parsedItem.documents,
             accessories: item.existingItem.accessories || item.parsedItem.accessories
           };
+
+          const userModifiedSet = new Set<string>(item.existingItem.userModifiedFields || []);
+
+          // Apply only fields where diff.applyChange is true!
+          for (const diff of item.diffs) {
+            if (diff.applyChange) {
+              if (diff.field === 'instances') {
+                if (item.parsedItem.instances) {
+                  mergedItem.instances = item.parsedItem.instances;
+                }
+              } else {
+                (mergedItem as any)[diff.field] = (item.parsedItem as any)[diff.field];
+              }
+              // If user explicitly chose to overwrite a user-modified field, remove it
+              if (diff.isUserModified) {
+                userModifiedSet.delete(diff.field);
+              }
+            } else {
+              // Explicitly protect existing CuePack value
+              if (diff.field === 'instances') {
+                mergedItem.instances = item.existingItem.instances;
+              } else {
+                (mergedItem as any)[diff.field] = (item.existingItem as any)[diff.field];
+              }
+              protectedFieldsCount++;
+            }
+          }
+
+          mergedItem.userModifiedFields = Array.from(userModifiedSet);
+          mergedItem.isCustomized = mergedItem.userModifiedFields.length > 0;
+
           currentBatchOps.push({ type: 'set', ref: docRef, data: cleanObject(mergedItem) });
           updatedCount++;
         } else if (item.status === 'orphan' && item.existingItem) {
@@ -530,6 +682,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
         updated: updatedCount,
         zeroed: zeroedCount,
         deleted: deletedCount,
+        protectedFields: protectedFieldsCount,
         targetDbName: finalDbName
       });
 
@@ -984,6 +1137,65 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
               </div>
 
+              {/* Presets and Protection Actions */}
+              {counts.modified > 0 && (
+                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg shrink-0 border border-amber-500/20">
+                      <ShieldAlert size={18} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white">Riconciliazione Modifiche CuePack vs Excel</span>
+                        {counts.userModified > 0 && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {counts.userModified} articoli modificati da te
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 font-mono">
+                        <span className="text-blue-400 font-bold">🛡️ {counts.protectedDiffs} valori CuePack protetti</span>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-amber-400 font-bold">🔄 {counts.overwritingDiffs} da aggiornare da Excel</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Preset Buttons */}
+                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                    <button
+                      type="button"
+                      onClick={massProtectAllUserModifications}
+                      className="px-2.5 py-1.5 bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-700/50 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                      title="Mantieni tutti i valori modificati manualmente su CuePack, proteggendoli dalla sovrascrittura"
+                    >
+                      <ShieldCheck size={14} className="text-blue-400" />
+                      <span>Proteggi Valori CuePack</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={massUpdateOnlyStockAndSerials}
+                      className="px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                      title="Aggiorna solo quantità a magazzino e numeri di serie da Excel, proteggendo nomi e specifiche corretti"
+                    >
+                      <PackageCheck size={14} className="text-emerald-400" />
+                      <span>Solo Giacenze & Matricole</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={massOverwriteAllWithExcel}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      title="Reimposta tutti i valori a quelli presenti nel file Excel"
+                    >
+                      <RefreshCw size={14} className="text-slate-400" />
+                      <span>Sovrascrivi Tutto da Excel</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Toolbar & Filters */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 border border-slate-800 p-3 rounded-xl shrink-0">
                 
@@ -1013,6 +1225,19 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                       }`}
                     >
                       Modificati ({counts.modified})
+                    </button>
+                  )}
+                  {counts.userModified > 0 && (
+                    <button 
+                      onClick={() => setFilterTab('user_modified')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        filterTab === 'user_modified' 
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm' 
+                          : 'text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10'
+                      }`}
+                    >
+                      <ShieldAlert size={13} className="text-amber-400" />
+                      Modificati da te ({counts.userModified})
                     </button>
                   )}
                   {counts.orphan > 0 && (
@@ -1130,6 +1355,29 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                     </span>
                                   )}
 
+                                  {/* User Modified Badge */}
+                                  {(item.hasUserModifications || item.diffs.some(d => d.isUserModified)) && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1" title="Questo articolo è stato modificato manualmente su CuePack">
+                                      <ShieldAlert size={11} /> Modificato da te
+                                    </span>
+                                  )}
+
+                                  {/* Item diff breakdown counters */}
+                                  {item.status === 'modified' && (
+                                    <div className="flex items-center gap-1.5">
+                                      {item.diffs.filter(d => !d.applyChange).length > 0 && (
+                                        <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-300 text-[10px] font-mono font-bold rounded border border-blue-800/40" title="Valori personalizzati che rimarranno intatti">
+                                          🛡️ {item.diffs.filter(d => !d.applyChange).length} protetti
+                                        </span>
+                                      )}
+                                      {item.diffs.filter(d => d.applyChange).length > 0 && (
+                                        <span className="px-1.5 py-0.5 bg-amber-900/30 text-amber-300 text-[10px] font-mono font-bold rounded border border-amber-800/40" title="Valori che verranno aggiornati da Excel">
+                                          🔄 {item.diffs.filter(d => d.applyChange).length} da Excel
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {/* Code and QR tags */}
                                   {code && (
                                     <span className="text-[11px] font-mono font-semibold text-blue-400 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-800/30">
@@ -1200,21 +1448,116 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                           {/* Expanded Differences Details */}
                           {item.status === 'modified' && isExpanded && (
-                            <div className="mt-3 ml-7 p-3 bg-slate-950/80 border border-slate-800 rounded-lg space-y-1.5 text-xs">
-                              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                                Differenze Rilevate (Prima → Dopo):
+                            <div className="mt-3 ml-7 p-3 bg-slate-950/90 border border-slate-800 rounded-xl space-y-3 text-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                                    Confronto Campi (CuePack Attuale vs Excel):
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => protectItemCustomFields(item.key)}
+                                    className="px-2 py-1 bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 border border-blue-700/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                                    title="Mantieni i valori personalizzati su questo articolo"
+                                  >
+                                    <ShieldCheck size={12} />
+                                    <span>Proteggi CuePack</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => overwriteItemWithExcel(item.key)}
+                                    className="px-2 py-1 bg-amber-900/30 hover:bg-amber-800/50 text-amber-300 border border-amber-700/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                                    title="Accetta tutti i valori da Excel per questo articolo"
+                                  >
+                                    <RefreshCw size={12} />
+                                    <span>Accetta da Excel</span>
+                                  </button>
+                                </div>
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {item.diffs.map((diff, dIdx) => (
-                                  <div key={dIdx} className="flex items-center justify-between p-2 bg-slate-900 rounded border border-slate-800 font-mono text-[11px]">
-                                    <span className="text-slate-400 font-sans font-semibold">{diff.label}:</span>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-rose-400 line-through opacity-80">{String(diff.oldValue)}</span>
-                                      <span className="text-slate-600">→</span>
-                                      <span className="text-emerald-400 font-bold">{String(diff.newValue)}</span>
+
+                              <div className="grid grid-cols-1 gap-2">
+                                {item.diffs.map((diff, dIdx) => {
+                                  const isProtected = !diff.applyChange;
+                                  return (
+                                    <div 
+                                      key={dIdx} 
+                                      className={`p-2.5 rounded-lg border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                                        diff.isUserModified 
+                                          ? isProtected 
+                                            ? 'bg-blue-950/30 border-blue-800/50 shadow-sm' 
+                                            : 'bg-amber-950/30 border-amber-800/50' 
+                                          : isProtected
+                                            ? 'bg-slate-900/80 border-slate-700'
+                                            : 'bg-slate-900 border-slate-800'
+                                      }`}
+                                    >
+                                      {/* Field Info & Comparison */}
+                                      <div className="min-w-0 space-y-1 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-bold text-white text-xs">{diff.label}</span>
+                                          {diff.isUserModified && (
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                              <ShieldAlert size={10} /> Modificato da te
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+                                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${
+                                            isProtected 
+                                              ? 'bg-blue-900/40 border border-blue-700/50 text-blue-200 font-bold' 
+                                              : 'bg-slate-950 text-slate-400 line-through opacity-75'
+                                          }`}>
+                                            <span className="text-[10px] text-slate-500 font-sans">CuePack:</span>
+                                            <span>{String(diff.oldValue || '—')}</span>
+                                            {isProtected && <span className="text-[10px] text-blue-300 ml-1 font-sans">✓ Attivo</span>}
+                                          </div>
+
+                                          <span className="text-slate-600 font-bold">→</span>
+
+                                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${
+                                            !isProtected 
+                                              ? 'bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 font-bold' 
+                                              : 'bg-slate-950 text-slate-500'
+                                          }`}>
+                                            <span className="text-[10px] text-slate-500 font-sans">Excel:</span>
+                                            <span>{String(diff.newValue || '—')}</span>
+                                            {!isProtected && <span className="text-[10px] text-emerald-300 ml-1 font-sans">✓ Sarà applicato</span>}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Toggle Protection/Overwrite Button */}
+                                      <div className="shrink-0 flex items-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleFieldDiff(item.key, diff.field)}
+                                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 ${
+                                            isProtected
+                                              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-900/40'
+                                              : 'bg-amber-600/80 hover:bg-amber-500 text-white shadow-sm shadow-amber-900/40'
+                                          }`}
+                                          title={isProtected ? 'Clicca per sovrascrivere questo campo con il valore del file Excel' : 'Clicca per proteggere e mantenere il valore attuale di CuePack'}
+                                        >
+                                          {isProtected ? (
+                                            <>
+                                              <ShieldCheck size={13} />
+                                              <span>Mantieni CuePack (Protetto)</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <RefreshCw size={13} />
+                                              <span>Aggiorna con Excel</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
@@ -1313,6 +1656,12 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                   <span className="text-[11px] font-bold text-amber-400 uppercase block">Articoli Aggiornati</span>
                   <span className="text-xl font-bold font-mono text-white">{syncSummary.updated}</span>
                 </div>
+                {syncSummary.protectedFields > 0 && (
+                  <div className="p-3 bg-slate-900 rounded-lg">
+                    <span className="text-[11px] font-bold text-blue-400 uppercase block">Campi CuePack Protetti</span>
+                    <span className="text-xl font-bold font-mono text-white">{syncSummary.protectedFields}</span>
+                  </div>
+                )}
                 {syncSummary.zeroed > 0 && (
                   <div className="p-3 bg-slate-900 rounded-lg">
                     <span className="text-[11px] font-bold text-cyan-400 uppercase block">Giacenze Azzerate</span>

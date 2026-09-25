@@ -274,7 +274,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
     const { itemId, field } = editingCell;
     const item = items.find(i => i.id === itemId);
     if (item) {
-        const updatedItem = { ...item, [field]: editValue };
+        const updatedUserModifiedFields = Array.from(new Set([
+          ...(item.userModifiedFields || []),
+          String(field)
+        ]));
+        const updatedItem = {
+          ...item,
+          [field]: editValue,
+          userModifiedFields: updatedUserModifiedFields,
+          isCustomized: true,
+          lastModifiedByUserAt: new Date().toISOString()
+        };
         // Sanitize: remove undefined values which Firestore hates
         const sanitizedItem = JSON.parse(JSON.stringify(updatedItem));
         const inventoryCol = getInventoryCollection(activeDatabaseId);
