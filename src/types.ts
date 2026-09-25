@@ -253,7 +253,7 @@ export interface InventoryDatabase {
   color?: string; // Colore badge (es. 'emerald', 'blue', 'amber', 'purple', 'rose', 'cyan', 'indigo')
   description?: string;
   isDefault?: boolean;
-  createdAt: string;
+  createdAt?: string;
   itemCount?: number;
   kitCount?: number;
 }

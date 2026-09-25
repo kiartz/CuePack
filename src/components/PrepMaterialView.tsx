@@ -1712,7 +1712,8 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                                     <span className={`${showChangeWarning ? 'bg-amber-500 text-black' : 'bg-purple-900 text-purple-200'} px-1.5 py-0.5 rounded text-xs font-mono font-bold shrink-0`}>x{comp.quantity}</span>
                                                                     {hasChanged && (
                                                                         <span className={`text-xs font-medium ml-2 ${showChangeWarning ? '' : 'opacity-40'}`}>
-                                                                            {ws.changeLog?.previou                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
+                                                                            {ws.changeLog?.previousQuantity === undefined
+                                                                                ? <span className={showChangeWarning ? "text-emerald-400 font-bold uppercase tracking-wider text-xs" : "text-white/60 font-bold uppercase tracking-wider text-xs"}> (NUOVO KIT)</span>
                                                                                 : <span className={showChangeWarning ? "text-amber-400 font-bold" : "text-white/60 font-bold"}>(Era: {ws.changeLog?.previousQuantity} v{previousVersion})</span>
                                                                             }
                                                                         </span>

@@ -56,5 +56,7 @@ __pycache__/
 *.pyc
 backup_*.json
 firebase_migration.py
+.tmp/
+Oggetti di riferimento/
 
 

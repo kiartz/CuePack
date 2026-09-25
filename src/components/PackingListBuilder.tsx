@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -1450,7 +1450,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setIsTempItemModalOpen(false);
   };
 
-  const generateComponentFromItem = (item: InventoryItem | Kit | Template, type: 'item' | 'kit' | 'template'): Omit<ListComponent, 'uniqueId' | 'quantity' | 'notes'> => {
+  const generateComponentFromItem = (
+      item: InventoryItem | Kit | Template, 
+      type: 'item' | 'kit' | 'template',
+      customAccessories?: { itemId: string; quantity: number }[]
+  ): Omit<ListComponent, 'uniqueId' | 'quantity' | 'notes'> => {
       if (type === 'template') {
         const t = item as Template;
         const builtContents: ListComponent[] = t.items.map((tc, idx) => {

@@ -355,7 +355,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
                 <button 
                   onClick={() => {
-                    setNewDbForm({ name: '', description: '', cloneCurrent: false, setAsDefault: false });
+                    setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
                     setIsNewDbModalOpen(true);
                   }}
                   className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
@@ -732,7 +732,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           title="Elimina Database di Inventario"
           message={`Sei sicuro di voler eliminare il database "${dbToDelete?.name || ''}"? Questa azione rimuoverà il database dal registro.`}
           confirmText="Elimina Database"
-          isDanger={true}
+          variant="danger"
         />
 
         <div className="text-center space-y-1 pb-8">
