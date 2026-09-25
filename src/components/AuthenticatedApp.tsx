@@ -444,6 +444,7 @@ export default function AuthenticatedApp() {
             packingLists={packingLists}
             activeDatabaseId={activeDatabaseId}
             databases={databases}
+            setActiveDatabaseId={setActiveDatabaseId}
         />;
       case 'kits':
         return <KitsView 

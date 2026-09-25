@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { generateId } from '../utils';
 import { 
   Download, Upload, LayoutDashboard, Database, Package, FileText, 
-  AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2
+  AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2,
+  FileSpreadsheet
 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, InventoryDatabase } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
+import { RentmanSyncModal } from './RentmanSyncModal';
 import { 
   batchWriteItems, addOrUpdateItem, deleteItem, 
   COLL_DATABASES, COLL_INVENTORY, COLL_KITS, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection 
@@ -56,6 +58,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   });
 
   const [dbToDelete, setDbToDelete] = useState<InventoryDatabase | null>(null);
+  const [isRentmanSyncModalOpen, setIsRentmanSyncModalOpen] = useState(false);
 
   // --- Statistics ---
   const totalItems = inventory.length;
@@ -353,15 +356,24 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         Gestisci molteplici archivi di materiali (es. Database Attuale, Rentman, Service Esterni) e seleziona quale utilizzare.
                     </p>
                 </div>
-                <button 
-                  onClick={() => {
-                    setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
-                    setIsNewDbModalOpen(true);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
-                >
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button 
+                    onClick={() => setIsRentmanSyncModalOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-emerald-900/30 active:scale-95 shrink-0"
+                    title="Importa o sincronizza catalogo da file Excel Rentman (.xlsx)"
+                  >
+                    <FileSpreadsheet size={18} /> Sincronizza Rentman
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
+                      setIsNewDbModalOpen(true);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
+                  >
                     <Plus size={18} /> Nuovo Database
-                </button>
+                  </button>
+                </div>
             </div>
 
             {/* Databases Cards Grid */}
@@ -733,6 +745,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
           message={`Sei sicuro di voler eliminare il database "${dbToDelete?.name || ''}"? Questa azione rimuoverà il database dal registro.`}
           confirmText="Elimina Database"
           variant="danger"
+        />
+
+        {/* --- RENTMAN SYNC & DIFF STUDIO MODAL --- */}
+        <RentmanSyncModal 
+          isOpen={isRentmanSyncModalOpen}
+          onClose={() => setIsRentmanSyncModalOpen(false)}
+          inventory={inventory}
+          databases={databases}
+          activeDatabaseId={activeDatabaseId}
+          setActiveDatabaseId={setActiveDatabaseId}
         />
 
         <div className="text-center space-y-1 pb-8">

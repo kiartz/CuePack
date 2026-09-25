@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database, FileSpreadsheet } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
+import { RentmanSyncModal } from './RentmanSyncModal';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -16,13 +17,15 @@ interface InventoryViewProps {
   packingLists: PackingList[];
   activeDatabaseId?: string;
   databases?: InventoryDatabase[];
+  setActiveDatabaseId?: (dbId: string) => void;
 }
 
-export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId, databases = [] }) => {
+export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId, databases = [], setActiveDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDatabase, setSelectedDatabase] = useState<string>('All');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isRentmanSyncModalOpen, setIsRentmanSyncModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   const effectiveDatabases = useMemo(() => {
@@ -420,6 +423,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                   <span className="hidden md:inline">{isAssigningCodes ? 'Salvataggio...' : 'Genera Mancanti'}</span>
                 </button>
               )}
+
+             <button 
+                onClick={() => setIsRentmanSyncModalOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white p-2.5 sm:px-3 sm:py-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-lg shadow-emerald-900/30 active:scale-95"
+                title="Importa o sincronizza catalogo da file Excel Rentman (.xlsx)"
+             >
+                <FileSpreadsheet size={18} />
+                <span className="hidden md:inline">Sincronizza Rentman</span>
+             </button>
 
              <button 
                 onClick={() => handleOpenModal()}
@@ -886,6 +898,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
           </div>
         )}
       </Modal>
+
+      {/* --- RENTMAN SYNC & DIFF STUDIO MODAL --- */}
+      <RentmanSyncModal 
+        isOpen={isRentmanSyncModalOpen}
+        onClose={() => setIsRentmanSyncModalOpen(false)}
+        inventory={items}
+        databases={effectiveDatabases}
+        activeDatabaseId={activeDatabaseId}
+        setActiveDatabaseId={setActiveDatabaseId}
+      />
     </div>
   );
 };
