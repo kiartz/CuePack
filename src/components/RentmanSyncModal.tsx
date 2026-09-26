@@ -166,8 +166,9 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
   // Handle Drag & Drop / File Select
   const handleFileUpload = async (file: File) => {
-    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
-      setParseError('Formato file non valido. Selezionare un file Excel (.xlsx o .xls).');
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
+      setParseError('Formato file non valido. Selezionare un file Excel (.xlsx, .xls) o CSV (.csv).');
       return;
     }
 
@@ -184,7 +185,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       setStage('configure');
     } catch (err: any) {
       console.error('Error parsing Rentman file:', err);
-      setParseError(err.message || 'Errore durante la lettura del file Excel.');
+      setParseError(err.message || 'Errore durante la lettura del file Excel o CSV.');
     } finally {
       setIsParsing(false);
     }
@@ -838,16 +839,16 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                   <UploadCloud size={44} />
                 </div>
                 <h3 className="text-lg font-bold text-white mb-1">
-                  Trascina qui il file Excel di Rentman
+                  Trascina qui il file Excel o CSV di Rentman
                 </h3>
                 <p className="text-xs text-slate-400 max-w-md mb-6">
-                  Seleziona il file <span className="text-emerald-400 font-mono font-semibold">.xlsx</span> esportato da Rentman per il database <strong className="text-slate-200">{effectiveDb.name}</strong>. Gli altri database rimarranno inalterati al 100%.
+                  Seleziona il file <span className="text-emerald-400 font-mono font-semibold">.xlsx</span> o <span className="text-emerald-400 font-mono font-semibold">.csv</span> esportato da Rentman per il database <strong className="text-slate-200">{effectiveDb.name}</strong>. Gli altri database rimarranno inalterati al 100%.
                 </p>
 
                 <input 
                   type="file" 
                   ref={fileInputRef} 
-                  accept=".xlsx, .xls" 
+                  accept=".xlsx, .xls, .csv" 
                   className="hidden" 
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) {

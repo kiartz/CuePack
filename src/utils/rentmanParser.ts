@@ -531,7 +531,9 @@ export async function parseRentmanFile(
 
   const workbook = XLSX.read(data, {
     type: data instanceof ArrayBuffer ? 'array' : 'buffer',
-    cellDates: false
+    cellDates: false,
+    raw: true,
+    codepage: 65001 // Ensure UTF-8 decoding for CSV files and preserve strings
   });
   return parseRentmanWorkbook(workbook, targetDatabaseId);
 }
