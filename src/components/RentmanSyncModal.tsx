@@ -408,6 +408,14 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     ));
   }, []);
 
+  // Mass action for all orphan items (not in file)
+  const massSetOrphanAction = useCallback((action: 'keep' | 'zero_stock' | 'delete') => {
+    setDiffItems(prev => prev.map(item => {
+      if (item.status !== 'orphan') return item;
+      return { ...item, orphanAction: action, selected: action !== 'keep' };
+    }));
+  }, []);
+
   const toggleExpand = useCallback((key: string) => {
     setExpandedKeys(prev => {
       const next = new Set(prev);
@@ -1229,9 +1237,9 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 </button>
               </div>
 
-              {/* Presets Ribbon (only when there are modified items) */}
-              {counts.modified > 0 && (
-                <div className="bg-slate-900/70 border border-slate-800 px-3.5 py-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+              {/* Presets Ribbon (visible ONLY in 'modified' tab) */}
+              {filterTab === 'modified' && counts.modified > 0 && (
+                <div className="bg-slate-900/70 border border-slate-800 px-3.5 py-2 rounded-xl flex flex-wrap items-center justify-between gap-2.5 shrink-0">
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal size={14} className="text-amber-400" />
                     <span className="text-xs font-bold text-slate-200">Preset Modifiche:</span>
@@ -1274,6 +1282,45 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                     >
                       <RefreshCw size={13} className="text-slate-400" />
                       <span>Usa Valori Excel</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Orphan Mass Actions Ribbon (visible ONLY in 'orphan' tab) */}
+              {filterTab === 'orphan' && counts.orphan > 0 && (
+                <div className="bg-slate-900/70 border border-slate-800 px-3.5 py-2 rounded-xl flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={14} className="text-rose-400" />
+                    <span className="text-xs font-bold text-slate-200">Azione per tutti gli articoli non nel file:</span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => massSetOrphanAction('keep')}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Mantieni tutti gli articoli nel DB senza apportare modifiche"
+                    >
+                      <span>Mantieni Tutti</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => massSetOrphanAction('zero_stock')}
+                      className="px-2.5 py-1.5 bg-amber-950/60 hover:bg-amber-900/70 text-amber-300 border border-amber-700/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Imposta la giacenza a 0 per tutti gli articoli non presenti nel file"
+                    >
+                      <span>Azzera Giacenza a Tutti</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => massSetOrphanAction('delete')}
+                      className="px-2.5 py-1.5 bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-700/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Rimuovi definitivamente tutti questi articoli dal database"
+                    >
+                      <span>Elimina Tutti dal DB</span>
                     </button>
                   </div>
                 </div>
@@ -1470,35 +1517,34 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                           {/* Expanded Differences Details */}
                           {item.status === 'modified' && isExpanded && (
-                            <div className="mt-3 ml-7 p-3.5 bg-slate-950 border border-slate-800/90 rounded-xl space-y-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800/80 text-xs">
-                                <span className="font-semibold text-slate-300">
+                            <div className="mt-3 ml-7 pl-4 border-l-2 border-slate-800 space-y-2.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2 py-1 text-xs">
+                                <span className="font-medium text-slate-400">
                                   Seleziona quale valore applicare per ogni campo:
                                 </span>
 
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-2">
                                   <button
                                     type="button"
                                     onClick={() => protectItemCustomFields(item.key)}
-                                    className="px-2.5 py-1 bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border border-blue-800/50 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                                    className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 transition-colors"
                                     title="Mantieni tutti i valori attuali di CuePack per questo articolo"
                                   >
-                                    <ShieldCheck size={12} className="text-blue-400" />
-                                    <span>Tutti CuePack</span>
+                                    Tutti CuePack
                                   </button>
+                                  <span className="text-slate-600">•</span>
                                   <button
                                     type="button"
                                     onClick={() => overwriteItemWithExcel(item.key)}
-                                    className="px-2.5 py-1 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/50 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                                    className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
                                     title="Accetta tutti i valori da Excel per questo articolo"
                                   >
-                                    <RefreshCw size={12} className="text-emerald-400" />
-                                    <span>Tutti Excel</span>
+                                    Tutti Excel
                                   </button>
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-1 gap-2.5">
+                              <div className="space-y-2">
                                 {item.diffs.map((diff, dIdx) => {
                                   const isCuePackSelected = !diff.applyChange;
                                   const isExcelSelected = diff.applyChange;
@@ -1506,50 +1552,45 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                   return (
                                     <div 
                                       key={dIdx} 
-                                      className="p-2.5 rounded-lg border border-slate-800/90 bg-slate-900/50 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 py-1"
                                     >
                                       {/* Field Info */}
-                                      <div className="min-w-0 md:w-1/3">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-bold text-white">{diff.label}</span>
-                                          {diff.isUserModified && (
-                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1" title="Questo campo è stato modificato manualmente da un utente">
-                                              <ShieldAlert size={10} /> Personalizzato
-                                            </span>
-                                          )}
-                                        </div>
+                                      <div className="min-w-0 sm:w-44 flex items-center gap-2">
+                                        <span className="font-semibold text-white text-xs">{diff.label}</span>
+                                        {diff.isUserModified && (
+                                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1" title="Questo campo è stato modificato manualmente da un utente">
+                                            <ShieldAlert size={10} /> Personalizzato
+                                          </span>
+                                        )}
                                       </div>
 
-                                      {/* Side-by-Side Option Cards */}
+                                      {/* Side-by-Side Option Buttons */}
                                       <div className="grid grid-cols-2 gap-2 flex-1">
                                         
                                         {/* Option 1: CuePack */}
                                         <button
                                           type="button"
                                           onClick={() => setFieldApply(item.key, diff.field, false)}
-                                          className={`p-2 rounded-lg border text-left transition-all flex items-start gap-2 ${
+                                          className={`px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
                                             isCuePackSelected
-                                              ? 'bg-blue-950/40 border-blue-500/80 ring-1 ring-blue-500/50 text-white shadow-sm'
-                                              : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                                              ? 'bg-blue-950/40 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40'
+                                              : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
                                           }`}
                                         >
-                                          <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                          <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
                                             isCuePackSelected 
                                               ? 'border-blue-400 bg-blue-500 text-white' 
                                               : 'border-slate-600 bg-transparent'
                                           }`}>
                                             {isCuePackSelected && <Check size={10} strokeWidth={3} />}
                                           </div>
-                                          <div className="min-w-0 flex-1">
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-[10px] uppercase font-bold text-slate-400">Valore CuePack</span>
-                                              {isCuePackSelected && (
-                                                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Attivo</span>
-                                              )}
-                                            </div>
-                                            <div className="font-mono text-[11px] truncate mt-0.5 text-slate-200">
+                                          <div className="min-w-0 flex-1 flex items-baseline justify-between gap-2">
+                                            <span className="font-mono text-xs truncate">
                                               {String(diff.oldValue || '—')}
-                                            </div>
+                                            </span>
+                                            <span className={`text-[9px] font-bold uppercase tracking-wider shrink-0 ${isCuePackSelected ? 'text-blue-400' : 'text-slate-500'}`}>
+                                              CuePack
+                                            </span>
                                           </div>
                                         </button>
 
@@ -1557,29 +1598,26 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => setFieldApply(item.key, diff.field, true)}
-                                          className={`p-2 rounded-lg border text-left transition-all flex items-start gap-2 ${
+                                          className={`px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
                                             isExcelSelected
-                                              ? 'bg-emerald-950/40 border-emerald-500/80 ring-1 ring-emerald-500/50 text-white shadow-sm'
-                                              : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                                              ? 'bg-emerald-950/40 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40'
+                                              : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
                                           }`}
                                         >
-                                          <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                          <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
                                             isExcelSelected 
                                               ? 'border-emerald-400 bg-emerald-500 text-white' 
                                               : 'border-slate-600 bg-transparent'
                                           }`}>
                                             {isExcelSelected && <Check size={10} strokeWidth={3} />}
                                           </div>
-                                          <div className="min-w-0 flex-1">
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-[10px] uppercase font-bold text-slate-400">Valore Excel</span>
-                                              {isExcelSelected && (
-                                                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Attivo</span>
-                                              )}
-                                            </div>
-                                            <div className="font-mono text-[11px] truncate mt-0.5 text-slate-200">
+                                          <div className="min-w-0 flex-1 flex items-baseline justify-between gap-2">
+                                            <span className="font-mono text-xs truncate">
                                               {String(diff.newValue || '—')}
-                                            </div>
+                                            </span>
+                                            <span className={`text-[9px] font-bold uppercase tracking-wider shrink-0 ${isExcelSelected ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                              Excel
+                                            </span>
                                           </div>
                                         </button>
 
