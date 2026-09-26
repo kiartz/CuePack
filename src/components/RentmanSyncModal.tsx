@@ -1534,11 +1534,6 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                       {/* Field Info */}
                                       <div className="min-w-0 sm:w-44 flex items-center gap-2">
                                         <span className="font-semibold text-white text-xs">{diff.label}</span>
-                                        {diff.isUserModified && (
-                                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1" title="Questo campo è stato modificato manualmente da un utente">
-                                            <ShieldAlert size={10} /> Personalizzato
-                                          </span>
-                                        )}
                                       </div>
 
                                       {/* Side-by-Side Option Buttons */}
