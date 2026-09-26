@@ -6,6 +6,8 @@ import {
   Check, 
   CheckCircle2, 
   AlertCircle, 
+  AlertTriangle,
+  RotateCcw,
   ArrowRight, 
   ArrowLeft, 
   RefreshCw, 
@@ -85,7 +87,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 }) => {
   const initialDbId = propTargetDbId || activeDatabaseId || DEFAULT_DATABASE_ID;
   // Stage control
-  const [stage, setStage] = useState<'upload' | 'configure' | 'diff' | 'syncing' | 'complete'>('upload');
+  const [stage, setStage] = useState<'upload' | 'configure' | 'diff' | 'syncing' | 'complete' | 'error'>('upload');
   
   // File & Parsing state
   const [fileName, setFileName] = useState('');
@@ -112,7 +114,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
-  // Progress state
+  // Progress & Error state
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, percent: 0, message: '' });
   const [syncSummary, setSyncSummary] = useState<{
     added: number;
@@ -121,6 +123,14 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     deleted: number;
     protectedFields: number;
     targetDbName: string;
+  } | null>(null);
+  const [syncError, setSyncError] = useState<{
+    title: string;
+    message: string;
+    code?: string;
+    rolledBack: boolean;
+    rolledBackCount: number;
+    rollbackErrorDetail?: string;
   } | null>(null);
 
   // Synchronize target DB when propTargetDbId or activeDatabaseId changes
@@ -143,6 +153,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       setSearchTerm('');
       setFilterTab('all');
       setSyncSummary(null);
+      setSyncError(null);
       setParseError(null);
     }
   }, [isOpen]);
@@ -566,10 +577,20 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     });
   }, [diffItems, filterTab, searchTerm]);
 
-  // Execute Firestore Batch Commit
+  // Execute Firestore Batch Commit with Atomic Rollback on Failure
   const executeSync = async () => {
     setStage('syncing');
     setIsParsing(true);
+    setSyncError(null);
+
+    // Rollback log: will store operations that have been committed successfully to Firestore
+    type RollbackOp = {
+      type: 'created_item' | 'modified_item' | 'deleted_item' | 'created_db';
+      ref: any;
+      originalData?: any;
+      dbIdToReset?: string;
+    };
+    const committedRollbackLog: RollbackOp[] = [];
 
     try {
       let finalTargetDbId = effectiveDb.id;
@@ -596,6 +617,13 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
         batch.set(dbRef, newDbRecord);
         await batch.commit();
 
+        // Track creation of DB for rollback if subsequent operations fail
+        committedRollbackLog.push({
+          type: 'created_db',
+          ref: dbRef,
+          dbIdToReset: initialDbId
+        });
+
         if (setActiveDatabaseId) {
           setActiveDatabaseId(newDbId);
         }
@@ -611,9 +639,22 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       let deletedCount = 0;
       let protectedFieldsCount = 0;
 
-      const BATCH_SIZE = 300; // Safe below Firestore 500 limit
-      const batches: { type: 'set' | 'update' | 'delete', ref: any, data?: any }[][] = [];
-      let currentBatchOps: { type: 'set' | 'update' | 'delete', ref: any, data?: any }[] = [];
+      // Initialize progress immediately
+      setSyncProgress({
+        current: 0,
+        total: totalOperations,
+        percent: 0,
+        message: `Preparazione sincronizzazione (${totalOperations} articoli selezionati)...`
+      });
+
+      const BATCH_SIZE = 150; // Fluid progress feedback & safe under Firestore 500 limit
+      interface BatchChunk {
+        ops: { type: 'set' | 'update' | 'delete'; ref: any; data?: any }[];
+        rollbackOps: RollbackOp[];
+      }
+      const batches: BatchChunk[] = [];
+      let currentBatchOps: { type: 'set' | 'update' | 'delete'; ref: any; data?: any }[] = [];
+      let currentBatchRollback: RollbackOp[] = [];
 
       const cleanObject = (obj: any): any => {
         if (Array.isArray(obj)) return obj.map(cleanObject);
@@ -637,9 +678,12 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
             databaseId: finalTargetDbId // STRICTLY ASSIGNED TO THIS DATABASE
           };
           currentBatchOps.push({ type: 'set', ref: docRef, data: cleanObject(fullItem) });
+          // Rollback for new item: delete it
+          currentBatchRollback.push({ type: 'created_item', ref: docRef });
           addedCount++;
         } else if (item.status === 'modified' && item.parsedItem && item.existingItem) {
           const docRef = doc(db, COLL_INVENTORY, item.existingItem.id);
+          const originalSnapshot = cleanObject(item.existingItem);
           
           // Baseline: start from existing item so custom relations/fields are preserved
           const mergedItem: InventoryItem = {
@@ -682,11 +726,17 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
           mergedItem.isCustomized = mergedItem.userModifiedFields.length > 0;
 
           currentBatchOps.push({ type: 'set', ref: docRef, data: cleanObject(mergedItem) });
+          // Rollback for modified item: restore original item state
+          currentBatchRollback.push({ type: 'modified_item', ref: docRef, originalData: originalSnapshot });
           updatedCount++;
         } else if (item.status === 'orphan' && item.existingItem) {
           const docRef = doc(db, COLL_INVENTORY, item.existingItem.id);
+          const originalSnapshot = cleanObject(item.existingItem);
+
           if (item.orphanAction === 'delete') {
             currentBatchOps.push({ type: 'delete', ref: docRef });
+            // Rollback for deleted orphan: recreate with original data
+            currentBatchRollback.push({ type: 'deleted_item', ref: docRef, originalData: originalSnapshot });
             deletedCount++;
           } else if (item.orphanAction === 'zero_stock') {
             currentBatchOps.push({
@@ -697,41 +747,59 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 instances: (item.existingItem.instances || []).map(i => ({ ...i, active: false }))
               })
             });
+            // Rollback for zeroed stock: restore original data
+            currentBatchRollback.push({ type: 'modified_item', ref: docRef, originalData: originalSnapshot });
             zeroedCount++;
           }
         }
 
         if (currentBatchOps.length >= BATCH_SIZE) {
-          batches.push(currentBatchOps);
+          batches.push({ ops: currentBatchOps, rollbackOps: currentBatchRollback });
           currentBatchOps = [];
+          currentBatchRollback = [];
         }
       }
 
       if (currentBatchOps.length > 0) {
-        batches.push(currentBatchOps);
+        batches.push({ ops: currentBatchOps, rollbackOps: currentBatchRollback });
       }
 
-      // Execute batches sequentially with progress bar updates
+      // Execute batches sequentially with real-time progress updates
       for (let bIdx = 0; bIdx < batches.length; bIdx++) {
-        const batchOps = batches[bIdx];
+        const chunk = batches[bIdx];
         const batch = writeBatch(db);
 
-        for (const op of batchOps) {
+        for (const op of chunk.ops) {
           if (op.type === 'set') batch.set(op.ref, op.data);
           else if (op.type === 'update') batch.update(op.ref, op.data);
           else if (op.type === 'delete') batch.delete(op.ref);
         }
 
-        await batch.commit();
-        processed += batchOps.length;
+        // Notify UI about upcoming batch write
+        const currentCount = processed;
+        setSyncProgress({
+          current: currentCount,
+          total: totalOperations,
+          percent: Math.round((currentCount / (totalOperations || 1)) * 100),
+          message: `Scrittura lotto ${bIdx + 1} di ${batches.length} (${currentCount} di ${totalOperations} completati)...`
+        });
 
-        const percent = Math.round((processed / (totalOperations || 1)) * 100);
+        await batch.commit();
+
+        // Successful commit: register rollback operations in case later batches fail
+        committedRollbackLog.push(...chunk.rollbackOps);
+        processed += chunk.ops.length;
+
+        const currentPercent = Math.round((processed / (totalOperations || 1)) * 100);
         setSyncProgress({
           current: processed,
           total: totalOperations,
-          percent,
-          message: `Sincronizzazione in corso... ${processed}/${totalOperations}`
+          percent: currentPercent,
+          message: `Lotto ${bIdx + 1} di ${batches.length} salvato (${processed} / ${totalOperations})`
         });
+
+        // Small delay to allow UI re-rendering of progress bar
+        await new Promise(r => setTimeout(r, 60));
       }
 
       setSyncSummary({
@@ -749,8 +817,71 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
       }
     } catch (err: any) {
       console.error('Error during Firestore batch sync:', err);
-      alert('Errore durante la scrittura su Firestore: ' + (err.message || 'Errore sconosciuto'));
-      setStage('diff');
+
+      setSyncProgress(prev => ({
+        ...prev,
+        message: '⚠️ Errore di sincronizzazione! Annullamento modifiche (Rollback) in corso per proteggere il database...'
+      }));
+
+      let rollbackSuccess = true;
+      let rolledBackCount = 0;
+      let rollbackErrorDetail = '';
+
+      // Automatic compensating rollback of any committed operations
+      if (committedRollbackLog.length > 0) {
+        try {
+          const reversedLog = [...committedRollbackLog].reverse();
+          const rollbackBatches: RollbackOp[][] = [];
+          for (let i = 0; i < reversedLog.length; i += 150) {
+            rollbackBatches.push(reversedLog.slice(i, i + 150));
+          }
+
+          for (const rbChunk of rollbackBatches) {
+            const rBatch = writeBatch(db);
+            for (const entry of rbChunk) {
+              if (entry.type === 'created_item') {
+                rBatch.delete(entry.ref);
+              } else if (entry.type === 'modified_item' || entry.type === 'deleted_item') {
+                rBatch.set(entry.ref, entry.originalData);
+              } else if (entry.type === 'created_db') {
+                rBatch.delete(entry.ref);
+                if (setActiveDatabaseId && entry.dbIdToReset) {
+                  setActiveDatabaseId(entry.dbIdToReset);
+                }
+              }
+            }
+            await rBatch.commit();
+            rolledBackCount += rbChunk.length;
+          }
+        } catch (rbErr: any) {
+          console.error('Critical: Rollback error:', rbErr);
+          rollbackSuccess = false;
+          rollbackErrorDetail = rbErr?.message || 'Errore imprevisto durante il ripristino automatico';
+        }
+      }
+
+      // Friendly Italian error explanation
+      let errorExplanation = err?.message || 'Errore imprevisto durante la scrittura nel database Firestore.';
+      if (err?.code === 'permission-denied' || errorExplanation.includes('permission-denied') || errorExplanation.includes('Missing or insufficient permissions')) {
+        errorExplanation = 'Permessi insufficienti: non disponi dell\'autorizzazione per scrivere sul database Firestore.';
+      } else if (err?.code === 'unavailable' || errorExplanation.includes('unavailable') || errorExplanation.includes('network') || errorExplanation.includes('failed to fetch')) {
+        errorExplanation = 'Connessione di rete persa o server Firestore momentaneamente irraggiungibile. Verifica la tua connessione ad internet.';
+      } else if (err?.code === 'resource-exhausted' || errorExplanation.includes('quota')) {
+        errorExplanation = 'Quota di scrittura giornaliera di Firestore superata.';
+      } else if (err?.code === 'deadline-exceeded' || errorExplanation.includes('timeout')) {
+        errorExplanation = 'Tempo limite di richiesta superato (Timeout di connessione).';
+      }
+
+      setSyncError({
+        title: 'Sincronizzazione non riuscita',
+        message: errorExplanation,
+        code: err?.code,
+        rolledBack: rollbackSuccess,
+        rolledBackCount,
+        rollbackErrorDetail
+      });
+
+      setStage('error');
     } finally {
       setIsParsing(false);
     }
@@ -765,6 +896,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
     setSearchTerm('');
     setFilterTab('all');
     setSyncSummary(null);
+    setSyncError(null);
   };
 
   // Crucial: Early return is placed HERE after ALL hooks are called!
@@ -1672,6 +1804,11 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 <p className="text-xs text-slate-400">
                   Scrittura atomica dei lotti in Firestore nel database <strong className="text-white">"{effectiveDb.name}"</strong>.
                 </p>
+                {syncProgress.message && (
+                  <p className="text-xs text-emerald-400/90 font-mono font-medium animate-pulse">
+                    {syncProgress.message}
+                  </p>
+                )}
               </div>
 
               {/* Progress bar */}
@@ -1683,7 +1820,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
               </div>
 
               <div className="text-xs font-mono font-bold text-emerald-400">
-                {syncProgress.percent}% ({syncProgress.current} / {syncProgress.total})
+                {syncProgress.percent}% ({syncProgress.current} / {syncProgress.total} operazioni)
               </div>
             </div>
           )}
@@ -1747,6 +1884,81 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                   className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-900/30 transition-all active:scale-95"
                 >
                   Chiudi e Visualizza Catalogo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ================= STAGE 6: ERROR & ROLLBACK REPORT ================= */}
+          {stage === 'error' && syncError && (
+            <div className="h-full flex flex-col items-center justify-center max-w-xl mx-auto text-center space-y-6 py-6 animate-in fade-in zoom-in-95 duration-200">
+              <div className="p-5 bg-rose-600/20 text-rose-400 rounded-full border border-rose-500/30 shadow-xl shadow-rose-950/50">
+                <AlertTriangle size={54} />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-white">
+                  {syncError.title}
+                </h3>
+                <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800/50 px-4 py-2.5 rounded-xl font-mono text-left break-words">
+                  {syncError.message}
+                </p>
+              </div>
+
+              {/* Rollback status card */}
+              <div className="w-full p-4 rounded-xl border text-left space-y-2 bg-slate-950 border-slate-800">
+                {syncError.rolledBack ? (
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0 mt-0.5">
+                      <ShieldCheck size={20} />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wide">
+                        Protezione Integrità: Database Ripristinato con Successo
+                      </h4>
+                      <p className="text-xs text-slate-300">
+                        {syncError.rolledBackCount > 0 
+                          ? `Il processo è stato interrotto in sicurezza. Sono state annullate automaticamente ${syncError.rolledBackCount} modifiche già registrate prima dell'errore (Rollback). Nessun dato parziale o corrotto è rimasto nel database "${effectiveDb.name}".`
+                          : `Nessuna modifica era stata ancora applicata. Il tuo database "${effectiveDb.name}" è rimasto intatto al 100%.`
+                        }
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg shrink-0 mt-0.5">
+                      <AlertCircle size={20} />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wide">
+                        Attenzione: Ripristino Parziale
+                      </h4>
+                      <p className="text-xs text-slate-300">
+                        Si è verificato un errore durante l'annullamento automatico: {syncError.rollbackErrorDetail}. Ti consigliamo di verificare la connessione prima di riprovare.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setSyncError(null);
+                    setStage('diff');
+                  }}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-blue-900/30 transition-all active:scale-95"
+                >
+                  <RotateCcw size={16} /> Torna alle modifiche e Riprova
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={onClose}
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+                >
+                  Chiudi
                 </button>
               </div>
             </div>
