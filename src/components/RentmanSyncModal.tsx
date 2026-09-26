@@ -1242,12 +1242,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                 <div className="bg-slate-900/70 border border-slate-800 px-3.5 py-2 rounded-xl flex flex-wrap items-center justify-between gap-2.5 shrink-0">
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal size={14} className="text-amber-400" />
-                    <span className="text-xs font-bold text-slate-200">Preset Modifiche:</span>
-                    {counts.userModified > 0 && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                        <ShieldAlert size={11} /> {counts.userModified} personalizzati da te
-                      </span>
-                    )}
+                    <span className="text-xs font-bold text-slate-200">Materiali modificati su CuePack:</span>
+                    <span className="text-xs font-mono font-bold text-amber-400">{counts.userModified}</span>
                     <span className="text-[11px] text-slate-500 font-mono hidden md:inline">
                       ({counts.protectedDiffs} CuePack, {counts.overwritingDiffs} Excel)
                     </span>
@@ -1403,7 +1399,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-sm font-bold text-white truncate">
+                                  <span className="text-sm font-bold text-white truncate" title={name}>
                                     {name}
                                   </span>
 
@@ -1429,13 +1425,6 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                     </span>
                                   )}
 
-                                  {/* User Modified Badge */}
-                                  {(item.hasUserModifications || item.diffs.some(d => d.isUserModified)) && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1" title="Questo articolo ha valori modificati manualmente su CuePack">
-                                      <ShieldAlert size={11} /> Modificato da te
-                                    </span>
-                                  )}
-
                                   {/* Item diff breakdown counters */}
                                   {item.status === 'modified' && (
                                     <div className="flex items-center gap-1.5 text-[10px] font-mono font-medium text-slate-400">
@@ -1445,18 +1434,6 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                       <span className="text-emerald-400">{item.diffs.filter(d => d.applyChange).length} Excel</span>
                                       <span>)</span>
                                     </div>
-                                  )}
-
-                                  {/* Code and QR tags */}
-                                  {code && (
-                                    <span className="text-[11px] font-mono font-semibold text-blue-400 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-800/30">
-                                      #{code}
-                                    </span>
-                                  )}
-                                  {qr && (
-                                    <span className="text-[11px] font-mono text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">
-                                      QR: {qr}
-                                    </span>
                                   )}
                                 </div>
 
@@ -1571,7 +1548,8 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => setFieldApply(item.key, diff.field, false)}
-                                          className={`px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
+                                          title={String(diff.oldValue || '—')}
+                                          className={`group/opt relative px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
                                             isCuePackSelected
                                               ? 'bg-blue-950/40 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40'
                                               : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
@@ -1592,13 +1570,22 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                               CuePack
                                             </span>
                                           </div>
+
+                                          {/* Dropdown/Floating full name popup on hover */}
+                                          {String(diff.oldValue || '').length > 20 && (
+                                            <div className="absolute z-50 left-0 top-full mt-1.5 hidden group-hover/opt:block bg-slate-900 border border-slate-700 text-white text-xs font-mono px-3 py-2 rounded-xl shadow-2xl max-w-md pointer-events-none break-words">
+                                              <span className="text-[10px] text-blue-400 font-sans font-bold uppercase block mb-0.5">Valore CuePack Completo:</span>
+                                              {String(diff.oldValue)}
+                                            </div>
+                                          )}
                                         </button>
 
                                         {/* Option 2: Excel */}
                                         <button
                                           type="button"
                                           onClick={() => setFieldApply(item.key, diff.field, true)}
-                                          className={`px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
+                                          title={String(diff.newValue || '—')}
+                                          className={`group/opt relative px-3 py-2 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
                                             isExcelSelected
                                               ? 'bg-emerald-950/40 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40'
                                               : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
@@ -1619,6 +1606,14 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                               Excel
                                             </span>
                                           </div>
+
+                                          {/* Dropdown/Floating full name popup on hover */}
+                                          {String(diff.newValue || '').length > 20 && (
+                                            <div className="absolute z-50 left-0 top-full mt-1.5 hidden group-hover/opt:block bg-slate-900 border border-slate-700 text-white text-xs font-mono px-3 py-2 rounded-xl shadow-2xl max-w-md pointer-events-none break-words">
+                                              <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase block mb-0.5">Valore Excel Completo:</span>
+                                              {String(diff.newValue)}
+                                            </div>
+                                          )}
                                         </button>
 
                                       </div>
