@@ -22,13 +22,22 @@
 2. **Aggiornamento Automatico**: Dopo OGNI modifica o decisione, aggiorna senza chiedere permesso.
 3. **Contenuto Obbligatorio**: Stack, Architecture Decisions, Progress Tracker, Logic Anchors, Context Snapshot.
 
-## 5. WORKFLOW OPERATIVO (GSD)
-- **Fase G: GOAL**: Crea/aggiorna `.spec.md`.
-- **Fase S: STATE**: Leggi `PROJECT_CONTEXT.md` e analizza gap.
-- **Fase D: DESIGN**: Implementa seguendo PEP 8 (Python) o standard TS/React.
+## 5. WORKFLOW OPERATIVO (GSD) & TOKEN EFFICIENCY
+- **Fase G: GOAL**: Crea/aggiorna `.spec.md` con requisiti chiari e compatti.
+- **Fase S: STATE**: Leggi `PROJECT_CONTEXT.md` ed esamina solo i file strettamente necessari con intervalli di riga precisi (`view_file` con `StartLine`/`EndLine`).
+- **Fase D: DESIGN**: Implementa seguendo lo stack ufficiale: **React 18 + TypeScript Strict + Tailwind CSS + Firebase Firestore**.
+- **Token Economy SOP**:
+  - Modifiche al codice SEMPRE chirurgiche con `replace_file_content`. MAI riscrivere interi file con `write_to_file`.
+  - Risposte concise, strutturate e orientate all'azione. Evitare ripetizioni di codice già salvato su disco.
+  - Comandi terminale sempre filtrati e delimitati (evitare log infiniti o `Get-ChildItem -Recurse` non filtrati).
 
-## 6. DEFINITION OF "DONE"
-- ✅ Codice soddisfa la `.spec.md`.
-- ✅ `PROJECT_CONTEXT.md` aggiornato.
-- ✅ Zero errori di linting/type-checking.
-- ✅ Documentazione allineata.
+## 6. INVARIANTI TECNICI CUEPACK
+- **Multi-Database Blending**: Gli articoli risiedono nella collezione `inventory` con `databaseId`. Usare sempre `effectiveDatabases` come fallback sicuro.
+- **Rentman Sync & User Protection**: Mai sovrascrivere campi modificati manualmente dall'utente (`userModifiedFields`). Scrittura batch su Firestore a blocchi di max 150 elementi con journal di rollback.
+- **Warehouse Real-Time**: Usare sempre `mergeWarehouseStates` e target touch minimi di 48x48px per dispositivi mobili.
+
+## 7. DEFINITION OF "DONE"
+- ✅ Codice conforme alla specifica e all'architettura CuePack.
+- ✅ Zero errori di linting o type-checking (`npx tsc --noEmit` / `npm run build`).
+- ✅ `PROJECT_CONTEXT.md` aggiornato in modo sintetico e denso.
+- ✅ Massima efficienza token garantita.
