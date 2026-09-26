@@ -20,7 +20,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   PackageCheck,
-  Info
+  Info,
+  SlidersHorizontal
 } from 'lucide-react';
 import { InventoryItem, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ParsedRentmanItem, RentmanParseResult, parseRentmanFile } from '../utils/rentmanParser';
@@ -424,6 +425,19 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
         ...item,
         diffs: item.diffs.map(d => 
           d.field === fieldName ? { ...d, applyChange: !d.applyChange } : d
+        )
+      };
+    }));
+  }, []);
+
+  // Explicitly set field diff choice: apply Excel (true) vs preserve CuePack (false)
+  const setFieldApply = useCallback((itemKey: string, fieldName: string, applyChange: boolean) => {
+    setDiffItems(prev => prev.map(item => {
+      if (item.key !== itemKey) return item;
+      return {
+        ...item,
+        diffs: item.diffs.map(d => 
+          d.field === fieldName ? { ...d, applyChange } : d
         )
       };
     }));
@@ -1071,377 +1085,239 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
           {/* ================= STAGE 3: DIFF & SELECTION STUDIO ================= */}
           {stage === 'diff' && (
-            <div className="h-full flex flex-col space-y-4">
+            <div className="h-full flex flex-col space-y-3.5">
               
-              {/* Top Target DB Reminder */}
-              <div className="flex items-center justify-between bg-slate-950/80 border border-slate-800 px-4 py-2 rounded-xl text-xs shrink-0">
-                <div className="flex items-center gap-2">
-                  <Database size={15} className="text-emerald-400" />
-                  <span className="text-slate-400">Database di destinazione:</span>
-                  <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${getDbBadgeStyle(effectiveDb.color)}`}>
-                    {effectiveDb.code}
-                  </span>
-                  <strong className="text-white">{effectiveDb.name}</strong>
-                </div>
+              {/* Category Filter Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 shrink-0">
+                {/* Tutti */}
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('all')}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    filterTab === 'all'
+                      ? 'bg-slate-800/90 border-blue-500 shadow-md ring-1 ring-blue-500'
+                      : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300">Tutti</span>
+                    <span className="text-lg font-bold font-mono text-white">{counts.all}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">Catalogo completo</p>
+                </button>
 
-                <div className="text-slate-400">
-                  {isInitialImport 
-                    ? '✨ Modalità Prima Importazione: tutti gli articoli selezionati verranno registrati in questo archivio'
-                    : '🔄 Modalità Sincronizzazione: confronto con gli articoli preesistenti nel database'}
-                </div>
-              </div>
-
-              {/* Top KPI Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
-                
                 {/* Nuovi */}
-                <div 
+                <button
+                  type="button"
                   onClick={() => setFilterTab('new')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
-                    filterTab === 'new' 
-                      ? 'bg-emerald-950/40 border-emerald-500 shadow-md ring-1 ring-emerald-500' 
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    filterTab === 'new'
+                      ? 'bg-emerald-950/40 border-emerald-500 shadow-md ring-1 ring-emerald-500'
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-emerald-400">🟢 Nuovi da Aggiungere</span>
+                      <span className="text-xs font-semibold text-emerald-400">🟢 Nuovi</span>
                       <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          type="button" 
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-emerald-300 hover:bg-emerald-900/40 transition-colors"
-                          title="Informazioni"
-                        >
-                          <Info size={12} />
-                        </button>
-                        <div className="absolute z-50 left-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
-                          <div className="flex items-center gap-1.5 font-bold text-emerald-400 text-xs mb-1">
-                            <CheckCircle2 size={13} />
-                            <span>Nuovi da Aggiungere</span>
-                          </div>
+                        <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-500 hover:text-emerald-300 cursor-help">
+                          <Info size={11} />
+                        </span>
+                        <div className="absolute z-50 left-0 top-full mt-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left font-normal">
+                          <strong className="text-emerald-400 text-xs block mb-1">Nuovi da Aggiungere</strong>
                           <p className="text-[11px] text-slate-300 leading-relaxed">
-                            Articoli presenti nel file Excel che non esistono ancora in questo database CuePack.
+                            Articoli presenti nel file Excel che non esistono ancora in questo database. Verranno creati con codici, prezzi e specifiche.
                           </p>
-                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
-                            <strong className="text-white">Cosa succede:</strong> Cliccando filtri la lista mostrando solo i nuovi articoli. Premendo "Applica Sincronizzazione" verranno aggiunti all'inventario con codici, prezzi, specifiche e matricole.
-                          </div>
                         </div>
                       </div>
                     </div>
-                    <span className="text-lg font-bold font-mono text-white">{counts.new}</span>
+                    <span className="text-lg font-bold font-mono text-emerald-400">{counts.new}</span>
                   </div>
-                  <button 
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); selectAll('new'); }}
-                    className="text-[11px] text-emerald-400/80 hover:text-emerald-300 underline mt-1"
-                  >
-                    Seleziona tutti ({counts.new})
-                  </button>
-                </div>
+                  <p className="text-[11px] text-slate-500 mt-1">Da aggiungere al DB</p>
+                </button>
 
                 {/* Modificati */}
-                <div 
+                <button
+                  type="button"
                   onClick={() => setFilterTab('modified')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
-                    filterTab === 'modified' 
-                      ? 'bg-amber-950/40 border-amber-500 shadow-md ring-1 ring-amber-500' 
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    filterTab === 'modified'
+                      ? 'bg-amber-950/40 border-amber-500 shadow-md ring-1 ring-amber-500'
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-amber-400">🟡 Con Modifiche</span>
+                      <span className="text-xs font-semibold text-amber-400">🟡 Modificati</span>
                       <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          type="button" 
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-amber-300 hover:bg-amber-900/40 transition-colors"
-                          title="Informazioni"
-                        >
-                          <Info size={12} />
-                        </button>
-                        <div className="absolute z-50 left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
-                          <div className="flex items-center gap-1.5 font-bold text-amber-400 text-xs mb-1">
-                            <RefreshCw size={13} />
-                            <span>Con Modifiche Rilevate</span>
-                          </div>
+                        <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-500 hover:text-amber-300 cursor-help">
+                          <Info size={11} />
+                        </span>
+                        <div className="absolute z-50 left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left font-normal">
+                          <strong className="text-amber-400 text-xs block mb-1">Articoli con Differenze</strong>
                           <p className="text-[11px] text-slate-300 leading-relaxed">
-                            Articoli già presenti nel database per cui il file Excel riporta differenze (prezzi, giacenze, ubicazioni, pesi, matricole).
+                            Articoli già presenti nel DB per cui il file riporta dati diversi (prezzi, giacenze, ubicazioni, etc.). Puoi scegliere per ciascun campo se mantenere il valore CuePack o aggiornare con Excel.
                           </p>
-                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
-                            <strong className="text-white">Cosa succede:</strong> Cliccando vedi le differenze prima/dopo per ogni campo. I valori che hai personalizzato su CuePack vengono protetti in automatico. Puoi decidere quali campi accettare e quali mantenere.
-                          </div>
                         </div>
                       </div>
                     </div>
-                    <span className="text-lg font-bold font-mono text-white">{counts.modified}</span>
+                    <span className="text-lg font-bold font-mono text-amber-400">{counts.modified}</span>
                   </div>
-                  <button 
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); selectAll('modified'); }}
-                    className="text-[11px] text-amber-400/80 hover:text-amber-300 underline mt-1"
-                  >
-                    Seleziona tutti ({counts.modified})
-                  </button>
-                </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    {counts.userModified > 0 ? `${counts.userModified} personalizzati da te` : 'Con differenze rilevate'}
+                  </p>
+                </button>
 
-                {/* Non Presenti / Orphan */}
-                <div 
+                {/* Non nel file */}
+                <button
+                  type="button"
                   onClick={() => setFilterTab('orphan')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
-                    filterTab === 'orphan' 
-                      ? 'bg-rose-950/40 border-rose-500 shadow-md ring-1 ring-rose-500' 
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    filterTab === 'orphan'
+                      ? 'bg-rose-950/40 border-rose-500 shadow-md ring-1 ring-rose-500'
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-rose-400">🔴 Non nel File</span>
+                      <span className="text-xs font-semibold text-rose-400">🔴 Non nel File</span>
                       <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          type="button" 
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-300 hover:bg-rose-900/40 transition-colors"
-                          title="Informazioni"
-                        >
-                          <Info size={12} />
-                        </button>
-                        <div className="absolute z-50 left-0 sm:left-auto sm:right-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
-                          <div className="flex items-center gap-1.5 font-bold text-rose-400 text-xs mb-1">
-                            <AlertCircle size={13} />
-                            <span>Non Presenti nel File</span>
-                          </div>
+                        <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-500 hover:text-rose-300 cursor-help">
+                          <Info size={11} />
+                        </span>
+                        <div className="absolute z-50 right-0 top-full mt-2 w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left font-normal">
+                          <strong className="text-rose-400 text-xs block mb-1">Non Presenti nel File</strong>
                           <p className="text-[11px] text-slate-300 leading-relaxed">
-                            Articoli salvati nel tuo database CuePack che non compaiono in questo file Excel.
+                            Articoli già registrati nel DB CuePack che non figurano in questo file. Puoi mantenerli invariati, azzerare la giacenza o rimuoverli.
                           </p>
-                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400 space-y-1">
-                            <strong className="text-white block">Cosa puoi fare:</strong>
-                            <p className="text-slate-300 leading-tight">• <strong>Mantieni:</strong> lascia l'articolo invariato nel DB.</p>
-                            <p className="text-slate-300 leading-tight">• <strong>Azzera Giacenza:</strong> imposta disponibilità a 0 se dismesso.</p>
-                            <p className="text-slate-300 leading-tight">• <strong>Elimina dal DB:</strong> rimuove l'articolo dal catalogo.</p>
-                          </div>
                         </div>
                       </div>
                     </div>
-                    <span className="text-lg font-bold font-mono text-white">{counts.orphan}</span>
+                    <span className="text-lg font-bold font-mono text-rose-400">{counts.orphan}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">Presenti solo nel DB</p>
-                </div>
+                </button>
 
                 {/* Invariati */}
-                <div 
+                <button
+                  type="button"
                   onClick={() => setFilterTab('unchanged')}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all relative ${
-                    filterTab === 'unchanged' 
-                      ? 'bg-slate-800 border-slate-600 shadow-md ring-1 ring-slate-600' 
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    filterTab === 'unchanged'
+                      ? 'bg-slate-800/80 border-slate-500 shadow-md ring-1 ring-slate-500'
                       : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-slate-400">⚪ Invariati</span>
+                      <span className="text-xs font-semibold text-slate-400">⚪ Invariati</span>
                       <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          type="button" 
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-                          title="Informazioni"
-                        >
-                          <Info size={12} />
-                        </button>
-                        <div className="absolute z-50 right-0 top-full mt-2 w-64 sm:w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
-                          <div className="flex items-center gap-1.5 font-bold text-slate-300 text-xs mb-1">
-                            <Check size={13} />
-                            <span>Dati Già Allineati</span>
-                          </div>
+                        <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-500 hover:text-slate-200 cursor-help">
+                          <Info size={11} />
+                        </span>
+                        <div className="absolute z-50 right-0 top-full mt-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left font-normal">
+                          <strong className="text-slate-300 text-xs block mb-1">Dati Già Allineati</strong>
                           <p className="text-[11px] text-slate-300 leading-relaxed">
-                            Articoli i cui dati in CuePack e nel file Excel sono già perfettamente identici.
+                            Articoli i cui dati in CuePack e nel file sono identici al 100%. Non necessitano di alcun aggiornamento.
                           </p>
-                          <div className="mt-2 pt-2 border-t border-slate-800 text-[10px] text-slate-400">
-                            <strong className="text-white">Cosa succede:</strong> I dati coincidono al 100%. Non necessitano di alcun aggiornamento e sono deselezionati di default.
-                          </div>
                         </div>
                       </div>
                     </div>
-                    <span className="text-lg font-bold font-mono text-white">{counts.unchanged}</span>
+                    <span className="text-lg font-bold font-mono text-slate-400">{counts.unchanged}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">Dati già allineati</p>
-                </div>
-
+                </button>
               </div>
 
-              {/* Presets and Protection Actions */}
+              {/* Presets Ribbon (only when there are modified items) */}
               {counts.modified > 0 && (
-                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shrink-0">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg shrink-0 border border-amber-500/20">
-                      <ShieldAlert size={18} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-white">Riconciliazione Modifiche CuePack vs Excel</span>
-                        {counts.userModified > 0 && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {counts.userModified} articoli modificati da te
-                          </span>
-                        )}
-                        <div className="relative group/info" onClick={(e) => e.stopPropagation()}>
-                          <button 
-                            type="button" 
-                            className="w-4 h-4 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-colors"
-                            title="Informazioni sui preset"
-                          >
-                            <Info size={12} />
-                          </button>
-                          <div className="absolute z-50 left-0 top-full mt-2 w-72 p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all duration-200 pointer-events-none text-left">
-                            <span className="font-bold text-white text-xs block mb-1">Come funzionano i Preset:</span>
-                            <p className="text-[10px] text-slate-300 leading-relaxed mb-1.5">
-                              • <strong className="text-blue-300">Proteggi Valori CuePack:</strong> preserva tutti i nomi, pesi o specifiche che hai corretto a mano su CuePack, impedendo a Excel di sovrascriverli.
-                            </p>
-                            <p className="text-[10px] text-slate-300 leading-relaxed mb-1.5">
-                              • <strong className="text-emerald-300">Solo Giacenze & Matricole:</strong> aggiorna da Excel solo quantità e seriali arrivati in azienda, lasciando intatti i nomi e i dettagli aggiustati.
-                            </p>
-                            <p className="text-[10px] text-slate-300 leading-relaxed">
-                              • <strong className="text-amber-300">Sovrascrivi Tutto:</strong> resetta tutti i valori al file Excel originale.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 font-mono">
-                        <span className="text-blue-400 font-bold">🛡️ {counts.protectedDiffs} valori CuePack protetti</span>
-                        <span className="text-slate-600">•</span>
-                        <span className="text-amber-400 font-bold">🔄 {counts.overwritingDiffs} da aggiornare da Excel</span>
-                      </div>
-                    </div>
+                <div className="bg-slate-900/70 border border-slate-800 px-3.5 py-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal size={14} className="text-amber-400" />
+                    <span className="text-xs font-bold text-slate-200">Preset Modifiche:</span>
+                    {counts.userModified > 0 && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                        <ShieldAlert size={11} /> {counts.userModified} personalizzati da te
+                      </span>
+                    )}
+                    <span className="text-[11px] text-slate-500 font-mono hidden md:inline">
+                      ({counts.protectedDiffs} CuePack, {counts.overwritingDiffs} Excel)
+                    </span>
                   </div>
 
-                  {/* Preset Buttons */}
-                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <button
                       type="button"
                       onClick={massProtectAllUserModifications}
-                      className="px-2.5 py-1.5 bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-700/50 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
-                      title="Mantieni tutti i valori modificati manualmente su CuePack, proteggendoli dalla sovrascrittura"
+                      className="px-2.5 py-1.5 bg-blue-950/60 hover:bg-blue-900/70 text-blue-300 border border-blue-700/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Mantieni tutti i campi modificati manualmente su CuePack"
                     >
-                      <ShieldCheck size={14} className="text-blue-400" />
-                      <span>Proteggi Valori CuePack</span>
+                      <ShieldCheck size={13} className="text-blue-400" />
+                      <span>Mantieni CuePack</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={massUpdateOnlyStockAndSerials}
-                      className="px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
-                      title="Aggiorna solo quantità a magazzino e numeri di serie da Excel, proteggendo nomi e specifiche corretti"
+                      className="px-2.5 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/70 text-emerald-300 border border-emerald-700/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Aggiorna solo giacenze e matricole, proteggendo nomi e descrizioni"
                     >
-                      <PackageCheck size={14} className="text-emerald-400" />
+                      <PackageCheck size={13} className="text-emerald-400" />
                       <span>Solo Giacenze & Matricole</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={massOverwriteAllWithExcel}
-                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
-                      title="Reimposta tutti i valori a quelli presenti nel file Excel"
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      title="Applica tutti i valori del file Excel"
                     >
-                      <RefreshCw size={14} className="text-slate-400" />
-                      <span>Sovrascrivi Tutto da Excel</span>
+                      <RefreshCw size={13} className="text-slate-400" />
+                      <span>Usa Valori Excel</span>
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Toolbar & Filters */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 border border-slate-800 p-3 rounded-xl shrink-0">
-                
-                {/* Tabs */}
-                <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
-                  <button 
-                    onClick={() => setFilterTab('all')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      filterTab === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Tutti ({counts.all})
-                  </button>
-                  <button 
-                    onClick={() => setFilterTab('new')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      filterTab === 'new' ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Nuovi ({counts.new})
-                  </button>
-                  {counts.modified > 0 && (
-                    <button 
-                      onClick={() => setFilterTab('modified')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        filterTab === 'modified' ? 'bg-amber-900/40 text-amber-300 border border-amber-700/50' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Modificati ({counts.modified})
-                    </button>
-                  )}
-                  {counts.userModified > 0 && (
-                    <button 
-                      onClick={() => setFilterTab('user_modified')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                        filterTab === 'user_modified' 
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm' 
-                          : 'text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10'
-                      }`}
-                    >
-                      <ShieldAlert size={13} className="text-amber-400" />
-                      Modificati da te ({counts.userModified})
-                    </button>
-                  )}
-                  {counts.orphan > 0 && (
-                    <button 
-                      onClick={() => setFilterTab('orphan')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        filterTab === 'orphan' ? 'bg-rose-900/40 text-rose-300 border border-rose-700/50' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Non Presenti ({counts.orphan})
-                    </button>
-                  )}
-                  {counts.unchanged > 0 && (
-                    <button 
-                      onClick={() => setFilterTab('unchanged')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        filterTab === 'unchanged' ? 'bg-slate-800 text-slate-200' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Invariati ({counts.unchanged})
-                    </button>
-                  )}
+              {/* Toolbar: Counter, Search & Select Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 shrink-0 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-400">
+                    {filterTab === 'all' && `Tutti gli articoli (${filteredItems.length})`}
+                    {filterTab === 'new' && `Nuovi articoli (${filteredItems.length})`}
+                    {filterTab === 'modified' && `Articoli con modifiche (${filteredItems.length})`}
+                    {filterTab === 'orphan' && `Articoli non presenti nel file (${filteredItems.length})`}
+                    {filterTab === 'unchanged' && `Articoli invariati (${filteredItems.length})`}
+                  </span>
                 </div>
 
-                {/* Search & Actions */}
-                <div className="flex items-center gap-2 flex-grow sm:flex-grow-0 justify-end">
+                <div className="flex items-center gap-2">
                   <div className="relative w-48 sm:w-64">
                     <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
                     <input 
                       type="text" 
-                      placeholder="Cerca materiale o codice..."
+                      placeholder="Cerca nome o codice..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white outline-none focus:border-blue-500"
+                      className="w-full bg-slate-900/80 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-blue-500"
                     />
                   </div>
 
                   <button 
                     onClick={() => selectAll()}
-                    className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold"
-                    title="Seleziona tutti gli elementi"
+                    className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition-colors"
+                    title="Seleziona tutti gli articoli visualizzati"
                   >
-                    Tutti
+                    Seleziona tutti
                   </button>
                   <button 
                     onClick={deselectAll}
-                    className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold"
-                    title="Deseleziona tutti gli elementi"
+                    className="px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition-colors"
+                    title="Deseleziona tutti gli articoli visualizzati"
                   >
-                    Nessuno
+                    Deseleziona
                   </button>
                 </div>
-
               </div>
 
               {/* Table / List Container */}
@@ -1508,24 +1384,19 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                                   {/* User Modified Badge */}
                                   {(item.hasUserModifications || item.diffs.some(d => d.isUserModified)) && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1" title="Questo articolo è stato modificato manualmente su CuePack">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1" title="Questo articolo ha valori modificati manualmente su CuePack">
                                       <ShieldAlert size={11} /> Modificato da te
                                     </span>
                                   )}
 
                                   {/* Item diff breakdown counters */}
                                   {item.status === 'modified' && (
-                                    <div className="flex items-center gap-1.5">
-                                      {item.diffs.filter(d => !d.applyChange).length > 0 && (
-                                        <span className="px-1.5 py-0.5 bg-blue-900/30 text-blue-300 text-[10px] font-mono font-bold rounded border border-blue-800/40" title="Valori personalizzati che rimarranno intatti">
-                                          🛡️ {item.diffs.filter(d => !d.applyChange).length} protetti
-                                        </span>
-                                      )}
-                                      {item.diffs.filter(d => d.applyChange).length > 0 && (
-                                        <span className="px-1.5 py-0.5 bg-amber-900/30 text-amber-300 text-[10px] font-mono font-bold rounded border border-amber-800/40" title="Valori che verranno aggiornati da Excel">
-                                          🔄 {item.diffs.filter(d => d.applyChange).length} da Excel
-                                        </span>
-                                      )}
+                                    <div className="flex items-center gap-1.5 text-[10px] font-mono font-medium text-slate-400">
+                                      <span>(</span>
+                                      <span className="text-blue-400">{item.diffs.filter(d => !d.applyChange).length} CuePack</span>
+                                      <span>,</span>
+                                      <span className="text-emerald-400">{item.diffs.filter(d => d.applyChange).length} Excel</span>
+                                      <span>)</span>
                                     </div>
                                   )}
 
@@ -1548,7 +1419,7 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                   {/* Instances count */}
                                   {item.parsedItem?.instances && item.parsedItem.instances.length > 0 && (
                                     <span className="text-emerald-400/90 font-mono text-[11px]">
-                                      {item.parsedItem.instances.length} matricole Rentman
+                                      {item.parsedItem.instances.length} matricole
                                     </span>
                                   )}
 
@@ -1587,9 +1458,9 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
                                 <button 
                                   type="button"
                                   onClick={() => toggleExpand(item.key)}
-                                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
                                 >
-                                  <span>{isExpanded ? 'Nascondi Diff' : 'Vedi Diff'}</span>
+                                  <span>{isExpanded ? 'Chiudi' : `Modifiche (${item.diffs.length})`}</span>
                                   {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                                 </button>
                               )}
@@ -1599,113 +1470,121 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
 
                           {/* Expanded Differences Details */}
                           {item.status === 'modified' && isExpanded && (
-                            <div className="mt-3 ml-7 p-3 bg-slate-950/90 border border-slate-800 rounded-xl space-y-3 text-xs">
-                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                                    Confronto Campi (CuePack Attuale vs Excel):
-                                  </span>
-                                </div>
+                            <div className="mt-3 ml-7 p-3.5 bg-slate-950 border border-slate-800/90 rounded-xl space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800/80 text-xs">
+                                <span className="font-semibold text-slate-300">
+                                  Seleziona quale valore applicare per ogni campo:
+                                </span>
 
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
                                   <button
                                     type="button"
                                     onClick={() => protectItemCustomFields(item.key)}
-                                    className="px-2 py-1 bg-blue-900/30 hover:bg-blue-800/50 text-blue-300 border border-blue-700/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
-                                    title="Mantieni i valori personalizzati su questo articolo"
+                                    className="px-2.5 py-1 bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border border-blue-800/50 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                                    title="Mantieni tutti i valori attuali di CuePack per questo articolo"
                                   >
-                                    <ShieldCheck size={12} />
-                                    <span>Proteggi CuePack</span>
+                                    <ShieldCheck size={12} className="text-blue-400" />
+                                    <span>Tutti CuePack</span>
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => overwriteItemWithExcel(item.key)}
-                                    className="px-2 py-1 bg-amber-900/30 hover:bg-amber-800/50 text-amber-300 border border-amber-700/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                                    className="px-2.5 py-1 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/50 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors"
                                     title="Accetta tutti i valori da Excel per questo articolo"
                                   >
-                                    <RefreshCw size={12} />
-                                    <span>Accetta da Excel</span>
+                                    <RefreshCw size={12} className="text-emerald-400" />
+                                    <span>Tutti Excel</span>
                                   </button>
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-1 gap-2">
+                              <div className="grid grid-cols-1 gap-2.5">
                                 {item.diffs.map((diff, dIdx) => {
-                                  const isProtected = !diff.applyChange;
+                                  const isCuePackSelected = !diff.applyChange;
+                                  const isExcelSelected = diff.applyChange;
+
                                   return (
                                     <div 
                                       key={dIdx} 
-                                      className={`p-2.5 rounded-lg border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                                        diff.isUserModified 
-                                          ? isProtected 
-                                            ? 'bg-blue-950/30 border-blue-800/50 shadow-sm' 
-                                            : 'bg-amber-950/30 border-amber-800/50' 
-                                          : isProtected
-                                            ? 'bg-slate-900/80 border-slate-700'
-                                            : 'bg-slate-900 border-slate-800'
-                                      }`}
+                                      className="p-2.5 rounded-lg border border-slate-800/90 bg-slate-900/50 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
                                     >
-                                      {/* Field Info & Comparison */}
-                                      <div className="min-w-0 space-y-1 flex-1">
+                                      {/* Field Info */}
+                                      <div className="min-w-0 md:w-1/3">
                                         <div className="flex items-center gap-2">
-                                          <span className="font-bold text-white text-xs">{diff.label}</span>
+                                          <span className="font-bold text-white">{diff.label}</span>
                                           {diff.isUserModified && (
-                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                                              <ShieldAlert size={10} /> Modificato da te
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1" title="Questo campo è stato modificato manualmente da un utente">
+                                              <ShieldAlert size={10} /> Personalizzato
                                             </span>
                                           )}
                                         </div>
-
-                                        <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
-                                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${
-                                            isProtected 
-                                              ? 'bg-blue-900/40 border border-blue-700/50 text-blue-200 font-bold' 
-                                              : 'bg-slate-950 text-slate-400 line-through opacity-75'
-                                          }`}>
-                                            <span className="text-[10px] text-slate-500 font-sans">CuePack:</span>
-                                            <span>{String(diff.oldValue || '—')}</span>
-                                            {isProtected && <span className="text-[10px] text-blue-300 ml-1 font-sans">✓ Attivo</span>}
-                                          </div>
-
-                                          <span className="text-slate-600 font-bold">→</span>
-
-                                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded ${
-                                            !isProtected 
-                                              ? 'bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 font-bold' 
-                                              : 'bg-slate-950 text-slate-500'
-                                          }`}>
-                                            <span className="text-[10px] text-slate-500 font-sans">Excel:</span>
-                                            <span>{String(diff.newValue || '—')}</span>
-                                            {!isProtected && <span className="text-[10px] text-emerald-300 ml-1 font-sans">✓ Sarà applicato</span>}
-                                          </div>
-                                        </div>
                                       </div>
 
-                                      {/* Toggle Protection/Overwrite Button */}
-                                      <div className="shrink-0 flex items-center">
+                                      {/* Side-by-Side Option Cards */}
+                                      <div className="grid grid-cols-2 gap-2 flex-1">
+                                        
+                                        {/* Option 1: CuePack */}
                                         <button
                                           type="button"
-                                          onClick={() => toggleFieldDiff(item.key, diff.field)}
-                                          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 ${
-                                            isProtected
-                                              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-900/40'
-                                              : 'bg-amber-600/80 hover:bg-amber-500 text-white shadow-sm shadow-amber-900/40'
+                                          onClick={() => setFieldApply(item.key, diff.field, false)}
+                                          className={`p-2 rounded-lg border text-left transition-all flex items-start gap-2 ${
+                                            isCuePackSelected
+                                              ? 'bg-blue-950/40 border-blue-500/80 ring-1 ring-blue-500/50 text-white shadow-sm'
+                                              : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
                                           }`}
-                                          title={isProtected ? 'Clicca per sovrascrivere questo campo con il valore del file Excel' : 'Clicca per proteggere e mantenere il valore attuale di CuePack'}
                                         >
-                                          {isProtected ? (
-                                            <>
-                                              <ShieldCheck size={13} />
-                                              <span>Mantieni CuePack (Protetto)</span>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <RefreshCw size={13} />
-                                              <span>Aggiorna con Excel</span>
-                                            </>
-                                          )}
+                                          <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                            isCuePackSelected 
+                                              ? 'border-blue-400 bg-blue-500 text-white' 
+                                              : 'border-slate-600 bg-transparent'
+                                          }`}>
+                                            {isCuePackSelected && <Check size={10} strokeWidth={3} />}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[10px] uppercase font-bold text-slate-400">Valore CuePack</span>
+                                              {isCuePackSelected && (
+                                                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Attivo</span>
+                                              )}
+                                            </div>
+                                            <div className="font-mono text-[11px] truncate mt-0.5 text-slate-200">
+                                              {String(diff.oldValue || '—')}
+                                            </div>
+                                          </div>
                                         </button>
+
+                                        {/* Option 2: Excel */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setFieldApply(item.key, diff.field, true)}
+                                          className={`p-2 rounded-lg border text-left transition-all flex items-start gap-2 ${
+                                            isExcelSelected
+                                              ? 'bg-emerald-950/40 border-emerald-500/80 ring-1 ring-emerald-500/50 text-white shadow-sm'
+                                              : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                                          }`}
+                                        >
+                                          <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                            isExcelSelected 
+                                              ? 'border-emerald-400 bg-emerald-500 text-white' 
+                                              : 'border-slate-600 bg-transparent'
+                                          }`}>
+                                            {isExcelSelected && <Check size={10} strokeWidth={3} />}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[10px] uppercase font-bold text-slate-400">Valore Excel</span>
+                                              {isExcelSelected && (
+                                                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Attivo</span>
+                                              )}
+                                            </div>
+                                            <div className="font-mono text-[11px] truncate mt-0.5 text-slate-200">
+                                              {String(diff.newValue || '—')}
+                                            </div>
+                                          </div>
+                                        </button>
+
                                       </div>
+
                                     </div>
                                   );
                                 })}
