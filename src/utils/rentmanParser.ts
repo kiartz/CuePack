@@ -200,7 +200,9 @@ export function parseNumber(val: any, fallback = 0): number {
  * Normalize header text for resilient matching.
  */
 function normalizeHeader(h: string): string {
-  return h
+  return String(h || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[\s\-_()[\]/\\.,;:'"]/g, '')
     .trim();
@@ -244,53 +246,151 @@ const COLUMN_ALIASES: Record<string, string[]> = {
     'cartellacartella',
     'folder',
     'cartella',
+    'percorso',
     'sottocategoria',
     'subcategory'
   ],
   inStock: [
     'currentquantity',
     'quantitaattuale',
-    'quantitàattuale',
     'totalstockperstocklocationposizionepredefinitadellescorte',
+    'totalescorteperlocationdelmaterialeposizionepredefinitadellescorte',
     'totalstockperstocklocation',
     'instock',
     'giacenza',
     'stock'
   ],
   location: [
+    'locationdelmaterialepredefinita',
     'locationindefaultstocklocation',
+    'posizioneinmagazzinoperognilocationdelmaterialeposizionepredefinitadellescorte',
+    'posizionenellasededimagazzinopredefinita',
     'posizionenellaposizionepredefinitadellescorte',
     'locationinwarehouseperstocklocationposizionepredefinitadellescorte',
+    'posizionekitamagazzino',
+    'posizionedimagazzino',
+    'posizionenelmagazzino',
+    'posizionepredefinita',
+    'posizionescorte',
     'location',
     'posizione',
     'ubicazione'
   ],
+  kitLocation: [
+    'posizionekitamagazzino',
+    'locationkit'
+  ],
   height: ['height', 'altezza'],
   width: ['width', 'larghezza'],
   length: ['length', 'lunghezza'],
-  volume: ['transportvolume', 'volumeditrasporto', 'volume'],
-  packedPer: ['packedper', 'imballatoper', 'pezziperimballo'],
+  volume: [
+    'transportvolume',
+    'volumedeltrasporto',
+    'volumeditrasporto',
+    'volumetrasporto',
+    'volume'
+  ],
+  packedPer: [
+    'packedper',
+    'numeropezzi',
+    'imballatoper',
+    'pezziperimballo',
+    'pezzi'
+  ],
   weight: ['weight', 'peso', 'pesonetto'],
-  power: ['power', 'potenza', 'consumo'],
+  power: ['assorbimento', 'power', 'potenza', 'consumo', 'assorbimentoelettrico'],
   current: ['current', 'corrente', 'amperaggio'],
-  rentalPrice: ['rentalsalesprice', 'prezzodinoleggiovendita', 'rentalprice', 'prezzonoleggio', 'prezzolistino'],
-  subrentalCost: ['subrentpurchasecost', 'costodisubnoleggioacquisto', 'subrentcost', 'costosubnoleggio'],
-  purchasePrice: ['purchasepriceserialnumber', 'prezzodiacquistonumerodiserie', 'purchaseprice', 'prezzoacquisto'],
-  stockCalculationMethod: ['stockcalculationmethod', 'metododicalcolodellescorte'],
-  typeOfEquipment: ['typeofequipment', 'tipodiattrezzatura'],
-  rentalSales: ['rentalsales', 'noleggiovendita'],
-  canHaveContent: ['theequipmentcanhavecontent', 'lattrezzaturapuoaverecontenuto', 'lattrezzaturapuòaverecontenuto'],
-  internalRemark: ['internalremark', 'notainterna', 'commentointerno'],
-  externalRemark: ['externalremark', 'notaesterna', 'commentoesterno'],
+  rentalPrice: [
+    'rentalsalesprice',
+    'prezzodinoleggiovendita',
+    'rentalprice',
+    'prezzonoleggio',
+    'prezzolistino'
+  ],
+  subrentalCost: [
+    'subrentpurchasecost',
+    'prezzodisubaffittoacquisto',
+    'costodisubnoleggioacquisto',
+    'subrentcost',
+    'costosubnoleggio',
+    'prezzosubaffitto'
+  ],
+  purchasePrice: [
+    'purchasepriceserialnumber',
+    'prezzodiacquistonumeroseriale',
+    'prezzodiacquistonumerodiserie',
+    'purchaseprice',
+    'prezzoacquisto',
+    'prezzodiacquisto'
+  ],
+  stockCalculationMethod: [
+    'stockcalculationmethod',
+    'metododicalcolodellescorte',
+    'metodocalcoloscorte'
+  ],
+  typeOfEquipment: [
+    'typeofequipment',
+    'tipodimateriale',
+    'tipodiattrezzatura',
+    'tipomateriale'
+  ],
+  rentalSales: ['rentalsales', 'noleggiovendita', 'noleggioovendita'],
+  canHaveContent: [
+    'theequipmentcanhavecontent',
+    'ilmaterialepuoaverecontenuto',
+    'lattrezzaturapuoaverecontenuto'
+  ],
+  internalRemark: ['internalremark', 'commentointerno', 'notainterna'],
+  externalRemark: ['externalremark', 'commentoesterno', 'notaesterna'],
   rentmanId: ['id'],
   // Serial instance specific columns
-  instanceQrCode: ['qrcodesrfidserialnumber', 'codiciqrrfidnumerodiserie', 'qrcodeserialnumber'],
-  instanceSerialNumber: ['manufacturerserialnumberserialnumber', 'numerodiseriedelproduttorenumerodiserie', 'serialnumber', 'numerodiserie'],
-  instanceInternalRef: ['internalreferenceserialnumber', 'riferimentointernonumerodiserie', 'internalreference', 'riferimentointerno'],
-  instancePurchaseDate: ['dateofpurchaseserialnumber', 'datadiacquisitonumerodiserie', 'dateofpurchase', 'datadiacquisto'],
-  instanceActive: ['activeserialnumber', 'attivonumerodiserie', 'active', 'attivo'],
-  instanceRemark: ['remarkserialnumber', 'notanumerodiserie', 'commentonumerodiserie'],
-  instanceId: ['idserialnumber', 'idnumerodiserie']
+  instanceQrCode: [
+    'qrcodesrfidserialnumber',
+    'codiciqrrfidnumeroseriale',
+    'codiciqrrfidnumerodiserie',
+    'qrcodeserialnumber'
+  ],
+  instanceSerialNumber: [
+    'manufacturerserialnumberserialnumber',
+    'numeroserialedelproduttorenumeroseriale',
+    'numerodiseriedelproduttorenumerodiserie',
+    'serialnumber',
+    'numerodiserie',
+    'numeroseriale'
+  ],
+  instanceInternalRef: [
+    'internalreferenceserialnumber',
+    'numerodiriferimentointernonumeroseriale',
+    'riferimentointernonumerodiserie',
+    'internalreference',
+    'riferimentointerno'
+  ],
+  instancePurchaseDate: [
+    'dateofpurchaseserialnumber',
+    'datadiacquistonumeroseriale',
+    'datadiacquisitonumerodiserie',
+    'dateofpurchase',
+    'datadiacquisto'
+  ],
+  instanceActive: [
+    'activeserialnumber',
+    'attivonumeroseriale',
+    'attivonumerodiserie',
+    'active',
+    'attivo'
+  ],
+  instanceRemark: [
+    'remarkserialnumber',
+    'commentonumeroseriale',
+    'notanumeroseriale',
+    'notanumerodiserie',
+    'commentonumerodiserie'
+  ],
+  instanceId: [
+    'idserialnumber',
+    'idnumeroseriale',
+    'idnumerodiserie'
+  ]
 };
 
 /**
@@ -395,7 +495,7 @@ export function parseRentmanWorkbook(
 
     if (!existing) {
       const rawQty = parseNumber(getVal(row, 'inStock'), 0);
-      const location = String(getVal(row, 'location') || '').trim();
+      const location = String(getVal(row, 'location') || getVal(row, 'kitLocation') || '').trim();
       const alias = String(getVal(row, 'alias') || '').trim();
 
       const height = parseNumber(getVal(row, 'height'), 0);
@@ -513,27 +613,142 @@ export function parseRentmanWorkbook(
 }
 
 /**
+ * Robust CSV parser for Rentman exports.
+ * Solves:
+ * 1. Semicolon (;) or comma (,) delimiter auto-detection.
+ * 2. Multiline records (cells containing line breaks).
+ * 3. Rentman non-standard quotes (e.g. inch marks 75"" before delimiter, or unescaped quotes).
+ */
+export function parseRentmanCsvToRows(csvText: string): any[][] {
+  const rawLines = csvText.split(/\r?\n/);
+  const recordLines: string[] = [];
+  let current = '';
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    if (!line && i === rawLines.length - 1) continue;
+    // Check if line starts a new record (starts with timestamp or recognized header)
+    const isNewRecord = /^"\d{4}-\d{2}-\d{2}/.test(line) || /^"Data di creazione"/i.test(line) || /^"Created on"/i.test(line);
+    if (isNewRecord) {
+      if (current) recordLines.push(current);
+      current = line;
+    } else {
+      current += '\n' + line;
+    }
+  }
+  if (current) recordLines.push(current);
+
+  if (recordLines.length === 0) return [];
+
+  // Detect delimiter (; or ,) from header line
+  const firstLine = recordLines[0] || '';
+  const semiCount = (firstLine.match(/;/g) || []).length;
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const delimiter = semiCount >= commaCount ? ';' : ',';
+
+  const parseCsvRow = (rowStr: string): string[] => {
+    const cells: string[] = [];
+    let inQuote = false;
+    let cell = '';
+    
+    for (let i = 0; i < rowStr.length; i++) {
+      const ch = rowStr[i];
+      if (ch === '"') {
+        if (inQuote) {
+          if (rowStr[i + 1] === '"' && (rowStr[i + 2] === delimiter || i + 1 === rowStr.length - 1)) {
+            // Inch mark before delimiter e.g. 75"";
+            cell += '"';
+            inQuote = false;
+            i++;
+          } else if (rowStr[i + 1] === '"') {
+            cell += '"';
+            i++;
+          } else if (rowStr[i + 1] === delimiter || i === rowStr.length - 1) {
+            inQuote = false;
+          } else {
+            cell += ch;
+          }
+        } else {
+          if (i === 0 || rowStr[i - 1] === delimiter) {
+            inQuote = true;
+          } else {
+            cell += ch;
+          }
+        }
+      } else if (ch === delimiter && !inQuote) {
+        cells.push(cell);
+        cell = '';
+      } else {
+        cell += ch;
+      }
+    }
+    cells.push(cell);
+    return cells;
+  };
+
+  return recordLines.map(parseCsvRow);
+}
+
+/**
  * High-level parser that accepts browser File, ArrayBuffer, or Uint8Array.
  */
 export async function parseRentmanFile(
   fileOrBuffer: File | ArrayBuffer | Uint8Array,
   targetDatabaseId: string = 'default'
 ): Promise<RentmanParseResult> {
-  let data: any;
+  let isCsv = false;
+  let csvText = '';
 
+  if (typeof (fileOrBuffer as any).name === 'string') {
+    isCsv = (fileOrBuffer as File).name.toLowerCase().endsWith('.csv');
+  }
+
+  let data: any;
   if (typeof (fileOrBuffer as File).arrayBuffer === 'function') {
-    data = await (fileOrBuffer as File).arrayBuffer();
-  } else if (fileOrBuffer instanceof ArrayBuffer || fileOrBuffer instanceof Uint8Array) {
+    const buf = await (fileOrBuffer as File).arrayBuffer();
+    data = buf;
+    if (isCsv || !fileOrBuffer) {
+      const decoder = new TextDecoder('utf-8');
+      csvText = decoder.decode(buf);
+      if (!isCsv && (csvText.startsWith('"Data di creazione"') || csvText.startsWith('"Created on"'))) {
+        isCsv = true;
+      }
+    }
+  } else if (fileOrBuffer instanceof ArrayBuffer) {
     data = fileOrBuffer;
+    const decoder = new TextDecoder('utf-8');
+    const peek = decoder.decode(fileOrBuffer.slice(0, 100));
+    if (peek.startsWith('"Data di creazione"') || peek.startsWith('"Created on"')) {
+      isCsv = true;
+      csvText = decoder.decode(fileOrBuffer);
+    }
+  } else if (fileOrBuffer instanceof Uint8Array) {
+    data = fileOrBuffer;
+    const decoder = new TextDecoder('utf-8');
+    const peek = decoder.decode(fileOrBuffer.subarray(0, 100));
+    if (peek.startsWith('"Data di creazione"') || peek.startsWith('"Created on"')) {
+      isCsv = true;
+      csvText = decoder.decode(fileOrBuffer);
+    }
   } else {
     throw new Error('Tipo di file non supportato. Passare un oggetto File o ArrayBuffer.');
   }
 
-  const workbook = XLSX.read(data, {
-    type: data instanceof ArrayBuffer ? 'array' : 'buffer',
-    cellDates: false,
-    raw: true,
-    codepage: 65001 // Ensure UTF-8 decoding for CSV files and preserve strings
-  });
+  let workbook: XLSX.WorkBook;
+
+  if (isCsv && csvText) {
+    const rows = parseRentmanCsvToRows(csvText);
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+  } else {
+    workbook = XLSX.read(data, {
+      type: data instanceof ArrayBuffer ? 'array' : 'buffer',
+      cellDates: false,
+      raw: true,
+      codepage: 65001 // Ensure UTF-8 decoding for CSV files and preserve strings
+    });
+  }
+
   return parseRentmanWorkbook(workbook, targetDatabaseId);
 }
