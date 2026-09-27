@@ -565,13 +565,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         {/* Catalog (Inventory & Kits) Management Section */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                <Archive className="text-indigo-400" /> 
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 lg:p-6">
+            <h2 className="text-lg lg:text-xl font-bold text-white mb-3 lg:mb-6 flex items-center gap-2">
+                <Archive className="text-indigo-400" size={20} /> 
                 Gestione Catalogo (DB: {currentDb.name})
             </h2>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 lg:gap-6">
                 {/* Export Catalog */}
                 <div className="hidden lg:flex bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
                     <div className="w-16 h-16 bg-indigo-900/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -602,15 +602,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
 
                 {/* Manage Checklist */}
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
-                    <div className="w-16 h-16 bg-emerald-900/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <FileText size={32} className="text-emerald-500" />
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 lg:p-6 flex flex-row lg:flex-col items-center justify-between lg:justify-center text-left lg:text-center hover:border-emerald-500/50 transition-colors group gap-3 lg:gap-0">
+                    <div className="flex items-center gap-3 lg:flex-col lg:gap-0 min-w-0 flex-1">
+                        <div className="w-10 h-10 lg:w-16 lg:h-16 bg-emerald-900/20 rounded-full flex items-center justify-center lg:mb-4 group-hover:scale-110 transition-transform shrink-0">
+                            <FileText size={20} className="text-emerald-500 lg:hidden" />
+                            <FileText size={32} className="text-emerald-500 hidden lg:block" />
+                        </div>
+                        <div className="min-w-0">
+                            <h3 className="text-sm lg:text-lg font-bold text-slate-200 lg:mb-2 truncate">Gestione Checklist</h3>
+                            <p className="text-xs lg:text-sm text-slate-500 lg:mb-6 line-clamp-1 lg:line-clamp-none">
+                                Modifica settori, gruppi e voci checklist.
+                            </p>
+                        </div>
                     </div>
-                    <h3 className="text-lg font-bold text-slate-200 mb-2">Gestione Checklist</h3>
-                    <p className="text-sm text-slate-500 mb-6 flex-1">
-                        Modifica la struttura della checklist globale (Settori, Gruppi, Voci).
-                    </p>
-                    <button onClick={onNavigateToChecklist} className="w-full py-3 md:py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg shadow-emerald-900/20 transition-colors">
+                    <button onClick={onNavigateToChecklist} className="w-auto lg:w-full px-3.5 py-2 lg:py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs lg:text-sm font-bold shadow-md lg:shadow-lg shadow-emerald-900/20 transition-colors shrink-0 active:scale-95">
                         Modifica Checklist
                     </button>
                 </div>
