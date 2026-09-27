@@ -3,7 +3,7 @@ import { generateId } from '../utils';
 import { 
   Download, Upload, LayoutDashboard, Database, Package, FileText, 
   AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2,
-  FileSpreadsheet, RefreshCw
+  FileSpreadsheet, RefreshCw, ChevronDown
 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, InventoryDatabase } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -363,15 +363,73 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
                       setIsNewDbModalOpen(true);
                     }}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
+                    className="hidden md:flex bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
                   >
                     <Plus size={18} /> Nuovo Database
                   </button>
                 </div>
             </div>
 
+            {/* Mobile Compact Database Selector */}
+            <div className="md:hidden bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Database size={14} className="text-blue-400" /> Database Attivo
+                </span>
+                {currentDb.isDefault ? (
+                  <span className="flex items-center gap-1 text-[10px] font-bold bg-amber-900/30 text-amber-400 border border-amber-800/40 px-2 py-0.5 rounded-full">
+                    <Star size={11} className="fill-current" /> Principale (Default)
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSetDefaultDatabase(currentDb as any)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300 bg-amber-950/40 border border-amber-800/50 hover:bg-amber-900/40 px-2.5 py-1 rounded-lg transition-all active:scale-95"
+                    title="Imposta questo database come principale predefinito"
+                  >
+                    <Star size={12} /> Rendi Principale
+                  </button>
+                )}
+              </div>
+
+              {/* Dropdown Select */}
+              <div className="relative">
+                <select
+                  value={activeDatabaseId || DEFAULT_DATABASE_ID}
+                  onChange={(e) => setActiveDatabaseId && setActiveDatabaseId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg py-2.5 pl-3 pr-10 text-sm font-semibold appearance-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all cursor-pointer"
+                >
+                  {databases.map((dbItem) => {
+                    const dbItemsCount = inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === dbItem.id).length;
+                    const isDef = !!dbItem.isDefault;
+                    return (
+                      <option key={dbItem.id} value={dbItem.id}>
+                        [{dbItem.code || 'DB'}] {dbItem.name} ({dbItemsCount} art.){isDef ? ' ⭐ Principale' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                  <ChevronDown size={18} />
+                </div>
+              </div>
+
+              {/* Compact details pill */}
+              <div className="flex items-center justify-between text-xs text-slate-400 pt-0.5 border-t border-slate-900">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${getDbBadgeStyle(currentDb.color)}`}>
+                    {currentDb.code || 'DB'}
+                  </span>
+                  <span className="text-slate-300 font-medium truncate max-w-[180px]">{currentDb.name}</span>
+                </div>
+                <span className="text-slate-400">
+                  <strong className="text-white font-mono">{inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === currentDb.id).length}</strong> articoli
+                </span>
+              </div>
+            </div>
+
             {/* Databases Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
                 {databases.map((dbItem) => {
                     const isActive = dbItem.id === activeDatabaseId;
                     const isDefault = !!dbItem.isDefault;
