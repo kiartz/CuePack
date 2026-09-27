@@ -1082,7 +1082,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                      e.stopPropagation();
                                      setExportList(list);
                                  }}
-                                 className="p-3 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-blue-900/20 flex items-center justify-center gap-1.5"
+                                 className="hidden lg:flex p-3 bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg transition-all shadow-lg hover:shadow-blue-900/20 items-center justify-center gap-1.5"
                                  title="Export Lista"
                             >
                                 <Share size={18} />
@@ -1491,7 +1491,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       <button 
                           onClick={() => setExportList(activeList || null)} 
                           title="Export Lista" 
-                          className="flex items-center gap-1.5 p-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors border border-slate-800 bg-slate-900/30 text-sm font-bold shadow-sm"
+                          className="hidden lg:flex items-center gap-1.5 p-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors border border-slate-800 bg-slate-900/30 text-sm font-bold shadow-sm"
                       >
                           <Share size={18}/> 
                           <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Export</span>

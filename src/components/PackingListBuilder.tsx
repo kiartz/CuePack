@@ -2334,7 +2334,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 <button 
                     onClick={() => setIsExportModalOpen(true)} 
                     title="Export Lista" 
-                    className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
+                    className="hidden lg:flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
                 >
                     <Share size={18}/> 
                     <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Export</span>

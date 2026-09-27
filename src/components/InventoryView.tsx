@@ -445,7 +445,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
 
              <button 
                 onClick={() => setIsRentmanSyncModalOpen(true)}
-                className={`${isRentmanInitialImport ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30' : 'bg-cyan-700 hover:bg-cyan-600 shadow-cyan-900/30'} text-white p-2.5 sm:px-3 sm:py-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-lg active:scale-95`}
+                className={`hidden lg:flex ${isRentmanInitialImport ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30' : 'bg-cyan-700 hover:bg-cyan-600 shadow-cyan-900/30'} text-white p-2.5 sm:px-3 sm:py-2.5 rounded-lg items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-lg active:scale-95`}
                 title={isRentmanInitialImport ? "Importa catalogo Rentman nel database attivo o selezionato" : "Sincronizza catalogo da file Excel Rentman (.xlsx)"}
              >
                 {isRentmanInitialImport ? <FileSpreadsheet size={18} /> : <RefreshCw size={17} />}

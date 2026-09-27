@@ -418,7 +418,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                             </div>
 
                             {/* Rentman Per-Database Action */}
-                            <div className="pt-3 border-t border-slate-800/60 mt-3">
+                            <div className="hidden lg:block pt-3 border-t border-slate-800/60 mt-3">
                                 {dbItemsCount === 0 ? (
                                     <button 
                                       type="button"
@@ -515,7 +515,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Export Catalog */}
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
+                <div className="hidden lg:flex bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
                     <div className="w-16 h-16 bg-indigo-900/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                         <Download size={32} className="text-indigo-500" />
                     </div>
@@ -529,7 +529,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
 
                 {/* Import Catalog */}
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
+                <div className="hidden lg:flex bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center text-center hover:border-indigo-500/50 transition-colors group">
                     <div className="w-16 h-16 bg-indigo-900/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                         <Upload size={32} className="text-indigo-500" />
                     </div>
@@ -789,7 +789,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         <div className="text-center space-y-1 pb-8">
             <div className="text-xs text-slate-500 font-medium tracking-wide transition-opacity">
-                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.8.0</span>
+                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.8.1</span>
             </div>
             <div className="text-xs text-slate-600 uppercase tracking-widest font-bold">
                 Cloud Sync Active • Multi-Database Architecture
