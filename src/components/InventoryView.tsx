@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database } from 'lucide-react';
 import { InventoryItem, Category, PackingList, ListComponent, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
-import { RentmanSyncModal } from './RentmanSyncModal';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -22,10 +21,17 @@ interface InventoryViewProps {
 
 export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId, databases = [], setActiveDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Filter states
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [selectedDatabase, setSelectedDatabase] = useState<string>('All');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('All');
+  const [filterQrCode, setFilterQrCode] = useState<'all' | 'with' | 'without'>('all');
+  const [filterProductCode, setFilterProductCode] = useState<'all' | 'with' | 'without'>('all');
+  const [filterSerials, setFilterSerials] = useState<'all' | 'with' | 'without'>('all');
+
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isRentmanSyncModalOpen, setIsRentmanSyncModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   const effectiveDatabases = useMemo(() => {
@@ -33,15 +39,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       ? databases
       : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
   }, [databases]);
-
-  const effectiveRentmanTargetDbId = useMemo(() => {
-    return selectedDatabase !== 'All' ? selectedDatabase : (activeDatabaseId || DEFAULT_DATABASE_ID);
-  }, [selectedDatabase, activeDatabaseId]);
-
-  const isRentmanInitialImport = useMemo(() => {
-    const count = items.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === effectiveRentmanTargetDbId).length;
-    return count === 0;
-  }, [items, effectiveRentmanTargetDbId]);
   
   // Inline Editing State
   const [editingCell, setEditingCell] = useState<{ itemId: string, field: keyof InventoryItem } | null>(null);
@@ -104,11 +101,44 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             });
         }
 
+        // Filter: Database
         const matchesDatabase = selectedDatabase === 'All' || (item.databaseId || DEFAULT_DATABASE_ID) === selectedDatabase;
         if (!matchesDatabase) return { item, score: -1, nameMatches: 0 };
 
+        // Filter: Category
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
         if (!matchesCategory) return { item, score: -1, nameMatches: 0 };
+
+        // Filter: Subcategory
+        const matchesSubcategory = selectedSubcategory === 'All' || (item.subcategory && item.subcategory.trim() === selectedSubcategory);
+        if (!matchesSubcategory) return { item, score: -1, nameMatches: 0 };
+
+        // Filter: QR Code
+        if (filterQrCode === 'with') {
+          const hasQr = !!item.qrCode && item.qrCode.trim().length > 0;
+          if (!hasQr) return { item, score: -1, nameMatches: 0 };
+        } else if (filterQrCode === 'without') {
+          const hasQr = !!item.qrCode && item.qrCode.trim().length > 0;
+          if (hasQr) return { item, score: -1, nameMatches: 0 };
+        }
+
+        // Filter: Product Code
+        if (filterProductCode === 'with') {
+          const hasCode = !!item.productCode && item.productCode.trim().length > 0;
+          if (!hasCode) return { item, score: -1, nameMatches: 0 };
+        } else if (filterProductCode === 'without') {
+          const hasCode = !!item.productCode && item.productCode.trim().length > 0;
+          if (hasCode) return { item, score: -1, nameMatches: 0 };
+        }
+
+        // Filter: Serials / Instances
+        if (filterSerials === 'with') {
+          const hasSerials = Array.isArray(item.instances) && item.instances.length > 0;
+          if (!hasSerials) return { item, score: -1, nameMatches: 0 };
+        } else if (filterSerials === 'without') {
+          const hasSerials = Array.isArray(item.instances) && item.instances.length > 0;
+          if (hasSerials) return { item, score: -1, nameMatches: 0 };
+        }
 
         return { item, score, nameMatches };
       })
@@ -121,12 +151,62 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
       .map(result => result.item);
 
       return results;
-  }, [items, searchTerm, selectedCategory, selectedDatabase]);
+  }, [items, searchTerm, selectedDatabase, selectedCategory, selectedSubcategory, filterQrCode, filterProductCode, filterSerials]);
+
+  // Categories & Subcategories available for filtering
+  const availableCategories = useMemo(() => {
+    return Array.from(new Set([
+      ...getCategoryDefinitions().map(c => c.name),
+      ...Object.values(Category),
+      ...items.map(i => i.category).filter(Boolean)
+    ])).sort((a, b) => a.localeCompare(b));
+  }, [items]);
+
+  const availableSubcategories = useMemo(() => {
+    const categoryDefs = getCategoryDefinitions();
+    const subSet = new Set<string>();
+
+    if (selectedCategory === 'All') {
+      items.forEach(i => {
+        if (i.subcategory && i.subcategory.trim()) subSet.add(i.subcategory.trim());
+      });
+    } else {
+      const def = categoryDefs.find(c => c.name.toLowerCase() === selectedCategory.toLowerCase());
+      if (def) {
+        def.subcategories.forEach(s => subSet.add(s.trim()));
+      }
+      items.filter(i => (i.category || '').toLowerCase() === selectedCategory.toLowerCase()).forEach(i => {
+        if (i.subcategory && i.subcategory.trim()) subSet.add(i.subcategory.trim());
+      });
+    }
+
+    return Array.from(subSet).sort((a, b) => a.localeCompare(b));
+  }, [items, selectedCategory]);
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (selectedDatabase !== 'All') count++;
+    if (selectedCategory !== 'All') count++;
+    if (selectedSubcategory !== 'All') count++;
+    if (filterQrCode !== 'all') count++;
+    if (filterProductCode !== 'all') count++;
+    if (filterSerials !== 'all') count++;
+    return count;
+  }, [selectedDatabase, selectedCategory, selectedSubcategory, filterQrCode, filterProductCode, filterSerials]);
+
+  const handleResetFilters = () => {
+    setSelectedDatabase('All');
+    setSelectedCategory('All');
+    setSelectedSubcategory('All');
+    setFilterQrCode('all');
+    setFilterProductCode('all');
+    setFilterSerials('all');
+  };
 
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedCategory, selectedDatabase]);
+  }, [searchTerm, selectedDatabase, selectedCategory, selectedSubcategory, filterQrCode, filterProductCode, filterSerials]);
 
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredItems.slice(
@@ -315,38 +395,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
     }
   };
 
-  const [isAssigningCodes, setIsAssigningCodes] = useState(false);
-
-  const handleAutoAssignMissingCodes = async () => {
-    const unassigned = items.filter(i => (!i.productCode || !i.productCode.trim()) || (!i.qrCode || !i.qrCode.trim()));
-    if (unassigned.length === 0) {
-      alert("Tutti gli articoli in inventario hanno già sia il codice prodotto che il codice QR assegnati!");
-      return;
-    }
-    if (confirm(`Vuoi generare e salvare automaticamente i codici mancanti per i ${unassigned.length} articoli senza codice?`)) {
-      setIsAssigningCodes(true);
-      try {
-        const inventoryCol = getInventoryCollection(activeDatabaseId);
-        const updatedList: InventoryItem[] = [];
-        let runningItems = [...items];
-        for (const item of unassigned) {
-          const prodCode = item.productCode && item.productCode.trim() ? item.productCode : generateProductCode(runningItems, item.id);
-          const qr = item.qrCode && item.qrCode.trim() ? item.qrCode : generateProductQrCode(runningItems, item.id);
-          const updated = { ...item, productCode: prodCode, qrCode: qr };
-          runningItems = runningItems.map(i => i.id === item.id ? updated : i);
-          updatedList.push(updated);
-        }
-        await Promise.all(updatedList.map(u => addOrUpdateItem(inventoryCol, u)));
-        alert(`Salvati con successo i codici per ${updatedList.length} articoli!`);
-      } catch (err) {
-        console.error("Errore durante l'assegnazione automatica dei codici:", err);
-        alert("Si è verificato un errore durante il salvataggio dei codici.");
-      } finally {
-        setIsAssigningCodes(false);
-      }
-    }
-  };
-
   const handleDuplicate = async (item: InventoryItem) => {
     const inventoryCol = getInventoryCollection(activeDatabaseId);
     const newItem = { ...item, id: generateId(), name: `${item.name} (Copia)` };
@@ -357,52 +405,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   return (
     <div className="h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden">
       {/* Top Header / Actions */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-2">
+      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2">
         <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario Materiali</h1>
 
-        <div className="flex flex-wrap md:flex-nowrap items-center gap-2 w-full xl:w-auto">
-          {/* Database Filter */}
-          <div className="relative flex-grow sm:flex-none">
-             <Database className="absolute left-3 top-2.5 text-slate-500" size={16} />
-             <select 
-               className="bg-slate-900 border border-slate-700 text-slate-300 pl-8 pr-7 py-2 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
-               value={selectedDatabase}
-               onChange={(e) => setSelectedDatabase(e.target.value)}
-             >
-               <option value="All">Tutti i Database ({items.length})</option>
-               {effectiveDatabases.map(db => {
-                 const count = items.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
-                 return (
-                   <option key={db.id} value={db.id}>
-                     [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
-                   </option>
-                 );
-               })}
-             </select>
-          </div>
-
-          {/* Category Filter */}
-          <div className="relative flex-grow sm:flex-none">
-             <Filter className="absolute left-3 top-2.5 text-slate-500" size={16} />
-             <select 
-               className="bg-slate-900 border border-slate-700 text-slate-300 pl-8 pr-7 py-2 rounded-lg text-sm appearance-none outline-none focus:border-blue-500 w-full sm:w-auto font-medium"
-               value={selectedCategory}
-               onChange={(e) => setSelectedCategory(e.target.value)}
-             >
-               <option value="All">Tutte le Categorie ({items.length})</option>
-               {Array.from(new Set([
-                 ...getCategoryDefinitions().map(c => c.name),
-                 ...Object.values(Category),
-                 ...items.map(i => i.category).filter(Boolean)
-               ])).map(c => {
-                 const count = items.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
-                 return <option key={c} value={c}>{c} ({count})</option>;
-               })}
-             </select>
-          </div>
-
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           {/* Search Bar */}
-          <div className="relative flex-grow min-w-0 md:w-64">
+          <div className="relative flex-grow min-w-0 sm:w-64">
             <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
             <input 
               type="text" 
@@ -413,53 +421,50 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             />
           </div>
 
+          {/* Filter Modal Toggle Button */}
+          <button 
+            type="button"
+            onClick={() => setIsFilterModalOpen(true)}
+            className={`p-2.5 sm:px-3 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 text-sm font-medium transition-all shrink-0 ${
+              activeFiltersCount > 0 
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+            }`}
+            title="Filtra inventario"
+          >
+            <Filter size={18} />
+            <span className="hidden md:inline">Filtri</span>
+            {activeFiltersCount > 0 && (
+              <span className="px-1.5 py-0.5 text-xs font-bold bg-blue-500 text-white rounded-full leading-none">
+                {activeFiltersCount}
+              </span>
+            )}
+          </button>
+
           {/* Actions Button Group */}
-          <div className="flex items-center gap-2">
-             <button 
-                onClick={() => setActiveInventoryAction(activeInventoryAction === 'duplicate' ? null : 'duplicate')}
-                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'duplicate' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                title="Attiva modalità duplicazione (clicca su un articolo per duplicarlo)"
-             >
-                <Copy size={18} />
-             </button>
+          <button 
+            onClick={() => setActiveInventoryAction(activeInventoryAction === 'duplicate' ? null : 'duplicate')}
+            className={`p-2.5 rounded-lg flex items-center justify-center transition-all shrink-0 ${activeInventoryAction === 'duplicate' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+            title="Attiva modalità duplicazione (clicca su un articolo per duplicarlo)"
+          >
+            <Copy size={18} />
+          </button>
 
-             <button 
-                onClick={() => setActiveInventoryAction(activeInventoryAction === 'delete' ? null : 'delete')}
-                className={`p-2.5 rounded-lg flex items-center justify-center transition-all ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                title="Attiva modalità eliminazione (clicca su un articolo per rimuoverlo)"
-             >
-                <Trash2 size={18} />
-             </button>
+          <button 
+            onClick={() => setActiveInventoryAction(activeInventoryAction === 'delete' ? null : 'delete')}
+            className={`p-2.5 rounded-lg flex items-center justify-center transition-all shrink-0 ${activeInventoryAction === 'delete' ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/40' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+            title="Attiva modalità eliminazione (clicca su un articolo per rimuoverlo)"
+          >
+            <Trash2 size={18} />
+          </button>
 
-             {items.some(i => (!i.productCode || !i.productCode.trim()) || (!i.qrCode || !i.qrCode.trim())) && (
-                <button 
-                  onClick={handleAutoAssignMissingCodes}
-                  disabled={isAssigningCodes}
-                  className="bg-slate-800 hover:bg-slate-700 text-purple-400 border border-purple-900/40 p-2.5 sm:px-3 sm:py-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-sm active:scale-95"
-                  title="Genera e memorizza automaticamente i codici prodotto e QR mancanti per tutti gli articoli dell'inventario"
-                >
-                  <Barcode size={18} />
-                  <span className="hidden md:inline">{isAssigningCodes ? 'Salvataggio...' : 'Genera Mancanti'}</span>
-                </button>
-              )}
-
-             <button 
-                onClick={() => setIsRentmanSyncModalOpen(true)}
-                className={`hidden lg:flex ${isRentmanInitialImport ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30' : 'bg-cyan-700 hover:bg-cyan-600 shadow-cyan-900/30'} text-white p-2.5 sm:px-3 sm:py-2.5 rounded-lg items-center justify-center gap-1.5 text-xs font-bold transition-all shadow-lg active:scale-95`}
-                title={isRentmanInitialImport ? "Importa catalogo Rentman nel database attivo o selezionato" : "Sincronizza catalogo da file Excel Rentman (.xlsx)"}
-             >
-                {isRentmanInitialImport ? <FileSpreadsheet size={18} /> : <RefreshCw size={17} />}
-                <span className="hidden md:inline">{isRentmanInitialImport ? 'Importa da Rentman' : 'Sincronizza Rentman'}</span>
-             </button>
-
-             <button 
-                onClick={() => handleOpenModal()}
-                className="bg-blue-600 hover:bg-blue-500 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-all shadow-lg shadow-blue-900/30 active:scale-95"
-             >
-                <Plus size={20} />
-                <span className="hidden sm:inline">Nuovo Materiale</span>
-             </button>
-          </div>
+          <button 
+            onClick={() => handleOpenModal()}
+            className="bg-blue-600 hover:bg-blue-500 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
+          >
+            <Plus size={20} />
+            <span className="hidden sm:inline">Nuovo Materiale</span>
+          </button>
         </div>
       </div>
 
@@ -918,16 +923,224 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         )}
       </Modal>
 
-      {/* --- RENTMAN SYNC & DIFF STUDIO MODAL --- */}
-      <RentmanSyncModal 
-        isOpen={isRentmanSyncModalOpen}
-        onClose={() => setIsRentmanSyncModalOpen(false)}
-        inventory={items}
-        databases={effectiveDatabases}
-        targetDatabaseId={effectiveRentmanTargetDbId}
-        activeDatabaseId={activeDatabaseId}
-        setActiveDatabaseId={setActiveDatabaseId}
-      />
+      {/* FILTER MODAL */}
+      <Modal 
+        isOpen={isFilterModalOpen} 
+        onClose={() => setIsFilterModalOpen(false)} 
+        title="Filtri Inventario" 
+        size="md"
+      >
+        <div className="space-y-4">
+          {/* Database */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+              Database
+            </label>
+            <select
+              value={selectedDatabase}
+              onChange={(e) => setSelectedDatabase(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+            >
+              <option value="All">Tutti i Database ({items.length})</option>
+              {effectiveDatabases.map(db => {
+                const count = items.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
+                return (
+                  <option key={db.id} value={db.id}>
+                    [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {/* Categoria */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+              Categoria
+            </label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => {
+                setSelectedCategory(e.target.value);
+                setSelectedSubcategory('All');
+              }}
+              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+            >
+              <option value="All">Tutte le Categorie ({items.length})</option>
+              {availableCategories.map(c => {
+                const count = items.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
+                return <option key={c} value={c}>{c} ({count})</option>;
+              })}
+            </select>
+          </div>
+
+          {/* Sottocategoria */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+              Sottocategoria
+            </label>
+            <select
+              value={selectedSubcategory}
+              onChange={(e) => setSelectedSubcategory(e.target.value)}
+              disabled={availableSubcategories.length === 0}
+              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium disabled:opacity-50"
+            >
+              <option value="All">Tutte le Sottocategorie</option>
+              {availableSubcategories.map(sc => (
+                <option key={sc} value={sc}>{sc}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Specific Filters: QR Code, Codice Prodotto, Seriali */}
+          <div className="space-y-3 pt-1">
+            {/* Codice QR */}
+            <div>
+              <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Codice QR
+              </span>
+              <div className="grid grid-cols-3 gap-1 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => setFilterQrCode('all')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterQrCode === 'all'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Tutti
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterQrCode('with')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterQrCode === 'with'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Con QR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterQrCode('without')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterQrCode === 'without'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Senza QR
+                </button>
+              </div>
+            </div>
+
+            {/* Codice Prodotto */}
+            <div>
+              <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Codice Prodotto
+              </span>
+              <div className="grid grid-cols-3 gap-1 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => setFilterProductCode('all')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterProductCode === 'all'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Tutti
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterProductCode('with')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterProductCode === 'with'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Con Codice
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterProductCode('without')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterProductCode === 'without'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Senza Codice
+                </button>
+              </div>
+            </div>
+
+            {/* Seriali / Matricole */}
+            <div>
+              <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Seriali / Matricole
+              </span>
+              <div className="grid grid-cols-3 gap-1 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => setFilterSerials('all')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterSerials === 'all'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Tutti
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSerials('with')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterSerials === 'with'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Con Seriali
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSerials('without')}
+                  className={`py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    filterSerials === 'without'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Senza Seriali
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-2">
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              disabled={activeFiltersCount === 0}
+              className="text-xs font-semibold text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 transition-colors py-2 px-1"
+            >
+              Azzera Filtri
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFilterModalOpen(false)}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm shadow-lg shadow-blue-900/30 transition-all active:scale-95"
+            >
+              Mostra {filteredItems.length} Materiali
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

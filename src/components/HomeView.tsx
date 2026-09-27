@@ -74,10 +74,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   }, 0);
 
   // --- Active Database Info ---
-  const currentDb = useMemo(() => {
+  const currentDb: InventoryDatabase = useMemo(() => {
     return databases.find(d => d.id === activeDatabaseId) || {
       id: DEFAULT_DATABASE_ID,
       name: 'Database Principale',
+      code: 'PRI',
+      color: 'emerald',
       description: 'Database predefinito di produzione',
       isDefault: true,
       createdAt: new Date().toISOString()
