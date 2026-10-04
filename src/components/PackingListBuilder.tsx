@@ -3991,56 +3991,59 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         </div>
       </Modal>
 
-      {/* PICKER FILTER MODAL */}
+      {/* PICKER FILTER MODAL (Side Drawer on Desktop, Popup on Mobile/Tablet) */}
       <Modal 
         isOpen={isPickerFilterModalOpen} 
         onClose={() => setIsPickerFilterModalOpen(false)} 
         title="Filtri Ricerca Materiale" 
         size="md"
+        asDrawerOnDesktop
       >
-        <div className="space-y-4">
-          {/* Database */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              Database
-            </label>
-            <select
-              value={pickerDatabaseFilter}
-              onChange={(e) => setPickerDatabaseFilter(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
-            >
-              <option value="All">Tutti i Database ({inventory.length})</option>
-              {effectiveDatabases.map(db => {
-                const count = inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
-                return (
-                  <option key={db.id} value={db.id}>
-                    [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
+        <div className="flex-1 flex flex-col justify-between space-y-4 h-full">
+          <div className="space-y-4">
+            {/* Database */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Database
+              </label>
+              <select
+                value={pickerDatabaseFilter}
+                onChange={(e) => setPickerDatabaseFilter(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+              >
+                <option value="All">Tutti i Database ({inventory.length})</option>
+                {effectiveDatabases.map(db => {
+                  const count = inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
+                  return (
+                    <option key={db.id} value={db.id}>
+                      [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
 
-          {/* Categoria */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              Categoria
-            </label>
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
-            >
-              <option value="All">Tutte le Categorie ({inventory.length})</option>
-              {availablePickerCategories.map(c => {
-                const count = inventory.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
-                return <option key={c} value={c}>{c} ({count})</option>;
-              })}
-            </select>
+            {/* Categoria */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                Categoria
+              </label>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+              >
+                <option value="All">Tutte le Categorie ({inventory.length})</option>
+                {availablePickerCategories.map(c => {
+                  const count = inventory.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
+                  return <option key={c} value={c}>{c} ({count})</option>;
+                })}
+              </select>
+            </div>
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-2">
+          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-auto">
             <button
               type="button"
               onClick={handleResetPickerFilters}

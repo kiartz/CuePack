@@ -923,14 +923,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         )}
       </Modal>
 
-      {/* FILTER MODAL */}
+      {/* FILTER MODAL (Side Drawer on Desktop, Popup on Mobile/Tablet) */}
       <Modal 
         isOpen={isFilterModalOpen} 
         onClose={() => setIsFilterModalOpen(false)} 
         title="Filtri Inventario" 
         size="md"
+        asDrawerOnDesktop
       >
-        <div className="space-y-4">
+        <div className="flex-1 flex flex-col justify-between space-y-4 h-full">
+          <div className="space-y-4">
           {/* Database */}
           <div>
             <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -1120,9 +1122,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
               </div>
             </div>
           </div>
+        </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-2">
+          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-auto">
             <button
               type="button"
               onClick={handleResetFilters}
