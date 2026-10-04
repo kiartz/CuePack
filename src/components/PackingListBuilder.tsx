@@ -2833,24 +2833,31 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 
                 {/* Category & Action Buttons Row */}
                 <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => setIsPickerFilterModalOpen(true)}
-                        className={`p-2 sm:px-3 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-all shrink-0 ${
-                            activePickerFiltersCount > 0
-                                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30'
-                                : 'bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-700'
-                        }`}
-                        title="Filtra ricerca materiale per Database e Categorie"
-                    >
-                        <Filter size={15} />
-                        <span className="hidden sm:inline">Filtri</span>
-                        {activePickerFiltersCount > 0 && (
-                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-blue-500 text-white rounded-full leading-none">
-                                {activePickerFiltersCount}
-                            </span>
-                        )}
-                    </button>
+                    <div className="relative group/filter shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => setIsPickerFilterModalOpen(true)}
+                            className={`p-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-all shrink-0 ${
+                                activePickerFiltersCount > 0
+                                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30'
+                                    : 'bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-700'
+                            }`}
+                            title="Filtri"
+                            aria-label="Filtri"
+                        >
+                            <Filter size={15} />
+                            {activePickerFiltersCount > 0 && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold bg-blue-500 text-white rounded-full leading-none">
+                                    {activePickerFiltersCount}
+                                </span>
+                            )}
+                        </button>
+                        {/* Hover Tooltip Popup */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 bg-slate-900 border border-slate-700 text-white text-[11px] font-semibold rounded-md shadow-xl opacity-0 invisible group-hover/filter:opacity-100 group-hover/filter:visible transition-all duration-150 pointer-events-none whitespace-nowrap z-50">
+                            Filtri
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-700" />
+                        </div>
+                    </div>
                     
                     <button 
                         onClick={() => {
