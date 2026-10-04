@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -10,6 +10,7 @@ import { Modal } from './Modal';
 import { EventFormModal } from './EventFormModal';
 import { RemindersModal } from './RemindersModal';
 import { ShareEventModal } from './ShareEventModal';
+import { getCategoryDefinitions } from '../utils/categories';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
@@ -150,8 +151,29 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // Search/Picker State
   const [pickerSearch, setPickerSearch] = useState('');
   const pickerInputRef = useRef<HTMLInputElement>(null);
+  const [isPickerFilterModalOpen, setIsPickerFilterModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [pickerDatabaseFilter, setPickerDatabaseFilter] = useState<string>('All');
+
+  const availablePickerCategories = useMemo(() => {
+    return Array.from(new Set([
+      ...getCategoryDefinitions().map(c => c.name),
+      ...Object.values(Category),
+      ...inventory.map(i => i.category).filter(Boolean)
+    ])).sort((a, b) => a.localeCompare(b));
+  }, [inventory]);
+
+  const activePickerFiltersCount = useMemo(() => {
+    let count = 0;
+    if (pickerDatabaseFilter !== 'All') count++;
+    if (selectedCategory !== 'All') count++;
+    return count;
+  }, [pickerDatabaseFilter, selectedCategory]);
+
+  const handleResetPickerFilters = () => {
+    setPickerDatabaseFilter('All');
+    setSelectedCategory('All');
+  };
 
   const effectiveDatabases = useMemo(() => {
     return (databases && databases.length > 0)
@@ -2811,26 +2833,24 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 
                 {/* Category & Action Buttons Row */}
                 <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 shrink-0">
-                        <Database size={13} className="text-blue-400 shrink-0" />
-                        <select
-                            value={pickerDatabaseFilter}
-                            onChange={(e) => setPickerDatabaseFilter(e.target.value)}
-                            className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[120px] truncate"
-                            title="Filtra ricerca materiale per database"
-                        >
-                            <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
-                            {effectiveDatabases.map(db => (
-                                <option key={db.id} value={db.id} className="bg-slate-900 text-white">
-                                    [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="bg-slate-950 border border-slate-700 text-white px-2 py-2 rounded-lg text-sm flex-1 sm:w-32 outline-none">
-                        <option value="All">Tutte</option>
-                        {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <button
+                        type="button"
+                        onClick={() => setIsPickerFilterModalOpen(true)}
+                        className={`p-2 sm:px-3 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-all shrink-0 ${
+                            activePickerFiltersCount > 0
+                                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30'
+                                : 'bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-700'
+                        }`}
+                        title="Filtra ricerca materiale per Database e Categorie"
+                    >
+                        <Filter size={15} />
+                        <span className="hidden sm:inline">Filtri</span>
+                        {activePickerFiltersCount > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold bg-blue-500 text-white rounded-full leading-none">
+                                {activePickerFiltersCount}
+                            </span>
+                        )}
+                    </button>
                     
                     <button 
                         onClick={() => {
@@ -3959,6 +3979,75 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white rounded-lg text-xs font-semibold transition-colors"
             >
               Chiudi
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* PICKER FILTER MODAL */}
+      <Modal 
+        isOpen={isPickerFilterModalOpen} 
+        onClose={() => setIsPickerFilterModalOpen(false)} 
+        title="Filtri Ricerca Materiale" 
+        size="md"
+      >
+        <div className="space-y-4">
+          {/* Database */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+              Database
+            </label>
+            <select
+              value={pickerDatabaseFilter}
+              onChange={(e) => setPickerDatabaseFilter(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+            >
+              <option value="All">Tutti i Database ({inventory.length})</option>
+              {effectiveDatabases.map(db => {
+                const count = inventory.filter(i => (i.databaseId || DEFAULT_DATABASE_ID) === db.id).length;
+                return (
+                  <option key={db.id} value={db.id}>
+                    [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {/* Categoria */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+              Categoria
+            </label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-medium"
+            >
+              <option value="All">Tutte le Categorie ({inventory.length})</option>
+              {availablePickerCategories.map(c => {
+                const count = inventory.filter(i => (i.category || '').toLowerCase() === c.toLowerCase()).length;
+                return <option key={c} value={c}>{c} ({count})</option>;
+              })}
+            </select>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-2">
+            <button
+              type="button"
+              onClick={handleResetPickerFilters}
+              disabled={activePickerFiltersCount === 0}
+              className="text-xs font-semibold text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 transition-colors py-2 px-1"
+            >
+              Azzera Filtri
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsPickerFilterModalOpen(false)}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm shadow-lg shadow-blue-900/30 transition-all active:scale-95"
+            >
+              Applica Filtri
             </button>
           </div>
         </div>
