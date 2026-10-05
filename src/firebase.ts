@@ -1,5 +1,17 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, setDoc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  waitForPendingWrites,
+  collection, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  updateDoc, 
+  writeBatch 
+} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { InventoryItem, Kit, PackingList, ChecklistCategory, Template } from './types';
 
@@ -27,8 +39,40 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+// Initialize Firestore with persistent multi-tab local cache for full offline support
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  });
+} catch (error) {
+  console.warn("Unable to initialize persistent local cache for Firestore, falling back to getFirestore:", error);
+  firestoreDb = getFirestore(app);
+}
+
+export const db = firestoreDb;
 export const auth = getAuth(app);
+
+/**
+ * Waits for all pending offline writes to be committed to Firestore remote servers.
+ * Times out after maxWaitMs to avoid blocking indefinitely.
+ */
+export const syncPendingWrites = async (maxWaitMs: number = 8000): Promise<boolean> => {
+  try {
+    const syncPromise = waitForPendingWrites(db);
+    const timeoutPromise = new Promise<boolean>((_, reject) => 
+      setTimeout(() => reject(new Error('Sync timeout')), maxWaitMs)
+    );
+    await Promise.race([syncPromise, timeoutPromise]);
+    return true;
+  } catch (err) {
+    console.warn("syncPendingWrites notice:", err);
+    return false;
+  }
+};
 
 // Collection References Constants
 export const COLL_INVENTORY = 'inventory';
@@ -36,6 +80,8 @@ export const COLL_KITS = 'kits';
 export const COLL_TEMPLATES = 'templates';
 export const COLL_LISTS = 'packing_lists';
 export const COLL_CHECKLIST_CONFIG = 'checklist_config';
+export const COLL_CATEGORIES_CONFIG = 'categories_config';
+export const COLL_CONNECTORS_CONFIG = 'connectors_config';
 export const COLL_DATABASES = 'databases_meta';
 
 export { DEFAULT_DATABASE_ID } from './types';
@@ -57,7 +103,7 @@ export const getTemplatesCollection = (_dbId?: string): string => {
 /**
  * Strips 'undefined' values recursively from an object to prevent Firestore errors.
  */
-const cleanData = (obj: any): any => {
+export const cleanData = (obj: any): any => {
   if (Array.isArray(obj)) {
     return obj.map(item => cleanData(item));
   } else if (obj !== null && typeof obj === 'object') {
@@ -114,11 +160,15 @@ export const deleteItem = async (collectionName: string, id: string) => {
 // --- Batch Helper for Reset/Import ---
 
 export const batchWriteItems = async <T extends { id: string }>(collectionName: string, items: T[]) => {
-    const batch = writeBatch(db);
-    items.forEach(item => {
-        const docRef = doc(db, collectionName, item.id);
-        const cleaned = cleanData(item);
-        batch.set(docRef, cleaned);
-    });
-    await batch.commit();
+    const CHUNK_SIZE = 250;
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+        const chunk = items.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(item => {
+            const docRef = doc(db, collectionName, item.id);
+            const cleaned = cleanData(item);
+            batch.set(docRef, cleaned);
+        });
+        await batch.commit();
+    }
 };

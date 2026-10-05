@@ -3,12 +3,14 @@ import { generateId } from '../utils';
 import { 
   Download, Upload, LayoutDashboard, Database, Package, FileText, 
   AlertCircle, Archive, Trash2, Plus, Star, Check, Edit2, ShieldAlert, CheckCircle2,
-  FileSpreadsheet, RefreshCw, ChevronDown
+  FileSpreadsheet, RefreshCw, ChevronDown, QrCode, Hash, Layers, Zap
 } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, InventoryDatabase } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { RentmanSyncModal } from './RentmanSyncModal';
+import { CategoryManager } from './CategoryManager';
+import { ConnectorManager } from './ConnectorManager';
 import { 
   batchWriteItems, addOrUpdateItem, deleteItem, 
   COLL_DATABASES, COLL_INVENTORY, COLL_KITS, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection 
@@ -45,6 +47,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
     code: '',
     color: 'blue',
     description: '',
+    barcodePrefix: '20',
+    productCodePrefix: '2',
+    productCodeDigits: 4,
     cloneCurrent: false,
     setAsDefault: false
   });
@@ -54,12 +59,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
     name: '',
     code: '',
     color: 'emerald',
-    description: ''
+    description: '',
+    barcodePrefix: '20',
+    productCodePrefix: '2',
+    productCodeDigits: 4
   });
 
   const [dbToDelete, setDbToDelete] = useState<InventoryDatabase | null>(null);
   const [isRentmanSyncModalOpen, setIsRentmanSyncModalOpen] = useState(false);
   const [selectedDbForRentman, setSelectedDbForRentman] = useState<string | null>(null);
+  const [homeConfigTab, setHomeConfigTab] = useState<'categories' | 'connectors'>('categories');
 
   // --- Statistics ---
   const totalItems = inventory.length;
@@ -99,6 +108,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
       code: rawCode,
       color: newDbForm.color || 'blue',
       description: newDbForm.description.trim() || undefined,
+      barcodePrefix: (newDbForm.barcodePrefix || '20').replace(/\D/g, '').slice(0, 3) || '20',
+      productCodePrefix: (newDbForm.productCodePrefix || '2').replace(/\D/g, '').slice(0, 3) || '2',
+      productCodeDigits: Math.max(2, Math.min(8, Number(newDbForm.productCodeDigits) || 4)),
       isDefault: newDbForm.setAsDefault,
       createdAt: new Date().toISOString()
     };
@@ -132,7 +144,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
       }
 
       setIsNewDbModalOpen(false);
-      setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
+      setNewDbForm({ 
+        name: '', 
+        code: '', 
+        color: 'blue', 
+        description: '', 
+        barcodePrefix: '20', 
+        productCodePrefix: '2', 
+        productCodeDigits: 4, 
+        cloneCurrent: false, 
+        setAsDefault: false 
+      });
       alert(`Database "${newDbObj.name}" [${newDbObj.code}] creato e attivato con successo!`);
     } catch (err) {
       console.error("Errore creazione database:", err);
@@ -150,7 +172,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
         name: editDbForm.name.trim(),
         code: rawCode,
         color: editDbForm.color || editingDb.color || 'blue',
-        description: editDbForm.description.trim() || undefined
+        description: editDbForm.description.trim() || undefined,
+        barcodePrefix: (editDbForm.barcodePrefix || '20').replace(/\D/g, '').slice(0, 3) || '20',
+        productCodePrefix: (editDbForm.productCodePrefix || '2').replace(/\D/g, '').slice(0, 3) || '2',
+        productCodeDigits: Math.max(2, Math.min(8, Number(editDbForm.productCodeDigits) || 4))
       };
 
       await addOrUpdateItem(COLL_DATABASES, updated);
@@ -362,7 +387,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <div className="flex flex-wrap items-center gap-2.5">
                   <button 
                     onClick={() => {
-                      setNewDbForm({ name: '', code: '', color: 'blue', description: '', cloneCurrent: false, setAsDefault: false });
+                      setNewDbForm({ 
+                        name: '', 
+                        code: '', 
+                        color: 'blue', 
+                        description: '', 
+                        barcodePrefix: '20',
+                        productCodePrefix: '2',
+                        productCodeDigits: 4,
+                        cloneCurrent: false, 
+                        setAsDefault: false 
+                      });
                       setIsNewDbModalOpen(true);
                     }}
                     className="hidden md:flex bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold items-center gap-2 transition-all shadow-lg shadow-blue-900/30 active:scale-95 shrink-0"
@@ -461,6 +496,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                         <div className="flex items-center gap-3 text-xs text-slate-400 mt-2">
                                             <span><strong className="text-slate-200">{dbItemsCount}</strong> articoli</span>
                                         </div>
+                                        <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono text-slate-400 mt-2 bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800/80">
+                                            <span className="flex items-center gap-1 text-emerald-400 font-bold" title="Prefisso Barcode / QR (7 cifre)">
+                                                <QrCode size={12} /> Barcode: {dbItem.barcodePrefix || '20'}... (7 cifre)
+                                            </span>
+                                            <span className="text-slate-600">•</span>
+                                            <span className="flex items-center gap-1 text-cyan-400 font-bold" title="Prefisso e lunghezza Codice Prodotto">
+                                                <Hash size={12} /> Codice: {dbItem.productCodePrefix || '2'}... ({dbItem.productCodeDigits || 4} cifre)
+                                            </span>
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
                                         {isDefault && (
@@ -481,7 +525,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                             <div className="hidden lg:block pt-3 border-t border-slate-800/60 mt-3">
                                 {dbItemsCount === 0 ? (
                                     <button 
-                                      type="button"
+                                      type="button" 
                                       onClick={() => {
                                         setSelectedDbForRentman(dbItem.id);
                                         setIsRentmanSyncModalOpen(true);
@@ -494,7 +538,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                     </button>
                                 ) : (
                                     <button 
-                                      type="button"
+                                      type="button" 
                                       onClick={() => {
                                         setSelectedDbForRentman(dbItem.id);
                                         setIsRentmanSyncModalOpen(true);
@@ -541,7 +585,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                                           name: dbItem.name,
                                           code: dbItem.code || '',
                                           color: dbItem.color || 'blue',
-                                          description: dbItem.description || ''
+                                          description: dbItem.description || '',
+                                          barcodePrefix: dbItem.barcodePrefix || '20',
+                                          productCodePrefix: dbItem.productCodePrefix || '2',
+                                          productCodeDigits: dbItem.productCodeDigits || 4
                                         });
                                       }}
                                       className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
@@ -564,6 +611,67 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     );
                 })}
             </div>
+        </div>
+
+        {/* --- UNIVERSAL CONFIG: CATEGORIES & CONNECTORS MANAGEMENT SECTION --- */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 lg:p-6 space-y-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-800">
+                <div>
+                    <h2 className="text-lg lg:text-xl font-bold text-white flex items-center gap-2">
+                        {homeConfigTab === 'categories' ? (
+                          <>
+                            <Layers className="text-emerald-400" size={20} /> 
+                            Gestione Categorie & Sottocategorie
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="text-yellow-400" size={20} /> 
+                            Gestione Connettori Elettrici
+                          </>
+                        )}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                        {homeConfigTab === 'categories'
+                          ? "Albero universale delle categorie valido per tutti i database. Trascina le righe per riordinare la visualizzazione negli elenchi e nei filtri."
+                          : "Elenco universale dei connettori di alimentazione con voltaggio e amperaggio predefiniti. Trascina per personalizzare l'ordine."
+                        }
+                    </p>
+                </div>
+
+                {/* Tab Switcher */}
+                <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => setHomeConfigTab('categories')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            homeConfigTab === 'categories'
+                                ? 'bg-emerald-600 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                        }`}
+                    >
+                        <Layers size={14} />
+                        Categorie
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setHomeConfigTab('connectors')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            homeConfigTab === 'connectors'
+                                ? 'bg-yellow-500 text-slate-950 shadow-sm'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                        }`}
+                    >
+                        <Zap size={14} />
+                        Connettori
+                    </button>
+                </div>
+            </div>
+
+            {homeConfigTab === 'categories' ? (
+                <CategoryManager />
+            ) : (
+                <ConnectorManager />
+            )}
         </div>
 
         {/* Catalog (Inventory & Kits) Management Section */}
@@ -700,6 +808,77 @@ export const HomeView: React.FC<HomeViewProps> = ({
               />
             </div>
 
+            {/* Numerazione Automatica Barcode & Codice Prodotto */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                <QrCode size={16} className="text-emerald-400" />
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Numerazione Automatica (Barcode & Codici)
+                </h4>
+              </div>
+
+              {/* Barcode / QR */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-400">
+                    Prefisso Barcode / QR (1-3 cifre)
+                  </label>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                    7 cifre (Es. {((newDbForm.barcodePrefix || '20').replace(/\D/g, '').slice(0, 3) || '20').padEnd(7, '0').slice(0, 6)}1)
+                  </span>
+                </div>
+                <input 
+                  type="text" 
+                  maxLength={3}
+                  placeholder="Es. 20"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-emerald-500 outline-none"
+                  value={newDbForm.barcodePrefix}
+                  onChange={e => setNewDbForm({ ...newDbForm, barcodePrefix: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  I barcode Rentman iniziano con 10 o 1 (es. 1027273). Imposta 2, 20 o 3 per evitare sovrapposizioni.
+                </p>
+              </div>
+
+              {/* Codice Prodotto */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/60">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-400">
+                      Prefisso Cod. Prodotto
+                    </label>
+                  </div>
+                  <input 
+                    type="text" 
+                    maxLength={3}
+                    placeholder="Es. 2"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-cyan-500 outline-none"
+                    value={newDbForm.productCodePrefix}
+                    onChange={e => setNewDbForm({ ...newDbForm, productCodePrefix: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-400">
+                      Totale Cifre Codice
+                    </label>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">
+                      Es. {((newDbForm.productCodePrefix || '2').replace(/\D/g, '').slice(0, 3) || '2').padEnd(Math.max(2, Math.min(8, Number(newDbForm.productCodeDigits) || 4)), '0').slice(0, -1)}1
+                    </span>
+                  </div>
+                  <input 
+                    type="number" 
+                    min={Math.max(2, (newDbForm.productCodePrefix || '2').length + 1)}
+                    max={8}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-cyan-500 outline-none"
+                    value={newDbForm.productCodeDigits}
+                    onChange={e => setNewDbForm({ ...newDbForm, productCodeDigits: Math.max(2, Math.min(8, parseInt(e.target.value, 10) || 4)) })}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2 pt-2 border-t border-slate-800">
               <label className="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer">
                 <input 
@@ -807,6 +986,77 @@ export const HomeView: React.FC<HomeViewProps> = ({
               />
             </div>
 
+            {/* Numerazione Automatica Barcode & Codice Prodotto */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                <QrCode size={16} className="text-emerald-400" />
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Numerazione Automatica (Barcode & Codici)
+                </h4>
+              </div>
+
+              {/* Barcode / QR */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-400">
+                    Prefisso Barcode / QR (1-3 cifre)
+                  </label>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                    7 cifre (Es. {((editDbForm.barcodePrefix || '20').replace(/\D/g, '').slice(0, 3) || '20').padEnd(7, '0').slice(0, 6)}1)
+                  </span>
+                </div>
+                <input 
+                  type="text" 
+                  maxLength={3}
+                  placeholder="Es. 20"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-emerald-500 outline-none"
+                  value={editDbForm.barcodePrefix}
+                  onChange={e => setEditDbForm({ ...editDbForm, barcodePrefix: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  I barcode Rentman iniziano con 10 o 1 (es. 1027273). Imposta 2, 20 o 3 per evitare sovrapposizioni.
+                </p>
+              </div>
+
+              {/* Codice Prodotto */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/60">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-400">
+                      Prefisso Cod. Prodotto
+                    </label>
+                  </div>
+                  <input 
+                    type="text" 
+                    maxLength={3}
+                    placeholder="Es. 2"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-cyan-500 outline-none"
+                    value={editDbForm.productCodePrefix}
+                    onChange={e => setEditDbForm({ ...editDbForm, productCodePrefix: e.target.value.replace(/\D/g, '').slice(0, 3) })}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-400">
+                      Totale Cifre Codice
+                    </label>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">
+                      Es. {((editDbForm.productCodePrefix || '2').replace(/\D/g, '').slice(0, 3) || '2').padEnd(Math.max(2, Math.min(8, Number(editDbForm.productCodeDigits) || 4)), '0').slice(0, -1)}1
+                    </span>
+                  </div>
+                  <input 
+                    type="number" 
+                    min={Math.max(2, (editDbForm.productCodePrefix || '2').length + 1)}
+                    max={8}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-sm text-white font-mono font-bold focus:border-cyan-500 outline-none"
+                    value={editDbForm.productCodeDigits}
+                    onChange={e => setEditDbForm({ ...editDbForm, productCodeDigits: Math.max(2, Math.min(8, parseInt(e.target.value, 10) || 4)) })}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-4 border-t border-slate-800">
               <button 
                 type="button" 
@@ -854,7 +1104,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         <div className="text-center space-y-1 pb-8">
             <div className="text-xs text-slate-500 font-medium tracking-wide transition-opacity">
-                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.8.1</span>
+                CuePack Manager <span className="text-blue-500/80 font-bold ml-1 px-1.5 py-0.5 bg-blue-500/10 rounded border border-blue-500/20">v0.5.8.2</span>
             </div>
             <div className="text-xs text-slate-600 uppercase tracking-widest font-bold">
                 Cloud Sync Active • Multi-Database Architecture

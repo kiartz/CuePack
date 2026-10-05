@@ -98,13 +98,22 @@ export function mapFolderToCategory(folder?: string): { category: Category; subc
   }
 
   if (
-    lower.includes('struttur') ||
-    lower.includes('truss') ||
-    lower.includes('american') ||
     lower.includes('flightcase') ||
     lower.includes('case') ||
     lower.includes('baule') ||
     lower.includes('bauli') ||
+    lower.includes('rack') ||
+    lower.includes('panar') ||
+    lower.includes('custodi') ||
+    lower.includes('contenitor')
+  ) {
+    return { category: Category.CONTAINERS, subcategory: cleanFolder };
+  }
+
+  if (
+    lower.includes('struttur') ||
+    lower.includes('truss') ||
+    lower.includes('american') ||
     lower.includes('stativo') ||
     lower.includes('pedan') ||
     lower.includes('palco') ||

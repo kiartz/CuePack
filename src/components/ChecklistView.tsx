@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CheckSquare, Square, ChevronRight, RotateCcw } from 'lucide-react';
 import { PackingList, ChecklistCategory } from '../types';
-import { addOrUpdateItem, COLL_LISTS } from '../firebase';
+import { updateItemFields, COLL_LISTS } from '../firebase';
 
 interface ChecklistViewProps {
   activeList: PackingList;
@@ -19,8 +19,8 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
   const checkedItems = activeList.checklistCheckedItems || [];
 
   const updateList = async (updatedFields: Partial<PackingList>) => {
-    const updatedList = { ...activeList, ...updatedFields };
-    await addOrUpdateItem(COLL_LISTS, updatedList);
+    if (!activeList.id) return;
+    await updateItemFields(COLL_LISTS, activeList.id, updatedFields);
   };
 
   const toggleExpansion = (sectorId: string) => {

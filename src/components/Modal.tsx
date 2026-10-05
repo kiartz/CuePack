@@ -44,16 +44,16 @@ export const Modal: React.FC<ModalProps> = ({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      className={`fixed inset-0 z-[100] flex bg-black/80 backdrop-blur-sm transition-all duration-300 ${
+      className={`fixed inset-0 z-[100] flex transition-all duration-300 ${
         asDrawerOnDesktop
-          ? 'items-center justify-center p-0 sm:p-4 lg:items-stretch lg:justify-end lg:p-0'
-          : 'items-center justify-center p-0 sm:p-4'
+          ? 'items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm lg:bg-transparent lg:backdrop-blur-none lg:pointer-events-none lg:items-stretch lg:justify-end lg:p-0'
+          : 'items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm'
       }`}
     >
       <div 
         className={`bg-slate-900 border border-slate-700 shadow-2xl w-full flex flex-col overflow-hidden transition-all ${
           asDrawerOnDesktop
-            ? `sm:rounded-xl ${sizeClasses[size]} ${size === 'full' ? 'h-full pt-[env(safe-area-inset-top)]' : 'max-h-[95vh]'} lg:rounded-none lg:border-y-0 lg:border-r-0 lg:border-l lg:border-slate-800 lg:h-full lg:max-h-screen lg:w-[440px] lg:max-w-[480px] lg:animate-in lg:slide-in-from-right lg:duration-300`
+            ? `sm:rounded-xl ${sizeClasses[size]} ${size === 'full' ? 'h-full pt-[env(safe-area-inset-top)]' : 'max-h-[95vh]'} lg:rounded-none lg:border-y-0 lg:border-r-0 lg:border-l lg:border-slate-800 lg:h-full lg:max-h-screen lg:w-[400px] lg:pointer-events-auto lg:animate-drawer-in`
             : `sm:rounded-xl ${sizeClasses[size]} ${size === 'full' ? 'h-full pt-[env(safe-area-inset-top)]' : 'max-h-[95vh]'}`
         }`}
       >

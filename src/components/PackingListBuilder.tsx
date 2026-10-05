@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter } from 'lucide-react';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter, WifiOff } from 'lucide-react';
 import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
+import { useNetworkStatus } from '../context/NetworkContext';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
 import { ChecklistView } from './ChecklistView';
@@ -20,6 +21,7 @@ import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../util
 import { getDbBadgeStyle } from '../utils/databaseColors';
 import { calculateAvailableQuantity } from '../utils/availability';
 import { openDocumentInBrowser } from '../utils/documentViewer';
+import { searchAndSortItems, isTextMatch } from '../utils/searchUtils';
 
 interface PackingListBuilderProps {
   inventory: InventoryItem[];
@@ -236,6 +238,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   }, [lists, activeListId]);
 
   // Refs for tracking changes
+  const { isOnline } = useNetworkStatus();
   const activeListRef = useRef<PackingList | null>(null);
   
   const [localList, setLocalList] = useState<PackingList | null>(null);
@@ -247,6 +250,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setLocalList(prev => (prev && prev.id === activeListId ? prev : null));
     activeListRef.current = null;
   }, [activeListId]);
+
+  // Synchronize localList when remote rawActiveList arrives and no local writes are in-flight
+  useEffect(() => {
+    if (rawActiveList && pendingWritesRef.current === 0) {
+      setLocalList(rawActiveList);
+      activeListRef.current = rawActiveList;
+    }
+  }, [rawActiveList]);
 
   const [overbookedModal, setOverbookedModal] = useState<{
       isOpen: boolean;
@@ -618,102 +629,39 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // --- FILTERED PICKER ITEMS (With Improved Scoring) ---
   const filteredPickerItems = useMemo(() => {
-      const searchTerms = (pickerSearch || '').toLowerCase().trim().split(/\s+/).filter(t => t.length > 0);
-      
       const dbFilteredInventory = inventory.filter(item => {
           if (pickerDatabaseFilter === 'All') return true;
           const itemDb = item.databaseId || DEFAULT_DATABASE_ID;
           return itemDb === pickerDatabaseFilter;
       });
 
-      // If no search, return inventory sorted by name (limited)
-      if (searchTerms.length === 0) {
-          return dbFilteredInventory
-            .filter(i => selectedCategory === 'All' || i.category === selectedCategory)
-            .sort((a, b) => a.name.localeCompare(b.name));
+      const categoryFiltered = selectedCategory === 'All'
+        ? dbFilteredInventory
+        : dbFilteredInventory.filter(i => i.category === selectedCategory);
+
+      if (!pickerSearch || !pickerSearch.trim()) {
+          return [...categoryFiltered].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       }
 
-      return dbFilteredInventory.map(item => {
-             const name = (item.name || '').toLowerCase();
-             const category = (item.category || '').toLowerCase();
-             const desc = (item.description || '').toLowerCase();
-             const pcode = (item.productCode || '').toLowerCase();
-             const icodes = (item.instances || []).map(inst => inst.id.toLowerCase()).join(' ');
-             
-             // Create tokens from item name for exact matching
-             const nameTokens = name.split(/[\s\-_/()]+/); 
- 
-             // 1. Strict Filter: Must contain all search terms somewhere
-             const combined = `${name} ${category} ${desc} ${pcode} ${icodes}`;
-             if (!searchTerms.every(term => combined.includes(term))) {
-                 return { item, score: -1 };
-             }
-             
-             if (selectedCategory !== 'All' && item.category !== selectedCategory) return { item, score: -1 };
- 
-             // 2. Scoring Logic
-             let score = 0;
-             
-             searchTerms.forEach(term => {
-                 // A. Exact Name Match (The whole name is the search term)
-                 if (name === term) score += 10000;
- 
-                 // B. Exact Token Match (e.g. "5mt" matches "5mt" but not "15mt")
-                 if (nameTokens.includes(term)) {
-                     score += 1000;
-                 } 
-                 // C. Starts With Token (e.g. "mic" matches "microfono")
-                 else if (nameTokens.some(t => t.startsWith(term))) {
-                     score += 500;
-                 }
-                 // D. Contained in Name (e.g. "5mt" inside "15mt")
-                 else if (name.includes(term)) {
-                     score += 100;
-                 }
-                 
-                 // E. Category Match
-                 if (category.includes(term)) score += 50;
-
-                 // F. Product Code / Serial Match
-                 if (pcode === term) score += 8000;
-                 else if (pcode.includes(term)) score += 4000;
-                 if (icodes.includes(term)) score += 5000;
-             });
- 
-             return { item, score };
-        })
-        .filter(x => x.score > -1)
-        .sort((a, b) => {
-            // Sort by Score descending
-            if (b.score !== a.score) return b.score - a.score;
-            // Then alphabetical
-            return a.item.name.localeCompare(b.item.name);
-        })
-        .map(x => x.item);
+      return searchAndSortItems(categoryFiltered, pickerSearch);
   }, [inventory, pickerSearch, selectedCategory, pickerDatabaseFilter]);
 
   const filteredPickerKits = useMemo(() => {
-      const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
-      return kits.map(kit => {
-            const combined = `${(kit.name||'').toLowerCase()} ${(kit.category||'').toLowerCase()} ${(kit.description||'').toLowerCase()}`;
-            if (!searchTokens.every(token => combined.includes(token))) return { kit, score: -1, nameMatches: 0 };
-            if (selectedCategory !== 'All' && kit.category !== selectedCategory) return { kit, score: -1, nameMatches: 0 };
-            return { kit, score: 1, nameMatches: 1 }; // simplified scoring for kits
-        })
-        .filter(x => x.score > -1)
-        .map(x => x.kit);
+      const categoryFiltered = selectedCategory === 'All'
+        ? kits
+        : kits.filter(k => k.category === selectedCategory);
+
+      if (!pickerSearch || !pickerSearch.trim()) return categoryFiltered;
+      return searchAndSortItems(categoryFiltered, pickerSearch);
   }, [kits, pickerSearch, selectedCategory]);
 
   const filteredPickerTemplates = useMemo(() => {
-      const searchTokens = (pickerSearch || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
-      return templates.map(template => {
-            const combined = `${(template.name||'').toLowerCase()} ${(template.category||'').toLowerCase()} ${(template.description||'').toLowerCase()}`;
-            if (!searchTokens.every(token => combined.includes(token))) return { template, score: -1, nameMatches: 0 };
-            if (selectedCategory !== 'All' && template.category !== selectedCategory) return { template, score: -1, nameMatches: 0 };
-            return { template, score: 1, nameMatches: 1 };
-        })
-        .filter(x => x.score > -1)
-        .map(x => x.template);
+      const categoryFiltered = selectedCategory === 'All'
+        ? templates
+        : templates.filter(t => t.category === selectedCategory);
+
+      if (!pickerSearch || !pickerSearch.trim()) return categoryFiltered;
+      return searchAndSortItems(categoryFiltered, pickerSearch);
   }, [templates, pickerSearch, selectedCategory]);
 
 
@@ -727,8 +675,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const filteredLists = useMemo(() => {
     const filtered = lists.filter(list => 
       !list.isArchived && (
-        list.eventName.toLowerCase().includes(listFilter.toLowerCase()) ||
-        list.location.toLowerCase().includes(listFilter.toLowerCase())
+        !listFilter.trim() ||
+        isTextMatch(`${list.eventName || ''} ${list.location || ''}`, listFilter)
       )
     );
     return filtered.sort((a, b) => new Date(b.eventDate || 0).getTime() - new Date(a.eventDate || 0).getTime());
@@ -902,8 +850,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           // 1. Check Name
                           const nameChanged = comp.name !== master.name;
 
-                          // 2. Check Contents (Quantity and Item ID)
-                          const masterItems = (master.items || []).map(k => ({ itemId: k.itemId, quantity: k.quantity })).sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
+                          const masterItems: { itemId: string; quantity: number }[] = [];
+                          (master.items || []).forEach(ki => {
+                              masterItems.push({ itemId: ki.itemId, quantity: ki.quantity });
+                              (ki.accessories || []).forEach(acc => {
+                                  masterItems.push({ itemId: acc.itemId, quantity: acc.quantity * ki.quantity });
+                              });
+                          });
+                          masterItems.sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
                           const currentItems = (comp.contents || [])
                               .map(c => ({ itemId: c.itemId, quantity: c.quantity }))
                               .filter(c => c.itemId) // Ensure we have ID
@@ -916,14 +870,24 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                               console.log(`[Sync] Updating Kit: ${comp.name} -> ${master.name} (Contents Changed: ${contentsChanged})`);
                               
                               // Re-generate contents from master to get fresh names and categories
-                              const newContents = master.items.map(ki => {
+                              const newContents = master.items.flatMap(ki => {
                                   const inv = inventory.find(i => i.id === ki.itemId);
-                                  return { 
+                                  const main = { 
                                       itemId: ki.itemId, 
                                       name: inv?.name || '?', 
                                       quantity: ki.quantity, 
                                       category: inv?.category || 'Altro' 
                                   };
+                                  const accs = (ki.accessories || []).map(acc => {
+                                      const accItem = inventory.find(i => i.id === acc.itemId);
+                                      return {
+                                          itemId: acc.itemId,
+                                          name: accItem?.name || '?',
+                                          quantity: acc.quantity * ki.quantity,
+                                          category: accItem?.category || 'Altro'
+                                      };
+                                  });
+                                  return [main, ...accs];
                               });
 
                               return { ...comp, name: master.name, contents: newContents };
@@ -975,10 +939,44 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       }
   }, [activeListId, kits, inventory, activeList]); // Trigger when any relevant data changes
 
-  // --- FIRESTORE WRAPPER ---  // Helper to update the entire list
-  const dbQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // --- FIRESTORE WRAPPER (Coalescing Debounced Writes for Firestore Token/Quota Economy) ---
+  const pendingUpdatesRef = useRef<{ listId: string; updates: Partial<PackingList> } | null>(null);
+  const debounceCommitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isCommittingRef = useRef(false);
 
-  const updateActiveList = async (updates: Partial<PackingList>) => {
+  const flushPendingListUpdates = useCallback(async (): Promise<void> => {
+    if (debounceCommitTimerRef.current) {
+      clearTimeout(debounceCommitTimerRef.current);
+      debounceCommitTimerRef.current = null;
+    }
+
+    if (!pendingUpdatesRef.current || isCommittingRef.current) return;
+
+    const task = pendingUpdatesRef.current;
+    pendingUpdatesRef.current = null;
+    isCommittingRef.current = true;
+
+    try {
+      await updateItemFields(COLL_LISTS, task.listId, task.updates);
+    } catch (e) {
+      console.error("Error in batched list update:", e);
+    } finally {
+      isCommittingRef.current = false;
+      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+      if (pendingUpdatesRef.current) {
+        await flushPendingListUpdates();
+      }
+    }
+  }, []);
+
+  // Flush any pending writes on component unmount
+  useEffect(() => {
+    return () => {
+      flushPendingListUpdates();
+    };
+  }, [flushPendingListUpdates]);
+
+  const updateActiveList = async (updates: Partial<PackingList>, immediate: boolean = false): Promise<void> => {
       const baseList = activeListRef.current || activeList;
       if (!baseList) return;
       
@@ -986,25 +984,34 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       activeListRef.current = updatedList as PackingList; // Optimistic sync
       setLocalList(updatedList as PackingList); // Update UI instantly
 
-      pendingWritesRef.current++;
+      if (!pendingUpdatesRef.current || pendingUpdatesRef.current.listId !== baseList.id) {
+        if (pendingUpdatesRef.current) {
+          await flushPendingListUpdates();
+        }
+        pendingUpdatesRef.current = { listId: baseList.id, updates: { ...updates } };
+        pendingWritesRef.current++;
+      } else {
+        pendingUpdatesRef.current.updates = {
+          ...pendingUpdatesRef.current.updates,
+          ...updates
+        };
+      }
 
-      return new Promise<void>((resolve) => {
-          dbQueueRef.current = dbQueueRef.current.then(async () => {
-              try {
-                  await updateItemFields(COLL_LISTS, baseList.id, updates);
-              } catch (e) {
-                  console.error("Error in queued update:", e);
-              } finally {
-                  pendingWritesRef.current--;
-                  // If queue is empty, clear optimistic state to fall back to latest DB state
-                  if (pendingWritesRef.current === 0) {
-                     setLocalList(null);
-                     activeListRef.current = null;
-                  }
-                  resolve();
-              }
-          });
-      });
+      if (debounceCommitTimerRef.current) {
+        clearTimeout(debounceCommitTimerRef.current);
+        debounceCommitTimerRef.current = null;
+      }
+
+      if (immediate) {
+        return flushPendingListUpdates();
+      } else {
+        return new Promise<void>((resolve) => {
+          debounceCommitTimerRef.current = setTimeout(async () => {
+            await flushPendingListUpdates();
+            resolve();
+          }, 350);
+        });
+      }
   };
 
   // Helper to update active zone
@@ -1525,9 +1532,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         const k = item as Kit;
         return {
           type: 'kit', referenceId: k.id, name: k.name, category: 'Kit',
-          contents: k.items.map(ki => {
+          contents: k.items.flatMap(ki => {
               const i = inventory.find(inv => inv.id === ki.itemId);
-              return { itemId: i?.id, name: i?.name || '?', quantity: ki.quantity, category: i?.category || 'Altro' };
+              const main = { itemId: i?.id, name: i?.name || '?', quantity: ki.quantity, category: i?.category || 'Altro' };
+              const accs = (ki.accessories || []).map(acc => {
+                const accItem = inventory.find(inv => inv.id === acc.itemId);
+                return {
+                  itemId: acc.itemId,
+                  name: accItem?.name || '?',
+                  quantity: acc.quantity * ki.quantity,
+                  category: accItem?.category || 'Altro'
+                };
+              });
+              return [main, ...accs];
           })
         };
       } else {
@@ -2253,7 +2270,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   }
 
   return (
-    <div className="h-full flex flex-col p-4 overflow-hidden">
+    <div className={`h-full flex flex-col p-4 overflow-hidden transition-all duration-300 ${isPickerFilterModalOpen ? 'lg:mr-[400px]' : ''}`}>
       <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
         
         {/* TOP HEADER */}
@@ -2310,9 +2327,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 </button>
                 
                 <div className="flex flex-col min-w-0 overflow-hidden">
-                    <div className="flex items-center gap-1 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-white font-bold text-xs sm:text-lg truncate">{activeList?.eventName}</span>
                         {activeList?.version && <span className="text-xs sm:text-xs bg-slate-800 text-emerald-400 px-1 rounded font-bold shrink-0">v{activeList.version}</span>}
+                        {!isOnline && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse shrink-0" title="Sei offline: tutte le modifiche sono protette e salvate in memoria sul dispositivo.">
+                                <WifiOff size={11} />
+                                <span className="hidden md:inline">Offline (Salvataggio locale)</span>
+                                <span className="md:hidden">Offline</span>
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>
@@ -3601,6 +3625,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         initialName={pickerSearch} 
         databases={effectiveDatabases}
         activeDatabaseId={pickerDatabaseFilter !== 'All' ? pickerDatabaseFilter : (activeList?.databaseId || activeDatabaseId)}
+        packingLists={lists}
+        kits={kits}
       />
 
       {/* MASTER EDIT MODALS */}
@@ -3619,6 +3645,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         title="Modifica Materiale Master" 
         databases={effectiveDatabases}
         activeDatabaseId={activeList?.databaseId || activeDatabaseId}
+        packingLists={lists}
+        kits={kits}
       />
 
       <KitFormModal
@@ -3632,6 +3660,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         initialData={editingKit}
         inventory={inventory}
         title="Modifica Kit Master"
+        databases={effectiveDatabases}
+        activeDatabaseId={activeList?.databaseId || activeDatabaseId}
+        kits={kits}
       />
 
       {/* Temporary Item Modal */}

@@ -4,6 +4,8 @@ import { auth } from './firebase';
 import AuthenticatedApp from './components/AuthenticatedApp';
 import LoginView from './components/LoginView';
 import { Loader2 } from 'lucide-react';
+import { NetworkProvider } from './context/NetworkContext';
+import { NetworkStatusBanner } from './components/NetworkStatusBanner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -26,9 +28,10 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return <LoginView />;
-  }
-
-  return <AuthenticatedApp />;
+  return (
+    <NetworkProvider>
+      <NetworkStatusBanner />
+      {!user ? <LoginView /> : <AuthenticatedApp />}
+    </NetworkProvider>
+  );
 }

@@ -4,6 +4,7 @@ export enum Category {
   LIGHTS = 'Luci',
   VIDEO = 'Video',
   STRUCTURE = 'Strutture',
+  CONTAINERS = 'Contenitori',
   CABLES = 'Cablaggi',
   REGIA = 'Regia',
   TOOLS = 'Attrezzi',
@@ -47,6 +48,15 @@ export interface ItemDimensions {
   length?: number; // cm
   width?: number; // cm
   height?: number; // cm
+}
+
+export interface ElectricalConnectorDefinition {
+  id: string;
+  name: string;
+  amperage: string; // es. '16A', '32A', '63A', '125A', '400A'
+  phase: 'monofase' | 'trifase'; // 'monofase' (230V) | 'trifase' (400V)
+  voltage: '230V' | '400V'; // '230V' | '400V'
+  isSystem: boolean; // Predefinito di base protetto da cancellazione
 }
 
 export interface InventoryItem {
@@ -103,9 +113,15 @@ export interface InventoryItem {
   isCustomized?: boolean; // Flag che indica se l'articolo è stato personalizzato o creato manualmente su CuePack
 }
 
+export interface KitComponentAccessory {
+  itemId: string;
+  quantity: number;
+}
+
 export interface KitComponent {
   itemId: string;
   quantity: number;
+  accessories?: KitComponentAccessory[];
 }
 
 export interface Kit {
@@ -261,4 +277,9 @@ export interface InventoryDatabase {
   createdAt?: string;
   itemCount?: number;
   kitCount?: number;
+
+  // Numerazione Automatica Barcode & Codice Prodotto
+  barcodePrefix?: string; // Cifre iniziali Barcode/QR (1, 2 o 3 cifre, es. '2', '20', '300')
+  productCodePrefix?: string; // Cifre iniziali Codice Prodotto (1, 2 o 3 cifre, es. '2', '20', '3')
+  productCodeDigits?: number; // Totale cifre del Codice Prodotto (es. 4, 5 cifre)
 }

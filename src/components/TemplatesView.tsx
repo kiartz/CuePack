@@ -5,6 +5,7 @@ import { InventoryItem, Kit, Template, Category, PackingList, InventoryDatabase 
 import { TemplateFormModal } from './TemplateFormModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { addOrUpdateItem, deleteItem, COLL_TEMPLATES, getTemplatesCollection } from '../firebase';
+import { tokenizeQuery, scoreSearchMatch, matchesSearch } from '../utils/searchUtils';
 
 interface TemplatesViewProps {
   templates: Template[];
@@ -29,42 +30,22 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({ templates, invento
   const ITEMS_PER_PAGE = 50;
 
   const filteredTemplates = useMemo(() => {
-      const searchTokens = (searchTerm || '').toLowerCase().split(' ').filter(t => t.trim() !== '');
+      const searchTokens = tokenizeQuery(searchTerm);
       
       return templates
         .map(template => {
-            const name = (template.name || '').toLowerCase();
-            const cat = (template.category || '').toLowerCase();
-            const desc = (template.description || '').toLowerCase();
-            const combined = `${name} ${cat} ${desc}`;
-
-            if (!searchTokens.every(token => combined.includes(token))) return { template, score: -1, nameMatches: 0 };
-            if (selectedCategory !== 'All' && template.category !== selectedCategory) return { template, score: -1, nameMatches: 0 };
-
-            let score = 0;
-            let nameMatches = 0;
-
-            if (searchTokens.length === 0) {
-                score = 1;
-            } else {
-                searchTokens.forEach(token => {
-                    const inName = name.includes(token);
-                    if (inName) {
-                        nameMatches++;
-                        if (name === token) score += 1000;
-                        else if (name.startsWith(token)) score += 500;
-                        else if (name.includes(" " + token)) score += 200;
-                        else score += 100;
-                    }
-                    if (cat.includes(token)) score += 20;
-                    if (desc.includes(token)) score += 5;
-                });
+            if (searchTokens.length > 0 && !matchesSearch(template as any, searchTerm)) {
+              return { template, score: -1 };
             }
-            return { template, score, nameMatches };
+            if (selectedCategory !== 'All' && template.category !== selectedCategory) {
+              return { template, score: -1 };
+            }
+
+            const score = searchTokens.length === 0 ? 1 : scoreSearchMatch(template as any, searchTokens, searchTerm);
+            return { template, score };
         })
         .filter(x => x.score > -1)
         .sort((a, b) => {
-            if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
             if (b.score !== a.score) return b.score - a.score;
             return (a.template.name || '').localeCompare(b.template.name || '');
         })

@@ -5,6 +5,7 @@ import { InventoryItem, Kit, Category, Template, TemplateComponent, InventoryDat
 import { Modal } from './Modal';
 import { ItemFormModal } from './ItemFormModal';
 import { addOrUpdateItem, COLL_TEMPLATES, COLL_INVENTORY } from '../firebase';
+import { searchAndSortItems } from '../utils/searchUtils';
 
 interface TemplateFormModalProps {
   isOpen: boolean;
@@ -109,13 +110,12 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   };
 
   const filteredPickerItems = useMemo(() => {
-    const term = itemSearch.toLowerCase().trim();
-    const inventoryMatches = inventory.filter(i => i.name.toLowerCase().includes(term) || i.category.toLowerCase().includes(term));
-    const kitMatches = kits.filter(k => k.name.toLowerCase().includes(term) || k.category.toLowerCase().includes(term));
+    const sortedItems = searchAndSortItems(inventory, itemSearch);
+    const sortedKits = searchAndSortItems(kits, itemSearch);
     
     return {
-      items: term ? inventoryMatches : inventoryMatches.slice(0, 30),
-      kits: term ? kitMatches : kitMatches.slice(0, 20)
+      items: itemSearch.trim() ? sortedItems : sortedItems.slice(0, 30),
+      kits: itemSearch.trim() ? sortedKits : sortedKits.slice(0, 20)
     };
   }, [inventory, kits, itemSearch]);
 
@@ -327,6 +327,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         inventory={inventory} 
         databases={databases}
         activeDatabaseId={activeDatabaseId}
+        kits={kits || []}
       />
     </Modal>
   );

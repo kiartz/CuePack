@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database } from 'lucide-react';
+import { Search, MapPin, Calendar, ArrowLeft, Truck, CheckSquare, Square, MessageSquare, AlertTriangle, ChevronRight, ChevronDown, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database, Filter, WifiOff } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection, InventoryItem, InventoryDatabase } from '../types';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db, DEFAULT_DATABASE_ID } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -7,6 +7,8 @@ import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ShareEventModal } from './ShareEventModal';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
+import { useNetworkStatus } from '../context/NetworkContext';
+import { isTextMatch } from '../utils/searchUtils';
 
 // --- MERGE REMOTE WAREHOUSE STATES HELPER ---
 const mergeWarehouseStates = (currentList: PackingList, incomingList: PackingList): PackingList => {
@@ -90,9 +92,24 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     inventory = [],
     databases = []
 }) => {
+  const { isOnline } = useNetworkStatus();
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [prepDatabaseFilter, setPrepDatabaseFilter] = useState<string>('All');
+  const [prepCategoryFilter, setPrepCategoryFilter] = useState<string>('All');
+  const [isPrepFilterModalOpen, setIsPrepFilterModalOpen] = useState(false);
+
+  const activePrepFiltersCount = useMemo(() => {
+    let count = 0;
+    if (prepDatabaseFilter !== 'All') count++;
+    if (prepCategoryFilter !== 'All') count++;
+    return count;
+  }, [prepDatabaseFilter, prepCategoryFilter]);
+
+  const handleResetPrepFilters = () => {
+    setPrepDatabaseFilter('All');
+    setPrepCategoryFilter('All');
+  };
 
   const effectiveDatabases = useMemo(() => {
     return (databases && databases.length > 0)
@@ -152,7 +169,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
 
     return () => {
       unsubDoc();
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        processPendingCommit();
+      }
     };
   }, [activeListId]);
 
@@ -165,6 +185,19 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   }, [activeListId, rawActiveList]);
 
   const activeList = localList || rawActiveList;
+
+  const availablePrepCategories = useMemo(() => {
+    const cats = new Set<string>();
+    activeList?.zones?.forEach(z => {
+      z.sections.forEach(s => {
+        s.components.forEach(c => {
+          if (c.category) cats.add(c.category);
+          c.contents?.forEach(cc => { if (cc.category) cats.add(cc.category); });
+        });
+      });
+    });
+    return Array.from(cats).sort((a, b) => a.localeCompare(b));
+  }, [activeList]);
 
   // Handle initial list from deep link
   useEffect(() => {
@@ -300,7 +333,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     return lists
       .filter(l => l.isArchived === showArchived || (!showArchived && !l.isArchived))
       .filter(l => l.isCompleted || l.isDraftVisible || (l.version && l.isCompleted !== false && l.isDraftVisible !== false))
-      .filter(l => l.eventName.toLowerCase().includes(searchTerm.toLowerCase()) || l.location.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(l => !searchTerm.trim() || isTextMatch(`${l.eventName || ''} ${l.location || ''}`, searchTerm))
       .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
   }, [lists, searchTerm, showArchived]);
   
@@ -379,6 +412,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       const compDbId = getComponentDatabaseId(comp);
                       if (compDbId !== prepDatabaseFilter) return;
                   }
+                  if (prepCategoryFilter !== 'All' && (comp.category || '').toLowerCase() !== prepCategoryFilter.toLowerCase()) return;
                   const ws = comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
                   const isComplex = comp.type === 'kit' || (comp.contents && comp.contents.length > 0);
                   
@@ -557,11 +591,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     // 2. Queue latest zones for Firestore commit
     pendingCommitRef.current = { listId: activeListId, zones: newZones };
 
-    // 3. Debounce commit slightly (35ms) to bundle ultra-fast successive taps, or fire immediately
+    // 3. Debounce commit (350ms) to bundle fast successive taps/scans, saving database writes
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       processPendingCommit();
-    }, 35);
+    }, 350);
   };
 
   // --- ACTIONS ---
@@ -809,7 +843,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       if (isReadOnly) return;
       if (!activeList) return;
       const newDeletedItems = activeList.deletedItems?.filter(d => d.zoneName !== zoneName) || [];
-      await addOrUpdateItem(COLL_LISTS, { ...activeList, deletedItems: newDeletedItems });
+      await updateItemFields(COLL_LISTS, activeList.id, { deletedItems: newDeletedItems });
   };
 
   const handleConfirmArchive = async () => {
@@ -819,7 +853,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       const targetList = lists.find(l => l.id === listId);
       if (targetList) {
           setArchiveConfirm(prev => ({ ...prev, isOpen: false }));
-          await addOrUpdateItem(COLL_LISTS, { ...targetList, isArchived: action === 'archive' });
+          await updateItemFields(COLL_LISTS, targetList.id, { isArchived: action === 'archive' });
       }
   };
 
@@ -1399,7 +1433,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       );
   };
   return (
-      <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
+      <div className={`h-full flex flex-col bg-slate-950 overflow-hidden transition-all duration-300 ${isPrepFilterModalOpen ? 'lg:mr-[400px]' : ''}`}>
           {/* Header */}
           <div className="bg-slate-900 border-b border-slate-800 p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4 w-full sm:w-auto">
@@ -1449,6 +1483,13 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           <span className={`text-xs ml-2 px-2 py-0.5 rounded uppercase font-black border ${activeWarehouseMode === 'distinta' ? 'bg-emerald-900/40 text-emerald-400 border-emerald-500/30' : activeWarehouseMode === 'carico' ? 'bg-blue-900/40 text-blue-400 border-blue-500/30' : 'bg-purple-900/40 text-purple-400 border-purple-500/30'}`}>
                               {activeWarehouseMode}
                           </span>
+                          {!isOnline && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse shrink-0 shadow-sm" title="Sei offline: tutte le spunte sono salvate in memoria sul dispositivo e verranno caricate non appena torna la connessione.">
+                                  <WifiOff size={12} />
+                                  <span className="hidden sm:inline">Offline (Spunte protette in locale)</span>
+                                  <span className="sm:hidden">Offline</span>
+                              </span>
+                          )}
                       </h2>
                       <div className="text-xs text-slate-500 flex items-center gap-2">
                           <span>{activeList?.location}</span> • <span>{new Date(activeList?.eventDate || '').toLocaleDateString()}</span>
@@ -1507,23 +1548,28 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                   </button>
               </div>
               
-              {/* ITEM SEARCH & DB FILTER */}
+              {/* ITEM SEARCH & FILTERS */}
               <div className="flex items-center gap-2 mx-4">
-                  <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700/60 rounded-lg px-2.5 py-1.5 shrink-0">
-                      <Database size={13} className="text-blue-400 shrink-0" />
-                      <select
-                          value={prepDatabaseFilter}
-                          onChange={(e) => setPrepDatabaseFilter(e.target.value)}
-                          className="bg-transparent text-white text-xs font-semibold outline-none cursor-pointer max-w-[130px] truncate"
-                          title="Filtra materiale per database"
+                  <div className="relative group">
+                      <button
+                          onClick={() => setIsPrepFilterModalOpen(prev => !prev)}
+                          className={`p-2 rounded-lg transition-colors border relative ${
+                              activePrepFiltersCount > 0 || isPrepFilterModalOpen
+                                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-500/20' 
+                                  : 'bg-slate-800 text-slate-300 border-slate-700/60 hover:bg-slate-700 hover:text-white'
+                          }`}
+                          title="Filtri"
                       >
-                          <option value="All" className="bg-slate-900 text-white">Tutti i DB</option>
-                          {effectiveDatabases.map(db => (
-                              <option key={db.id} value={db.id} className="bg-slate-900 text-white">
-                                  [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
-                              </option>
-                          ))}
-                      </select>
+                          <Filter size={18} />
+                          {activePrepFiltersCount > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-blue-500 text-white text-[10px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center border-2 border-slate-900 shadow-sm animate-pulse">
+                                  {activePrepFiltersCount}
+                              </span>
+                          )}
+                      </button>
+                      <div className="absolute left-1/2 -translate-x-1/2 -bottom-8 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-[11px] font-medium px-2 py-0.5 rounded shadow-lg border border-slate-700 z-50 whitespace-nowrap">
+                          Filtri
+                      </div>
                   </div>
                   <div className={`relative flex-1 max-w-xs transition-all duration-300 ${isSearchExpanded ? 'block w-full' : 'hidden'} md:block`}>
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
@@ -1629,8 +1675,14 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                         </button>
                                     </div>
                                     <div className="divide-y divide-rose-500/15 dark:divide-rose-900/20">
-                                        {zoneDeletedItems.map((del, idx) => (
-                                            <div key={idx} className="p-3 flex flex-col gap-2 bg-rose-500/5">
+                                        {zoneDeletedItems.map((del, idx) => {
+                                            if (prepDatabaseFilter !== 'All') {
+                                                const compDbId = getComponentDatabaseId(del.originalComponent);
+                                                if (compDbId !== prepDatabaseFilter) return null;
+                                            }
+                                            if (prepCategoryFilter !== 'All' && (del.originalComponent.category || '').toLowerCase() !== prepCategoryFilter.toLowerCase()) return null;
+                                            return (
+                                                <div key={idx} className="p-3 flex flex-col gap-2 bg-rose-500/5">
                                                     <div className="flex items-center gap-4">
                                                         <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-800 dark:text-rose-300 font-bold text-xs shrink-0">0</div>
                                                         <div className="flex-1">
@@ -1650,8 +1702,9 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                             ))}
                                                         </div>
                                                     )}
-                                            </div>
-                                        ))}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -1676,6 +1729,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                 const compDbId = getComponentDatabaseId(comp);
                                                 if (compDbId !== prepDatabaseFilter) return null;
                                             }
+                                            if (prepCategoryFilter !== 'All' && (comp.category || '').toLowerCase() !== prepCategoryFilter.toLowerCase()) return null;
                                             const isKit = comp.type === 'kit';
                                             
                                             // IF KIT: Render Header + Contents
@@ -1686,7 +1740,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                                 
                                                 // Highlight Logic
                                                 const isFilterActive = !!highlightedItemName || !!itemSearch;
-                                                const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+                                                const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? isTextMatch(name, itemSearch) : false);
 
                                                 const isMainMatch = checkMatch(comp.name);
                                                 const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
@@ -1870,7 +1924,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                             
                                             // Highlight Logic
                                             const isFilterActive = !!highlightedItemName || !!itemSearch;
-                                            const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+                                            const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? isTextMatch(name, itemSearch) : false);
 
                                             const isMatch = checkMatch(comp.name);
                                             const hasSubMatch = comp.contents?.some(c => checkMatch(c.name));
@@ -2235,7 +2289,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                               {Array.from(zoneData.complex.entries()).map(([key, data]) => {
                                   // Highlight Check (Parent)
                                   const isFilterActive = !!highlightedItemName || !!itemSearch;
-                                  const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? name.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+                                  const checkMatch = (name: string) => highlightedItemName ? name === highlightedItemName : (itemSearch ? isTextMatch(name, itemSearch) : false);
 
                                   const isMainMatch = checkMatch(data.name);
                                   const hasSubMatch = Array.from(data.children.keys()).some(k => checkMatch(k as string));
@@ -2427,7 +2481,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                       <div className="divide-y divide-slate-800">
                                           {Array.from((zoneData.simple as Map<string, any>).entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([name, data]) => {
                                               const isFilterActive = !!highlightedItemName || !!itemSearch;
-                                              const checkMatch = (n: string) => highlightedItemName ? n === highlightedItemName : (itemSearch ? n.toLowerCase().includes(itemSearch.toLowerCase()) : false);
+                                              const checkMatch = (n: string) => highlightedItemName ? n === highlightedItemName : (itemSearch ? isTextMatch(n, itemSearch) : false);
 
                                               const isMatch = checkMatch(name);
                                               
@@ -2677,6 +2731,83 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
               onClose={() => setListToShare(null)}
               list={listToShare}
           />
+
+          {/* PREPARATION FILTERS MODAL / DRAWER */}
+          <Modal
+              isOpen={isPrepFilterModalOpen}
+              onClose={() => setIsPrepFilterModalOpen(false)}
+              title="Filtri Preparazione"
+              size="md"
+              asDrawerOnDesktop={true}
+          >
+              <div className="flex flex-col h-full space-y-5">
+                  <div className="space-y-4 flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                      {/* Database Filter */}
+                      <div>
+                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                              Database Sorgente
+                          </label>
+                          <div className="relative">
+                              <select
+                                  value={prepDatabaseFilter}
+                                  onChange={(e) => setPrepDatabaseFilter(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-blue-500 appearance-none font-medium cursor-pointer"
+                              >
+                                  <option value="All">Tutti i Database</option>
+                                  {effectiveDatabases.map(db => (
+                                      <option key={db.id} value={db.id}>
+                                          [{db.code || db.name.slice(0, 3).toUpperCase()}] {db.name}
+                                      </option>
+                                  ))}
+                              </select>
+                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+                                  <ChevronDown size={14} />
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* Categoria Filter */}
+                      <div>
+                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                              Categoria Materiale
+                          </label>
+                          <div className="relative">
+                              <select
+                                  value={prepCategoryFilter}
+                                  onChange={(e) => setPrepCategoryFilter(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-blue-500 appearance-none font-medium cursor-pointer"
+                              >
+                                  <option value="All">Tutte le Categorie</option>
+                                  {availablePrepCategories.map(cat => (
+                                      <option key={cat} value={cat}>
+                                          {cat}
+                                      </option>
+                                  ))}
+                              </select>
+                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+                                  <ChevronDown size={14} />
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-auto shrink-0">
+                      <button
+                          onClick={handleResetPrepFilters}
+                          className="text-xs text-slate-400 hover:text-white underline transition-colors"
+                      >
+                          Azzera Filtri
+                      </button>
+                      <button
+                          onClick={() => setIsPrepFilterModalOpen(false)}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase px-5 py-2.5 rounded-lg transition-colors shadow-lg shadow-blue-600/30"
+                      >
+                          Applica Filtri
+                      </button>
+                  </div>
+              </div>
+          </Modal>
 
       </div>
   );

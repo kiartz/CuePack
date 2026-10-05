@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { generateId } from '../utils';
 import { Plus, Search, Edit2, Trash2, Copy, Filter, Link, Check, X, ChevronLeft, ChevronRight, Barcode, Eye, QrCode, Printer, FileText, ExternalLink, Database } from 'lucide-react';
-import { InventoryItem, Category, PackingList, ListComponent, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
+import { InventoryItem, Category, PackingList, ListComponent, InventoryDatabase, DEFAULT_DATABASE_ID, Kit } from '../types';
 import { ItemFormModal, generateProductCode, generateProductQrCode } from './ItemFormModal';
 import { generateBarcodeSVG, generateQRCodeSVG, printBarcode, printQRCode } from '../utils/codeGenerators';
 import { openDocumentInBrowser } from '../utils/documentViewer';
@@ -10,16 +10,18 @@ import { Modal } from './Modal';
 import { getCategoryDefinitions } from '../utils/categories';
 import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
 import { getDbBadgeStyle, getDbDotColor } from '../utils/databaseColors';
+import { tokenizeQuery, scoreSearchMatch } from '../utils/searchUtils';
 
 interface InventoryViewProps {
   items: InventoryItem[];
   packingLists: PackingList[];
+  kits?: Kit[];
   activeDatabaseId?: string;
   databases?: InventoryDatabase[];
   setActiveDatabaseId?: (dbId: string) => void;
 }
 
-export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, activeDatabaseId, databases = [], setActiveDatabaseId }) => {
+export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingLists, kits = [], activeDatabaseId, databases = [], setActiveDatabaseId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
   // Filter states
@@ -60,93 +62,62 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
     // Safety check
     if (!items || !Array.isArray(items)) return [];
 
-    const searchTokens = (searchTerm || '').toLowerCase().split(' ').filter(token => token.trim() !== '');
+    const searchTokens = tokenizeQuery(searchTerm);
 
     const results = items
       .map(item => {
-        const name = (item.name || '').toLowerCase();
-        const cat = (item.category || '').toLowerCase();
-        const subcat = (item.subcategory || item.folder || '').toLowerCase();
-        const alias = (item.alias || '').toLowerCase();
-        const loc = (item.location || '').toLowerCase();
-        const desc = (item.description || '').toLowerCase();
-        const pcode = (item.productCode || '').toLowerCase();
-        const icodes = (item.instances || []).map(inst => inst.id.toLowerCase()).join(' ');
-        
-        const combinedText = `${name} ${cat} ${subcat} ${alias} ${loc} ${desc} ${pcode} ${icodes}`;
-        const isMatch = searchTokens.every(token => combinedText.includes(token));
-        
-        if (!isMatch) return { item, score: -1, nameMatches: 0 }; 
-
-        let score = 0;
-        let nameMatches = 0;
-
-        if (searchTokens.length === 0) {
-            score = 1; 
-        } else {
-            searchTokens.forEach(token => {
-                const inName = name.includes(token);
-                if (inName) {
-                    nameMatches++;
-                    if (name === token) score += 1000;
-                    else if (name.startsWith(token)) score += 500;
-                    else if (name.includes(" " + token)) score += 200;
-                    else score += 100;
-                }
-                if (cat.includes(token)) score += 10;
-                if (desc.includes(token)) score += 1;
-                if (pcode === token) score += 2000;
-                else if (pcode.includes(token)) score += 1000;
-                if (icodes.includes(token)) score += 800;
-            });
-        }
-
         // Filter: Database
         const matchesDatabase = selectedDatabase === 'All' || (item.databaseId || DEFAULT_DATABASE_ID) === selectedDatabase;
-        if (!matchesDatabase) return { item, score: -1, nameMatches: 0 };
+        if (!matchesDatabase) return { item, score: -1 };
 
         // Filter: Category
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-        if (!matchesCategory) return { item, score: -1, nameMatches: 0 };
+        if (!matchesCategory) return { item, score: -1 };
 
         // Filter: Subcategory
         const matchesSubcategory = selectedSubcategory === 'All' || (item.subcategory && item.subcategory.trim() === selectedSubcategory);
-        if (!matchesSubcategory) return { item, score: -1, nameMatches: 0 };
+        if (!matchesSubcategory) return { item, score: -1 };
 
         // Filter: QR Code
         if (filterQrCode === 'with') {
           const hasQr = !!item.qrCode && item.qrCode.trim().length > 0;
-          if (!hasQr) return { item, score: -1, nameMatches: 0 };
+          if (!hasQr) return { item, score: -1 };
         } else if (filterQrCode === 'without') {
           const hasQr = !!item.qrCode && item.qrCode.trim().length > 0;
-          if (hasQr) return { item, score: -1, nameMatches: 0 };
+          if (hasQr) return { item, score: -1 };
         }
 
         // Filter: Product Code
         if (filterProductCode === 'with') {
           const hasCode = !!item.productCode && item.productCode.trim().length > 0;
-          if (!hasCode) return { item, score: -1, nameMatches: 0 };
+          if (!hasCode) return { item, score: -1 };
         } else if (filterProductCode === 'without') {
           const hasCode = !!item.productCode && item.productCode.trim().length > 0;
-          if (hasCode) return { item, score: -1, nameMatches: 0 };
+          if (hasCode) return { item, score: -1 };
         }
 
         // Filter: Serials / Instances
         if (filterSerials === 'with') {
           const hasSerials = Array.isArray(item.instances) && item.instances.length > 0;
-          if (!hasSerials) return { item, score: -1, nameMatches: 0 };
+          if (!hasSerials) return { item, score: -1 };
         } else if (filterSerials === 'without') {
           const hasSerials = Array.isArray(item.instances) && item.instances.length > 0;
-          if (hasSerials) return { item, score: -1, nameMatches: 0 };
+          if (hasSerials) return { item, score: -1 };
         }
 
-        return { item, score, nameMatches };
+        if (searchTokens.length === 0) {
+          return { item, score: 1 };
+        }
+
+        const score = scoreSearchMatch(item, searchTokens, searchTerm);
+        return { item, score };
       })
       .filter(result => result.score > -1)
       .sort((a, b) => {
-          if (b.nameMatches !== a.nameMatches) return b.nameMatches - a.nameMatches;
-          if (b.score !== a.score) return b.score - a.score;
-          return (a.item.name || '').localeCompare(b.item.name || '');
+        if (searchTokens.length > 0 && b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return (a.item.name || '').localeCompare(b.item.name || '');
       })
       .map(result => result.item);
 
@@ -213,6 +184,33 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   );
+
+  const databasesMap = useMemo(() => {
+    const map = new Map<string, InventoryDatabase>();
+    for (const db of effectiveDatabases) {
+      map.set(db.id, db);
+    }
+    return map;
+  }, [effectiveDatabases]);
+
+  // Compute fallback product codes only for the visible items that don't already have one
+  const fallbackProductCodes = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of paginatedItems) {
+      if (!item.productCode) {
+        const db = databasesMap.get(item.databaseId || DEFAULT_DATABASE_ID);
+        map.set(item.id, generateProductCode(items, item.id, db));
+      }
+    }
+    return map;
+  }, [paginatedItems, items, databasesMap]);
+
+  // Generate QR/Barcode on demand when clicked, rather than running 50 generators on every render
+  const getItemQrCode = useCallback((item: InventoryItem) => {
+    if (item.qrCode && item.qrCode.trim()) return item.qrCode.trim();
+    const db = databasesMap.get(item.databaseId || DEFAULT_DATABASE_ID);
+    return generateProductQrCode(items, item.id, db);
+  }, [items, databasesMap]);
 
   useEffect(() => {
     if (editingCell && editInputRef.current) {
@@ -403,7 +401,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   };
 
   return (
-    <div className="h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden">
+    <div className={`h-full flex flex-col p-2 sm:p-4 space-y-2 bg-slate-950 overflow-x-hidden transition-all duration-300 ${isFilterModalOpen ? 'lg:mr-[400px]' : ''}`}>
       {/* Top Header / Actions */}
       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2">
         <h1 className="text-lg font-bold text-white uppercase tracking-wider opacity-90">Inventario Materiali</h1>
@@ -421,25 +419,34 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
             />
           </div>
 
-          {/* Filter Modal Toggle Button */}
-          <button 
-            type="button"
-            onClick={() => setIsFilterModalOpen(true)}
-            className={`p-2.5 sm:px-3 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 text-sm font-medium transition-all shrink-0 ${
-              activeFiltersCount > 0 
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30' 
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
-            }`}
-            title="Filtra inventario"
-          >
-            <Filter size={18} />
-            <span className="hidden md:inline">Filtri</span>
-            {activeFiltersCount > 0 && (
-              <span className="px-1.5 py-0.5 text-xs font-bold bg-blue-500 text-white rounded-full leading-none">
-                {activeFiltersCount}
-              </span>
-            )}
-          </button>
+          {/* Filter Toggle Button with Tooltip */}
+          <div className="relative group/filter shrink-0">
+            <button 
+              type="button"
+              onClick={() => setIsFilterModalOpen(prev => !prev)}
+              className={`p-2.5 sm:px-3 sm:py-2 rounded-lg flex items-center justify-center gap-1.5 text-sm font-medium transition-all shrink-0 ${
+                isFilterModalOpen
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40'
+                  : activeFiltersCount > 0 
+                    ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30' 
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+              }`}
+              title="Filtri"
+              aria-label="Filtri"
+            >
+              <Filter size={18} />
+              {activeFiltersCount > 0 && (
+                <span className={`px-1.5 py-0.5 text-xs font-bold rounded-full leading-none ${isFilterModalOpen ? 'bg-white text-blue-600' : 'bg-blue-500 text-white'}`}>
+                  {activeFiltersCount}
+                </span>
+              )}
+            </button>
+            {/* Hover Tooltip Popup */}
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 bg-slate-900 border border-slate-700 text-white text-[11px] font-semibold rounded-md shadow-xl opacity-0 invisible group-hover/filter:opacity-100 group-hover/filter:visible transition-all duration-150 pointer-events-none whitespace-nowrap z-50">
+              Filtri
+              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-700" />
+            </div>
+          </div>
 
           {/* Actions Button Group */}
           <button 
@@ -491,8 +498,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                 </tr>
               ) : (
                 paginatedItems.map(item => {
-                  const effectiveProductCode = item.productCode || generateProductCode(items, item.id);
-                  const effectiveQrCode = item.qrCode || generateProductQrCode(items, item.id);
+                  const dbId = item.databaseId || DEFAULT_DATABASE_ID;
+                  const db = databasesMap.get(dbId);
+                  const effectiveProductCode = item.productCode || fallbackProductCodes.get(item.id) || '';
                   
                   return (
                   <tr 
@@ -507,10 +515,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     {/* NAME COLUMN */}
                     <td className="py-2 px-3" onDoubleClick={(e) => { e.stopPropagation(); startInlineEdit(item, 'name'); }}>
                       {(() => {
-                        const dbId = item.databaseId || DEFAULT_DATABASE_ID;
-                        const db = (databases || []).find(d => d.id === dbId);
                         const code = db?.code || (dbId === DEFAULT_DATABASE_ID ? 'PRI' : dbId.slice(0, 3).toUpperCase());
-                        const color = db?.color || 'blue';
+                        const color = db?.color || (dbId === DEFAULT_DATABASE_ID ? 'emerald' : 'blue');
                         const dbBadge = (
                           <span 
                             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${getDbBadgeStyle(color)}`}
@@ -620,25 +626,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                       <div className="flex items-center justify-center gap-1 font-mono text-xs">
                         <button 
                           type="button" 
-                          onClick={() => setPreviewCodeItem({ code: effectiveQrCode, name: item.name })} 
+                          onClick={() => setPreviewCodeItem({ code: getItemQrCode(item), name: item.name })} 
                           className="p-1.5 text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800 dark:hover:text-blue-400 rounded-lg transition-colors"
-                          title={`Visualizza QR Code e Barcode (${effectiveQrCode})`}
+                          title="Visualizza QR Code e Barcode"
                         >
                           <Eye size={15} />
                         </button>
                         <button 
                           type="button" 
-                          onClick={() => printBarcode(effectiveQrCode, item.name)} 
+                          onClick={() => printBarcode(getItemQrCode(item), item.name)} 
                           className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 dark:hover:text-emerald-400 rounded-lg transition-colors"
-                          title={`Stampa Codice a Barre (${effectiveQrCode})`}
+                          title="Stampa Codice a Barre"
                         >
                           <Barcode size={15} />
                         </button>
                         <button 
                           type="button" 
-                          onClick={() => printQRCode(effectiveQrCode, item.name)} 
+                          onClick={() => printQRCode(getItemQrCode(item), item.name)} 
                           className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 dark:hover:text-purple-400 rounded-lg transition-colors"
-                          title={`Stampa QR Code (${effectiveQrCode})`}
+                          title="Stampa QR Code"
                         >
                           <QrCode size={15} />
                         </button>
@@ -657,7 +663,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                             onKeyDown={handleKeyDown}
                             onClick={(e) => e.stopPropagation()}
                           >
-                             {Object.values(Category).map(c => <option key={c} value={c}>{c}</option>)}
+                             {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                       ) : (
                           <div className="flex flex-col gap-0.5 items-start">
@@ -665,6 +671,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                               ${item.category === Category.AUDIO ? 'bg-amber-900/20 text-amber-500 border-amber-900/30' : 
                               item.category === Category.LIGHTS ? 'bg-purple-900/20 text-purple-500 border-purple-900/30' :
                               item.category === Category.VIDEO ? 'bg-blue-900/20 text-blue-500 border-blue-900/30' :
+                              item.category === Category.CONTAINERS || String(item.category).toLowerCase() === 'contenitori' ? 'bg-cyan-900/20 text-cyan-400 border-cyan-900/30' :
+                              item.category === Category.STRUCTURE ? 'bg-indigo-900/20 text-indigo-400 border-indigo-900/30' :
                               item.category === Category.REGIA ? 'bg-teal-900/20 text-teal-500 border-teal-900/30' :
                               'bg-slate-800 text-slate-400 border-slate-700'
                               }`}
@@ -791,6 +799,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
         title={editingItem ? "Modifica Materiale" : "Nuovo Materiale"}
         activeDatabaseId={selectedDatabase !== 'All' ? selectedDatabase : activeDatabaseId}
         databases={effectiveDatabases}
+        packingLists={packingLists}
+        kits={kits}
       />
       
       <ConfirmationModal

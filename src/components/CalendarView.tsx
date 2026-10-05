@@ -3,7 +3,7 @@ import { PackingList, InventoryDatabase } from '../types';
 import { Calendar as CalendarIcon, User, MapPin, ChevronLeft, ChevronRight, Clock, Plus, Trash2, Truck, Wrench, Star, Anchor } from 'lucide-react';
 import { EventSummaryModal } from './EventSummaryModal';
 import { EventFormModal } from './EventFormModal';
-import { addOrUpdateItem, COLL_LISTS } from '../firebase';
+import { addOrUpdateItem, updateItemFields, COLL_LISTS } from '../firebase';
 
 interface CalendarViewProps {
   lists: PackingList[];
@@ -55,7 +55,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
           newExtras = [...currentExtras, dateStr];
       }
       
-      await addOrUpdateItem(COLL_LISTS, { ...event, extraDays: newExtras });
+      await updateItemFields(COLL_LISTS, event.id, { extraDays: newExtras });
   };
 
   // 1. Process active events and determine global date range

@@ -13,19 +13,25 @@ import { CalendarView } from './CalendarView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
 import { InventoryItem, Kit, Template, PackingList, ChecklistCategory, InventoryDatabase } from '../types';
 import { 
-  db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, 
-  COLL_DATABASES, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection, getTemplatesCollection, 
-  batchWriteItems, addOrUpdateItem 
+  db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, COLL_CATEGORIES_CONFIG,
+  COLL_CONNECTORS_CONFIG, COLL_DATABASES, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection, getTemplatesCollection, 
+  batchWriteItems, addOrUpdateItem, cleanData 
 } from '../firebase';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { getShareUrlParams } from '../utils/share';
 import { useTheme } from '../context/ThemeContext';
+import { DEFAULT_CATEGORY_DEFINITIONS, CategoryDefinition } from '../utils/categories';
+import { DEFAULT_CONNECTORS, getConnectorDefinitions, STORAGE_KEY_CONNECTORS } from '../utils/connectors';
+import { ElectricalConnectorDefinition } from '../types';
+import { useNetworkStatus } from '../context/NetworkContext';
 
 type View = 'home' | 'calendar' | 'inventory' | 'kits' | 'templates' | 'lists' | 'checklist-manager' | 'prep-material' | 'logistica-personale' | 'logistica-mezzi' | 'logistica-hotel' | 'utility-calcolo-elettrico' | 'utility-pixelmap' | 'utility-calcolo-ledwall' | 'utility-calcolo-stripled';
 
 export default function AuthenticatedApp() {
   const { theme, toggleTheme } = useTheme();
+  const { isOnline, wasOffline, isCollapsed } = useNetworkStatus();
+  const isBannerActive = !isOnline || wasOffline;
   const [currentView, setCurrentView] = useState<View>('home');
   
   // --- MULTI-DATABASE STATE ---
@@ -120,8 +126,8 @@ export default function AuthenticatedApp() {
         const normalizedCode = data.code || (data.id === DEFAULT_DATABASE_ID ? 'PRI' : (data.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || 'DB'));
         const normalizedColor = data.color || (data.id === DEFAULT_DATABASE_ID ? 'emerald' : 'blue');
 
-        // Auto-update if code or color was missing
-        if (!data.code || !data.color) {
+        // Auto-update if code or color was missing (only if confirmed from server)
+        if ((!data.code || !data.color) && !snapshot.metadata.fromCache) {
           addOrUpdateItem(COLL_DATABASES, {
             ...data,
             code: normalizedCode,
@@ -137,30 +143,36 @@ export default function AuthenticatedApp() {
       });
 
       if (dbs.length === 0) {
-        const defaultDbObj: InventoryDatabase = {
-          id: DEFAULT_DATABASE_ID,
-          name: 'Database Principale',
-          code: 'PRI',
-          color: 'emerald',
-          description: 'Database predefinito di produzione',
-          isDefault: true,
-          createdAt: new Date().toISOString()
-        };
-        addOrUpdateItem(COLL_DATABASES, defaultDbObj);
-        setDatabases([defaultDbObj]);
-      } else {
-        if (!dbs.some(d => d.id === DEFAULT_DATABASE_ID)) {
+        if (!snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_DATABASES]) {
+          hasAttemptedSeeding.current[COLL_DATABASES] = true;
           const defaultDbObj: InventoryDatabase = {
             id: DEFAULT_DATABASE_ID,
             name: 'Database Principale',
             code: 'PRI',
             color: 'emerald',
             description: 'Database predefinito di produzione',
-            isDefault: !dbs.some(d => d.isDefault),
+            isDefault: true,
             createdAt: new Date().toISOString()
           };
           addOrUpdateItem(COLL_DATABASES, defaultDbObj);
-          dbs.unshift(defaultDbObj);
+          setDatabases([defaultDbObj]);
+        }
+      } else {
+        if (!dbs.some(d => d.id === DEFAULT_DATABASE_ID)) {
+          if (!snapshot.metadata.fromCache && !hasAttemptedSeeding.current[`${COLL_DATABASES}_default`]) {
+            hasAttemptedSeeding.current[`${COLL_DATABASES}_default`] = true;
+            const defaultDbObj: InventoryDatabase = {
+              id: DEFAULT_DATABASE_ID,
+              name: 'Database Principale',
+              code: 'PRI',
+              color: 'emerald',
+              description: 'Database predefinito di produzione',
+              isDefault: !dbs.some(d => d.isDefault),
+              createdAt: new Date().toISOString()
+            };
+            addOrUpdateItem(COLL_DATABASES, defaultDbObj);
+            dbs.unshift(defaultDbObj);
+          }
         }
         setDatabases(dbs);
       }
@@ -241,7 +253,8 @@ export default function AuthenticatedApp() {
     const unsubChecklist = onSnapshot(doc(db, COLL_CHECKLIST_CONFIG, 'master'), (docSnap) => {
         if (docSnap.exists()) {
             setMasterChecklist(docSnap.data().categories as ChecklistCategory[]);
-        } else {
+        } else if (!docSnap.metadata.fromCache && !hasAttemptedSeeding.current[COLL_CHECKLIST_CONFIG]) {
+            hasAttemptedSeeding.current[COLL_CHECKLIST_CONFIG] = true;
             console.log("Seeding Master Checklist...");
             setDoc(doc(db, COLL_CHECKLIST_CONFIG, 'master'), { categories: INITIAL_MASTER_CHECKLIST });
             setMasterChecklist(INITIAL_MASTER_CHECKLIST);
@@ -252,9 +265,128 @@ export default function AuthenticatedApp() {
          setLoading(false);
     });
 
+    // Global Categories Sync Listener
+    const unsubCategories = onSnapshot(doc(db, COLL_CATEGORIES_CONFIG, 'master'), (docSnap) => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data?.definitions && Array.isArray(data.definitions)) {
+                const remoteDefs = data.definitions as CategoryDefinition[];
+                const merged: CategoryDefinition[] = [];
+                for (const def of DEFAULT_CATEGORY_DEFINITIONS) {
+                    const found = remoteDefs.find(c => c.name.toLowerCase() === def.name.toLowerCase());
+                    if (found) {
+                        const subSet = new Set(def.subcategories);
+                        (found.subcategories || []).forEach(s => subSet.add(s));
+                        merged.push({
+                            id: def.id,
+                            name: def.name,
+                            isSystem: true,
+                            subcategories: Array.from(subSet)
+                        });
+                    } else {
+                        merged.push({ ...def, isSystem: true });
+                    }
+                }
+                for (const c of remoteDefs) {
+                    if (!DEFAULT_CATEGORY_DEFINITIONS.some(d => d.name.toLowerCase() === c.name.toLowerCase())) {
+                        merged.push({ ...c, isSystem: false });
+                    }
+                }
+                localStorage.setItem('cuepack_custom_categories_v2', JSON.stringify(merged));
+                window.dispatchEvent(new CustomEvent('cuepack_categories_updated', { detail: merged }));
+            }
+        }
+    }, (error) => {
+        console.warn("Categories Sync Notice:", error);
+    });
+
+    // Global Connectors Sync Listener
+    const unsubConnectors = onSnapshot(doc(db, COLL_CONNECTORS_CONFIG, 'master'), (docSnap) => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data?.definitions && Array.isArray(data.definitions)) {
+                const remoteDefs = data.definitions as ElectricalConnectorDefinition[];
+                const merged: ElectricalConnectorDefinition[] = [];
+                const processedIds = new Set<string>();
+
+                // 1. Process items in the exact order saved remotely
+                for (const item of remoteDefs) {
+                    const defaultItem = DEFAULT_CONNECTORS.find(
+                        d => d.id.toLowerCase() === (item.id || '').toLowerCase() || d.name.toLowerCase() === (item.name || '').toLowerCase()
+                    );
+                    if (defaultItem) {
+                        processedIds.add(defaultItem.id);
+                        merged.push({ ...defaultItem, isSystem: true });
+                    } else if (item.name && item.name.trim()) {
+                        processedIds.add(item.id || item.name);
+                        merged.push({
+                            id: item.id || `custom-${Date.now()}`,
+                            name: item.name.trim(),
+                            amperage: item.amperage || '16A',
+                            phase: item.phase || 'monofase',
+                            voltage: item.voltage || '230V',
+                            isSystem: false
+                        });
+                    }
+                }
+
+                // 2. Add any default connectors that were not present
+                for (const def of DEFAULT_CONNECTORS) {
+                    if (!processedIds.has(def.id)) {
+                        merged.push({ ...def, isSystem: true });
+                    }
+                }
+
+                // 3. Keep any custom connectors from local storage that remote hasn't seen yet
+                const localSaved = localStorage.getItem(STORAGE_KEY_CONNECTORS) || localStorage.getItem('cuepack_electrical_connectors_v1');
+                let hasLocalAdditions = false;
+                if (localSaved) {
+                    try {
+                        const localDefs = JSON.parse(localSaved);
+                        if (Array.isArray(localDefs)) {
+                            for (const loc of localDefs) {
+                                if (!loc.isSystem && loc.name && !merged.some(m => m.name.toLowerCase() === loc.name.toLowerCase())) {
+                                    merged.push({
+                                        id: loc.id || `custom-${Date.now()}`,
+                                        name: loc.name.trim(),
+                                        amperage: loc.amperage || '16A',
+                                        phase: loc.phase || 'monofase',
+                                        voltage: loc.voltage || '230V',
+                                        isSystem: false
+                                    });
+                                    hasLocalAdditions = true;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
+
+                localStorage.setItem(STORAGE_KEY_CONNECTORS, JSON.stringify(merged));
+                window.dispatchEvent(new CustomEvent('cuepack_connectors_updated', { detail: merged }));
+
+                // If local storage had custom items that Firestore lacked, sync them back
+                if (hasLocalAdditions) {
+                    setDoc(doc(db, COLL_CONNECTORS_CONFIG, 'master'), { definitions: cleanData(merged) }, { merge: true }).catch(err => {
+                        console.error("Back-sync connectors to Firestore failed:", err);
+                    });
+                }
+            }
+        } else if (!docSnap.metadata.fromCache && !hasAttemptedSeeding.current[COLL_CONNECTORS_CONFIG]) {
+            hasAttemptedSeeding.current[COLL_CONNECTORS_CONFIG] = true;
+            // Seed Master Connectors document if it doesn't exist in Firestore yet
+            console.log("Seeding Master Connectors to Firestore...");
+            const initialDefs = getConnectorDefinitions();
+            setDoc(doc(db, COLL_CONNECTORS_CONFIG, 'master'), { definitions: cleanData(initialDefs) });
+        }
+    }, (error) => {
+        console.warn("Connectors Sync Notice:", error);
+    });
+
     return () => {
         unsubLists();
         unsubChecklist();
+        unsubCategories();
+        unsubConnectors();
     };
   }, []);
 
@@ -404,22 +536,12 @@ export default function AuthenticatedApp() {
       setListToCopyAsModel(null);
   };
 
-  if (loading) {
+  if (loading && isOnline) {
       return (
           <div className="h-screen h-[100dvh] bg-slate-950 flex items-center justify-center text-slate-400 flex-col gap-4">
               <Loader2 className="animate-spin" size={48} />
               <p>Connessione al database in corso...</p>
               <p className="text-xs text-slate-600">Assicurati di aver configurato le chiavi Firebase.</p>
-          </div>
-      );
-  }
-
-  if (dbError) {
-      return (
-          <div className="h-screen h-[100dvh] bg-slate-950 flex items-center justify-center text-rose-500 flex-col gap-4">
-              <WifiOff size={48} />
-              <p className="font-bold text-xl">{dbError}</p>
-              <p className="text-slate-400">Controlla la tua connessione internet o la configurazione .env</p>
           </div>
       );
   }
@@ -441,6 +563,7 @@ export default function AuthenticatedApp() {
         return <InventoryView 
             items={inventory} 
             packingLists={packingLists}
+            kits={kits}
             activeDatabaseId={activeDatabaseId}
             databases={databases}
             setActiveDatabaseId={setActiveDatabaseId}
@@ -523,7 +646,9 @@ export default function AuthenticatedApp() {
   };
 
   return (
-    <div className="flex h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans">
+    <div className={`flex h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans transition-all duration-300 ${
+      isBannerActive ? (isCollapsed ? 'pt-9' : 'pt-28 md:pt-16') : ''
+    }`}>
       
        {/* Sidebar (Desktop) */}
       <aside className={`hidden md:flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 transition-all duration-300 ${isSidebarCollapsed ? 'w-16' : 'w-72'}`}>
@@ -639,7 +764,7 @@ export default function AuthenticatedApp() {
               {!isSidebarCollapsed && (
                   <div className="flex flex-col gap-0.5 overflow-hidden min-w-0">
                      <span className="truncate">© R. Chiartano</span>
-                     <span className="opacity-50 text-[10px] truncate">v0.5.8.1</span>
+                     <span className="opacity-50 text-[10px] truncate">v0.5.8.2</span>
                   </div>
               )}
               <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
@@ -727,7 +852,7 @@ export default function AuthenticatedApp() {
                 </button>
             </div>
             <div className="pt-6 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                 CuePack Manager ✨ v0.5.8.1
+                 CuePack Manager ✨ v0.5.8.2
             </div>
          </nav>
       </div>

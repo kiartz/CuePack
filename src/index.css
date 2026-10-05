@@ -90,24 +90,45 @@ html.light .bg-slate-600 {
 }
 
 /* Alpha Background Tints */
+html.light .bg-slate-900\/5,
+html.light .bg-slate-900\/10,
+html.light .bg-slate-900\/20,
+html.light .bg-slate-900\/30,
+html.light .bg-slate-900\/40,
 html.light .bg-slate-900\/50,
+html.light .bg-slate-900\/60,
+html.light .bg-slate-900\/70,
 html.light .bg-slate-900\/80,
-html.light .bg-slate-900\/90 {
-  background-color: rgba(255, 255, 255, 0.94) !important;
+html.light .bg-slate-900\/90,
+html.light .bg-slate-900\/95 {
+  background-color: rgba(255, 255, 255, 0.96) !important;
 }
 
+html.light .bg-slate-950\/20,
+html.light .bg-slate-950\/30,
+html.light .bg-slate-950\/40,
 html.light .bg-slate-950\/50,
+html.light .bg-slate-950\/60,
+html.light .bg-slate-950\/70,
 html.light .bg-slate-950\/80,
 html.light .bg-slate-950\/90 {
-  background-color: rgba(248, 250, 252, 0.95) !important;
+  background-color: rgba(248, 250, 252, 0.96) !important;
 }
 
 html.light .bg-slate-800\/20,
 html.light .bg-slate-800\/30,
 html.light .bg-slate-800\/40,
 html.light .bg-slate-800\/50,
-html.light .bg-slate-800\/60 {
-  background-color: rgba(241, 245, 249, 0.8) !important;
+html.light .bg-slate-800\/60,
+html.light .bg-slate-800\/70,
+html.light .bg-slate-800\/80,
+html.light .bg-slate-800\/90 {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .bg-slate-700\/30,
+html.light .bg-slate-700\/80 {
+  background-color: #e2e8f0 !important;
 }
 
 /* Borders */
@@ -218,28 +239,52 @@ html.light .bg-red-600 svg {
 /* Saturated Colored Background Tints in Light Mode */
 html.light .bg-blue-900\/20,
 html.light .bg-blue-900\/30,
-html.light .bg-blue-950\/30 {
+html.light .bg-blue-950,
+html.light .bg-blue-950\/20,
+html.light .bg-blue-950\/30,
+html.light .bg-blue-950\/40,
+html.light .bg-blue-950\/60,
+html.light .bg-blue-950\/70,
+html.light .bg-blue-950\/80 {
   background-color: #eff6ff !important;
   border-color: #bfdbfe !important;
 }
 
 html.light .bg-emerald-900\/20,
 html.light .bg-emerald-900\/30,
-html.light .bg-emerald-950\/30 {
+html.light .bg-emerald-950,
+html.light .bg-emerald-950\/20,
+html.light .bg-emerald-950\/30,
+html.light .bg-emerald-950\/40,
+html.light .bg-emerald-950\/60,
+html.light .bg-emerald-950\/70,
+html.light .bg-emerald-950\/80 {
   background-color: #f0fdf4 !important;
   border-color: #bbf7d0 !important;
 }
 
 html.light .bg-purple-900\/20,
 html.light .bg-purple-900\/30,
-html.light .bg-purple-950\/30 {
+html.light .bg-purple-950,
+html.light .bg-purple-950\/20,
+html.light .bg-purple-950\/30,
+html.light .bg-purple-950\/40,
+html.light .bg-purple-950\/60,
+html.light .bg-purple-950\/70,
+html.light .bg-purple-950\/80 {
   background-color: #faf5ff !important;
   border-color: #e9d5ff !important;
 }
 
 html.light .bg-amber-900\/20,
 html.light .bg-amber-900\/30,
-html.light .bg-amber-950\/30 {
+html.light .bg-amber-950,
+html.light .bg-amber-950\/20,
+html.light .bg-amber-950\/30,
+html.light .bg-amber-950\/40,
+html.light .bg-amber-950\/60,
+html.light .bg-amber-950\/70,
+html.light .bg-amber-950\/80 {
   background-color: #fffbeb !important;
   border-color: #fde68a !important;
 }
@@ -247,14 +292,27 @@ html.light .bg-amber-950\/30 {
 html.light .bg-rose-900\/10,
 html.light .bg-rose-900\/20,
 html.light .bg-rose-900\/30,
-html.light .bg-rose-950\/30 {
+html.light .bg-rose-950,
+html.light .bg-rose-950\/20,
+html.light .bg-rose-950\/30,
+html.light .bg-rose-950\/40,
+html.light .bg-rose-950\/50,
+html.light .bg-rose-950\/60,
+html.light .bg-rose-950\/70,
+html.light .bg-rose-950\/80 {
   background-color: #fff1f2 !important;
   border-color: #fecdd3 !important;
 }
 
 html.light .bg-cyan-900\/20,
 html.light .bg-cyan-900\/30,
-html.light .bg-cyan-950\/30 {
+html.light .bg-cyan-950,
+html.light .bg-cyan-950\/20,
+html.light .bg-cyan-950\/30,
+html.light .bg-cyan-950\/40,
+html.light .bg-cyan-950\/60,
+html.light .bg-cyan-950\/70,
+html.light .bg-cyan-950\/80 {
   background-color: #ecfeff !important;
   border-color: #a5f3fc !important;
 }
@@ -283,8 +341,10 @@ html.light textarea::placeholder {
 }
 
 /* Hover States in Light Mode */
-html.light .hover\:bg-slate-800:hover,
-html.light .hover\:bg-slate-850:hover {
+html.light .hover\:bg-slate-950:hover,
+html.light .hover\:bg-slate-900:hover,
+html.light .hover\:bg-slate-850:hover,
+html.light .hover\:bg-slate-800:hover {
   background-color: #f1f5f9 !important;
 }
 
@@ -303,6 +363,10 @@ html.light .hover\:text-white:hover {
 
 html.light .hover\:text-slate-300:hover {
   color: #1e293b !important;
+}
+
+html.light .group:hover .group-hover\:text-slate-400 {
+  color: #64748b !important;
 }
 
 /* Shadows & Modals in Light Mode */
@@ -375,4 +439,39 @@ html.light .bg-emerald-950\/20,
 html.light .bg-emerald-950\/30 {
   background-color: #ecfdf5 !important;
   border-color: #a7f3d0 !important;
+}
+
+/* Specific Light Mode Fixes for Dark Badges & Accent Bars */
+/* Foto 1: Badge quantità già inserita in lista (x11) */
+html.light .bg-emerald-950 {
+  background-color: #dcfce7 !important;
+  color: #15803d !important;
+  border-color: #86efac !important;
+}
+
+/* Foto 4: Box informativo Barcode/Codice Prodotto nei card database */
+html.light .bg-slate-900\/60 {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Foto 5: Intestazioni di Reparto / Sezioni in Preparazione Eventi */
+html.light .bg-slate-850,
+html.light .bg-slate-800\/80 {
+  background-color: #e2e8f0 !important;
+  color: #1e293b !important;
+}
+
+/* Desktop Drawer Slide-in Animation */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-drawer-in {
+  animation: slideInRight 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
