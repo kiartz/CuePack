@@ -550,8 +550,17 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     prevItemIdRef.current = currentItemId;
 
     if (!isFirstOpen && !isDifferentItem) {
-      // Modal is already open for this exact item, user is actively editing.
-      // Do NOT reset form state!
+      // Modal is already open for this exact item.
+      // If getDoc brought in reminders/documents/inspections and local state didn't have them yet, populate them:
+      if (initialData?.reminders && initialData.reminders.length > 0) {
+        setFormData(prev => (!prev.reminders || prev.reminders.length === 0) ? { ...prev, reminders: initialData.reminders } : prev);
+      }
+      if (initialData?.documents && initialData.documents.length > 0) {
+        setFormData(prev => (!prev.documents || prev.documents.length === 0) ? { ...prev, documents: initialData.documents } : prev);
+      }
+      if (initialData?.periodicInspections && initialData.periodicInspections.length > 0) {
+        setFormData(prev => (!prev.periodicInspections || prev.periodicInspections.length === 0) ? { ...prev, periodicInspections: initialData.periodicInspections } : prev);
+      }
       // Synchronize localInventory with updated inventory (e.g. newly created accessories)
       setLocalInventory(prev => {
         const existingIds = new Set(inventory.map(i => i.id));
@@ -600,7 +609,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           productCode: initialProductCode,
           qrCode: initialQrCode,
           subcategory: currentSubcat,
-          folder: currentSubcat
+          folder: currentSubcat,
+          reminders: initialData.reminders || [],
+          documents: initialData.documents || [],
+          periodicInspections: initialData.periodicInspections || [],
+          accessories: initialData.accessories || []
         };
         setFormData(initForm);
 
@@ -892,6 +905,12 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
     const finalSubcat = (formData.subcategory || formData.folder || '').trim();
 
+    // Collect effective reminders (including pending text in reminderInput if not added via plus button)
+    const effectiveReminders = [...(formData.reminders || [])];
+    if (reminderInput.trim() && !effectiveReminders.includes(reminderInput.trim())) {
+      effectiveReminders.push(reminderInput.trim());
+    }
+
     // Track user modified fields if editing or creating
     const modifiedFieldsSet = new Set<string>(initialData?.userModifiedFields || []);
     if (initialData) {
@@ -920,6 +939,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (finalQrCode !== (initialData.qrCode || '')) modifiedFieldsSet.add('qrCode');
       if (JSON.stringify(tempInstances) !== JSON.stringify(initialData.instances || [])) modifiedFieldsSet.add('instances');
       if (JSON.stringify(formData.accessories || []) !== JSON.stringify(initialData.accessories || [])) modifiedFieldsSet.add('accessories');
+      if (JSON.stringify(effectiveReminders) !== JSON.stringify(initialData.reminders || [])) modifiedFieldsSet.add('reminders');
     } else {
       modifiedFieldsSet.add('name');
       if (formData.category) modifiedFieldsSet.add('category');
@@ -927,6 +947,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (formData.location) modifiedFieldsSet.add('location');
       if (parseFloat(weightInput) > 0) modifiedFieldsSet.add('weight');
       if (parseInt(formData.inStock?.toString() || '0', 10) > 0) modifiedFieldsSet.add('inStock');
+      if (effectiveReminders.length > 0) modifiedFieldsSet.add('reminders');
     }
 
     onSave({
@@ -974,7 +995,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
       // Relazioni
       accessories: formData.accessories || [],
-      reminders: formData.reminders || [],
+      reminders: effectiveReminders,
       documents: formData.documents || [],
       instances: tempInstances,
       periodicInspections: formData.periodicInspections || [],
@@ -991,18 +1012,31 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const handleAddAccessory = (itemId: string, quantity = 1) => {
     setFormData(prev => {
       const current = prev.accessories || [];
-      if (!current.some(a => a.itemId === itemId)) {
+      const existingIdx = current.findIndex(a => a.itemId === itemId);
+      if (existingIdx !== -1) {
+        const next = [...current];
+        next[existingIdx] = {
+          ...next[existingIdx],
+          quantity: (next[existingIdx].quantity || 1) + quantity
+        };
         return {
           ...prev,
-          accessories: [...current, { itemId, quantity, automatic: true }]
+          accessories: next
         };
       }
-      return prev;
+      return {
+        ...prev,
+        accessories: [...current, { itemId, quantity, automatic: true }]
+      };
     });
   };
 
   const handleRequestAddAccessory = (item: InventoryItem) => {
-    if ((formData.accessories || []).some(a => a.itemId === item.id)) return;
+    const isAlreadyAdded = (formData.accessories || []).some(a => a.itemId === item.id);
+    if (isAlreadyAdded) {
+      handleAddAccessory(item.id, 1);
+      return;
+    }
 
     // Check if this accessory has its own sub-accessories
     const childAccessories = (item.accessories || []).filter(a => a.itemId !== item.id && a.itemId !== initialData?.id);
@@ -1030,7 +1064,13 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     const current = formData.accessories || [];
     let updated = [...current];
 
-    if (!updated.some(a => a.itemId === targetItem.id)) {
+    const existingTargetIdx = updated.findIndex(a => a.itemId === targetItem.id);
+    if (existingTargetIdx !== -1) {
+      updated[existingTargetIdx] = {
+        ...updated[existingTargetIdx],
+        quantity: (updated[existingTargetIdx].quantity || 1) + 1
+      };
+    } else {
       updated.push({ itemId: targetItem.id, quantity: 1, automatic: true });
     }
 
@@ -2571,7 +2611,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     )
                       .slice(0, 50)
                       .map(item => {
-                        const isAdded = (formData.accessories || []).some(a => a.itemId === item.id);
+                        const addedAcc = (formData.accessories || []).find(a => a.itemId === item.id);
+                        const isAdded = !!addedAcc;
+                        const addedQuantity = addedAcc ? (addedAcc.quantity || 1) : 0;
                         const hasAccessories = item.accessories && item.accessories.length > 0;
                         return (
                           <div 
@@ -2579,25 +2621,32 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                             onClick={() => {
                               if (replacingAccessoryIndex !== null) {
                                 handleReplaceAccessory(replacingAccessoryIndex, item);
-                              } else if (!isAdded) {
+                              } else {
                                 handleRequestAddAccessory(item);
                               }
                             }}
-                            className={`py-1.5 px-2.5 rounded-xl border flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                              isAdded && replacingAccessoryIndex === null
-                                ? 'bg-slate-950 border-slate-800 opacity-40 cursor-not-allowed' 
-                                : hasAccessories
-                                  ? 'bg-cyan-950/20 hover:bg-cyan-900/30 border-cyan-800/50'
-                                  : 'bg-slate-950 hover:bg-slate-900 border-slate-800/80'
+                            className={`py-1.5 px-2.5 rounded-xl border flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                              replacingAccessoryIndex !== null
+                                ? 'bg-amber-950/20 hover:bg-amber-900/30 border-amber-800/50'
+                                : isAdded
+                                  ? 'bg-blue-950/30 hover:bg-blue-900/40 border-blue-600/40 shadow-sm'
+                                  : hasAccessories
+                                    ? 'bg-cyan-950/20 hover:bg-cyan-900/30 border-cyan-800/50'
+                                    : 'bg-slate-950 hover:bg-slate-900 border-slate-800/80'
                             }`}
                           >
                             <div className="min-w-0 flex-1 mr-2 flex items-center gap-2">
-                              <Box size={16} className={hasAccessories ? "text-cyan-400 shrink-0" : "text-slate-400 shrink-0"} />
+                              <Box size={16} className={hasAccessories ? "text-cyan-400 shrink-0" : isAdded ? "text-blue-400 shrink-0" : "text-slate-400 shrink-0"} />
                               {renderDbBadge(item.databaseId)}
                               <div className="min-w-0 flex-1 flex items-center gap-1.5">
                                 <span className="text-xs sm:text-sm font-bold text-white truncate" title={item.name}>
                                   {item.name}
                                 </span>
+                                {isAdded && (
+                                  <span className="text-[10px] bg-blue-600/20 text-blue-300 border border-blue-500/40 px-1.5 py-0.2 rounded font-bold font-mono shrink-0">
+                                    {addedQuantity}x
+                                  </span>
+                                )}
                                 {hasAccessories && (
                                   <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-1.5 py-0.5 rounded font-bold shrink-0">
                                     Con acc.
@@ -2607,20 +2656,23 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                             </div>
                             <button
                               type="button"
-                              disabled={isAdded && replacingAccessoryIndex === null}
-                              className={`p-1 rounded-lg text-xs font-bold transition-colors shrink-0 ${
+                              className={`p-1 rounded-lg text-xs font-bold transition-all shrink-0 ${
                                 replacingAccessoryIndex !== null
                                   ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-black'
                                   : isAdded 
-                                    ? 'text-slate-600' 
-                                    : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white'
+                                    ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-md shadow-blue-900/20 active:scale-95' 
+                                    : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white active:scale-95'
                               }`}
-                              title={replacingAccessoryIndex !== null ? 'Sostituisci con questo' : isAdded ? 'Già aggiunto' : 'Aggiungi accessorio'}
+                              title={
+                                replacingAccessoryIndex !== null 
+                                  ? 'Sostituisci con questo' 
+                                  : isAdded 
+                                    ? `Già inserito (${addedQuantity} pz) - Clicca per aggiungere un altro pezzo` 
+                                    : 'Aggiungi accessorio'
+                              }
                             >
                               {replacingAccessoryIndex !== null ? (
                                 <ArrowLeftRight size={14} />
-                              ) : isAdded ? (
-                                <Check size={14} />
                               ) : (
                                 <Plus size={14} />
                               )}
@@ -2820,7 +2872,12 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     placeholder="Es. Ricordarsi di pulire la lente prima del rientro..."
                     value={reminderInput}
                     onChange={e => setReminderInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleAddReminder()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddReminder();
+                      }
+                    }}
                     className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500"
                   />
                   <button

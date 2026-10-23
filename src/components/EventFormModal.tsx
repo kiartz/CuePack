@@ -6,6 +6,34 @@ import { MapPin, Calendar } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 
+// Helper to format local date as YYYY-MM-DD without UTC shifts
+const toDateInputString = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Safe local date parser immune to UTC/timezone offsets
+const parseLocalDate = (dateStr?: string): Date | null => {
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return null;
+  if (dateStr.includes('T')) {
+    const raw = new Date(dateStr);
+    return isNaN(raw.getTime()) ? null : new Date(raw.getFullYear(), raw.getMonth(), raw.getDate(), 0, 0, 0, 0);
+  }
+  const parts = dateStr.trim().split('-');
+  if (parts.length === 3) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      return new Date(year, month, day, 0, 0, 0, 0);
+    }
+  }
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+};
+
 interface EventFormModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -27,15 +55,146 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setFormData({
+      const normalized: Partial<PackingList> = {
         databaseId: activeDatabaseId,
         ...initialData
+      };
+      // Normalize existing ISO strings to clean local YYYY-MM-DD
+      const dateKeys: (keyof PackingList)[] = ['truckLoadDate', 'setupDate', 'eventDate', 'endDate', 'teardownDate', 'returnDate', 'creationDate'];
+      dateKeys.forEach((k) => {
+        const val = normalized[k] as string | undefined;
+        if (val) {
+          const parsed = parseLocalDate(val);
+          if (parsed) {
+            (normalized as any)[k] = toDateInputString(parsed);
+          }
+        }
       });
+      setFormData(normalized);
     }
   }, [isOpen, initialData, activeDatabaseId]);
 
+  // Handle cascading date updates strictly enforcing:
+  // truckLoadDate <= setupDate <= eventDate <= endDate <= teardownDate <= returnDate
+  const handleDateChange = (field: string, date: Date | null) => {
+    if (!date) {
+      setFormData(prev => ({ ...prev, [field]: '' }));
+      return;
+    }
+
+    const newVal = toDateInputString(date);
+
+    setFormData(prev => {
+      const updated = { ...prev, [field]: newVal };
+
+      if (field === 'truckLoadDate') {
+        // La data di carico non può essere dopo la data di montaggio
+        if (updated.setupDate && updated.setupDate < newVal) {
+          updated.setupDate = newVal;
+        }
+        if (updated.eventDate && updated.eventDate < newVal) {
+          updated.eventDate = newVal;
+        }
+        if (updated.endDate && updated.endDate < newVal) {
+          updated.endDate = newVal;
+        }
+        if (updated.teardownDate && updated.teardownDate < newVal) {
+          updated.teardownDate = newVal;
+        }
+        if (updated.returnDate && updated.returnDate < newVal) {
+          updated.returnDate = newVal;
+        }
+      } else if (field === 'setupDate') {
+        // Carico non può essere dopo montaggio
+        if (updated.truckLoadDate && updated.truckLoadDate > newVal) {
+          updated.truckLoadDate = newVal;
+        }
+        // Montaggio non può essere dopo data show
+        if (updated.eventDate && updated.eventDate < newVal) {
+          updated.eventDate = newVal;
+        }
+        if (updated.endDate && updated.endDate < newVal) {
+          updated.endDate = newVal;
+        }
+        if (updated.teardownDate && updated.teardownDate < newVal) {
+          updated.teardownDate = newVal;
+        }
+        if (updated.returnDate && updated.returnDate < newVal) {
+          updated.returnDate = newVal;
+        }
+      } else if (field === 'eventDate') {
+        // Montaggio non può essere dopo inizio show
+        if (updated.setupDate && updated.setupDate > newVal) {
+          updated.setupDate = newVal;
+        }
+        if (updated.truckLoadDate && updated.truckLoadDate > newVal) {
+          updated.truckLoadDate = newVal;
+        }
+        // Fine show non può essere prima di inizio show
+        if (!updated.endDate || updated.endDate < newVal) {
+          updated.endDate = newVal;
+        }
+        if (updated.teardownDate && updated.teardownDate < newVal) {
+          updated.teardownDate = newVal;
+        }
+        if (updated.returnDate && updated.returnDate < newVal) {
+          updated.returnDate = newVal;
+        }
+      } else if (field === 'endDate') {
+        // Inizio show non può essere dopo fine show
+        if (updated.eventDate && updated.eventDate > newVal) {
+          updated.eventDate = newVal;
+          if (updated.setupDate && updated.setupDate > newVal) updated.setupDate = newVal;
+          if (updated.truckLoadDate && updated.truckLoadDate > newVal) updated.truckLoadDate = newVal;
+        }
+        // Smontaggio non può essere prima di fine show
+        if (updated.teardownDate && updated.teardownDate < newVal) {
+          updated.teardownDate = newVal;
+        }
+        if (updated.returnDate && updated.returnDate < newVal) {
+          updated.returnDate = newVal;
+        }
+      } else if (field === 'teardownDate') {
+        // Smontaggio non può essere prima di fine show
+        if (updated.endDate && updated.endDate > newVal) {
+          updated.endDate = newVal;
+          if (updated.eventDate && updated.eventDate > newVal) updated.eventDate = newVal;
+          if (updated.setupDate && updated.setupDate > newVal) updated.setupDate = newVal;
+          if (updated.truckLoadDate && updated.truckLoadDate > newVal) updated.truckLoadDate = newVal;
+        }
+        // Rientro non può essere prima di smontaggio
+        if (updated.returnDate && updated.returnDate < newVal) {
+          updated.returnDate = newVal;
+        }
+      } else if (field === 'returnDate') {
+        // Rientro non può essere prima di smontaggio
+        if (updated.teardownDate && updated.teardownDate > newVal) {
+          updated.teardownDate = newVal;
+          if (updated.endDate && updated.endDate > newVal) updated.endDate = newVal;
+          if (updated.eventDate && updated.eventDate > newVal) updated.eventDate = newVal;
+          if (updated.setupDate && updated.setupDate > newVal) updated.setupDate = newVal;
+          if (updated.truckLoadDate && updated.truckLoadDate > newVal) updated.truckLoadDate = newVal;
+        }
+      }
+
+      return updated;
+    });
+  };
+
   const handleSave = () => {
-    onSave(formData);
+    // Sanitize any remaining date fields to clean YYYY-MM-DD
+    const cleaned = { ...formData };
+    const dateKeys: (keyof PackingList)[] = ['truckLoadDate', 'setupDate', 'eventDate', 'endDate', 'teardownDate', 'returnDate', 'creationDate'];
+    dateKeys.forEach((k) => {
+      const val = cleaned[k] as string | undefined;
+      if (val) {
+        const parsed = parseLocalDate(val);
+        if (parsed) {
+          (cleaned as any)[k] = toDateInputString(parsed);
+        }
+      }
+    });
+    onSave(cleaned);
   };
 
   return (
@@ -133,8 +292,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.truckLoadDate ? new Date(formData.truckLoadDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, truckLoadDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.truckLoadDate ? parseLocalDate(formData.truckLoadDate) : null} 
+                                onChange={(date) => handleDateChange('truckLoadDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data carico..."
@@ -147,8 +306,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.setupDate ? new Date(formData.setupDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, setupDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.setupDate ? parseLocalDate(formData.setupDate) : null} 
+                                onChange={(date) => handleDateChange('setupDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data montaggio..."
@@ -161,8 +320,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.eventDate ? new Date(formData.eventDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, eventDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.eventDate ? parseLocalDate(formData.eventDate) : null} 
+                                onChange={(date) => handleDateChange('eventDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data inizio..."
@@ -175,8 +334,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.endDate ? new Date(formData.endDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, endDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.endDate ? parseLocalDate(formData.endDate) : null} 
+                                onChange={(date) => handleDateChange('endDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data fine..."
@@ -189,8 +348,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.teardownDate ? new Date(formData.teardownDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, teardownDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.teardownDate ? parseLocalDate(formData.teardownDate) : null} 
+                                onChange={(date) => handleDateChange('teardownDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data smontaggio..."
@@ -203,8 +362,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             <Calendar className="absolute left-3 top-2.5 text-slate-500 z-10 pointer-events-none" size={18} />
                             <DatePicker 
                                 portalId="root"
-                                selected={formData.returnDate ? new Date(formData.returnDate) : null} 
-                                onChange={(date) => setFormData(prev => ({ ...prev, returnDate: date ? date.toISOString() : '' }))} 
+                                selected={formData.returnDate ? parseLocalDate(formData.returnDate) : null} 
+                                onChange={(date) => handleDateChange('returnDate', date)} 
                                 dateFormat="dd/MM/yyyy"
                                 className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-white focus:border-emerald-500 outline-none"
                                 placeholderText="Data rientro..."
@@ -355,8 +514,8 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                      <label className="block text-xs font-medium text-slate-600 mb-1">Data Creazione</label>
                      <DatePicker 
                         portalId="root"
-                        selected={formData.creationDate ? new Date(formData.creationDate) : new Date()} 
-                        onChange={(date) => setFormData(prev => ({ ...prev, creationDate: date ? date.toISOString() : '' }))} 
+                        selected={formData.creationDate ? parseLocalDate(formData.creationDate) : new Date()} 
+                        onChange={(date) => setFormData(prev => ({ ...prev, creationDate: date ? toDateInputString(date) : '' }))} 
                         dateFormat="dd/MM/yyyy"
                         className="bg-transparent border-none text-slate-500 text-xs focus:outline-none w-24 cursor-pointer hover:text-slate-400"
                      />

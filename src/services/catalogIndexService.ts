@@ -56,30 +56,53 @@ export function extractCompactItem(item: InventoryItem): InventoryItem {
     name: item.name || '',
     category: item.category || 'Altro',
     subcategory: item.subcategory || '',
+    folder: item.folder || '',
     productCode: item.productCode || '',
     qrCode: item.qrCode || '',
+    alias: item.alias || '',
+    location: item.location || '',
     inStock: item.inStock ?? 1,
     databaseId: item.databaseId || 'default',
+    stockType: item.stockType || 'bulk',
     description: item.description || '',
+    internalRemark: item.internalRemark || '',
+    externalRemark: item.externalRemark || '',
     rentalPrice: item.rentalPrice || 0,
     purchasePrice: item.purchasePrice,
     subhirePrice: item.subhirePrice,
+    subrentalCost: item.subrentalCost,
+    rentalSaleType: item.rentalSaleType || 'rental',
+    canHaveContent: item.canHaveContent,
     weight: item.weight,
+    dimensions: item.dimensions,
+    volume: item.volume,
+    packedPer: item.packedPer,
+    current: item.current,
     powerConsumption: item.powerConsumption,
     powerPhase: item.powerPhase,
+    powerSupplyRating: item.powerSupplyRating,
     powerConnector: item.powerConnector,
     accessories: item.accessories || [],
+    reminders: item.reminders || [],
     instances: (item.instances || []).map(i => ({
       id: i.id,
       serialNumber: i.serialNumber || '',
-      status: i.status || 'active'
+      internalReference: i.internalReference || '',
+      purchaseDate: i.purchaseDate || '',
+      active: i.active !== false,
+      notes: i.notes || '',
+      status: (i as any).status || (i.active === false ? 'maintenance' : 'active')
     })),
     documents: (item.documents || []).map(d => ({
       id: d.id,
       name: d.name || '',
       url: d.url || '',
-      type: d.type || 'link'
-    }))
+      type: (d as any).type || 'link'
+    })),
+    periodicInspections: item.periodicInspections || [],
+    userModifiedFields: item.userModifiedFields || [],
+    lastModifiedByUserAt: item.lastModifiedByUserAt,
+    isCustomized: item.isCustomized
   });
 }
 

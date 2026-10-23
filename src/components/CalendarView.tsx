@@ -29,8 +29,11 @@ const parseLocalDate = (dateStr?: string, fallback?: Date): Date => {
     return fallback ? new Date(fallback) : new Date();
   }
   if (dateStr.includes('T')) {
-    const d = new Date(dateStr);
-    return isNaN(d.getTime()) ? (fallback ? new Date(fallback) : new Date()) : d;
+    const raw = new Date(dateStr);
+    if (!isNaN(raw.getTime())) {
+      return new Date(raw.getFullYear(), raw.getMonth(), raw.getDate(), 0, 0, 0, 0);
+    }
+    return fallback ? new Date(fallback) : new Date();
   }
   const parts = dateStr.trim().split('-');
   if (parts.length === 3) {
@@ -38,12 +41,11 @@ const parseLocalDate = (dateStr?: string, fallback?: Date): Date => {
     const month = parseInt(parts[1], 10) - 1;
     const day = parseInt(parts[2], 10);
     if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-      const d = new Date(year, month, day, 0, 0, 0, 0);
-      return isNaN(d.getTime()) ? (fallback ? new Date(fallback) : new Date()) : d;
+      return new Date(year, month, day, 0, 0, 0, 0);
     }
   }
   const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? (fallback ? new Date(fallback) : new Date()) : d;
+  return isNaN(d.getTime()) ? (fallback ? new Date(fallback) : new Date()) : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 };
 
 // Calculate exact whole calendar days difference between two local dates, immune to DST transitions (Ora Legale / Solare)
@@ -298,8 +300,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
     let maxTime = -Infinity;
 
     filtered.forEach(e => {
-      const eStart = parseLocalDate(e.truckLoadDate || e.setupDate || e.eventDate || e.creationDate);
-      const eEnd = parseLocalDate(e.returnDate || e.teardownDate || e.endDate || e.eventDate || e.creationDate, eStart);
+      const validStartTimes = [e.truckLoadDate, e.setupDate, e.eventDate]
+        .filter((s): s is string => !!(s && s.trim()))
+        .map(s => parseLocalDate(s).getTime());
+      const eStart = validStartTimes.length > 0 ? new Date(Math.min(...validStartTimes)) : parseLocalDate(e.creationDate);
+
+      const validEndTimes = [e.returnDate, e.teardownDate, e.endDate, e.eventDate]
+        .filter((s): s is string => !!(s && s.trim()))
+        .map(s => parseLocalDate(s, eStart).getTime());
+      const eEnd = validEndTimes.length > 0 ? new Date(Math.max(...validEndTimes, eStart.getTime())) : parseLocalDate(e.creationDate, eStart);
       
       let start = eStart.getTime();
       let end = eEnd.getTime();
@@ -686,7 +695,27 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               }
             } else if (resize.handleType === 'show-start') {
               eventUpdates.eventDate = newYmd;
-              // Never mutate setupDate when moving show-start!
+              if (targetEvent?.setupDate && targetEvent.setupDate > newYmd) {
+                eventUpdates.setupDate = newYmd;
+              }
+              if (targetEvent?.truckLoadDate && targetEvent.truckLoadDate > newYmd) {
+                eventUpdates.truckLoadDate = newYmd;
+              }
+            } else if (resize.handleType === 'start') {
+              eventUpdates[resize.fieldToUpdate] = newYmd;
+              if (resize.fieldToUpdate === 'setupDate') {
+                if (targetEvent?.truckLoadDate && targetEvent.truckLoadDate > newYmd) {
+                  eventUpdates.truckLoadDate = newYmd;
+                }
+                if (targetEvent?.eventDate && targetEvent.eventDate < newYmd) {
+                  eventUpdates.eventDate = newYmd;
+                }
+              }
+            } else if (resize.handleType === 'end') {
+              eventUpdates[resize.fieldToUpdate] = newYmd;
+              if (targetEvent?.teardownDate && targetEvent.teardownDate > newYmd) {
+                eventUpdates.teardownDate = newYmd;
+              }
             } else {
               eventUpdates = {
                 [resize.fieldToUpdate]: newYmd
@@ -931,8 +960,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
     e.stopPropagation();
     suppressClickRef.current = true;
 
-    const eventStart = parseLocalDate(event.truckLoadDate || event.setupDate || event.eventDate || event.creationDate);
-    const eventEnd = parseLocalDate(event.returnDate || event.teardownDate || event.endDate || event.eventDate || event.creationDate, eventStart);
+    const validStartTimes = [event.truckLoadDate, event.setupDate, event.eventDate]
+      .filter((s): s is string => !!(s && s.trim()))
+      .map(s => parseLocalDate(s).getTime());
+    const eventStart = validStartTimes.length > 0 ? new Date(Math.min(...validStartTimes)) : parseLocalDate(event.creationDate);
+
+    const validEndTimes = [event.returnDate, event.teardownDate, event.endDate, event.eventDate]
+      .filter((s): s is string => !!(s && s.trim()))
+      .map(s => parseLocalDate(s, eventStart).getTime());
+    const eventEnd = validEndTimes.length > 0 ? new Date(Math.max(...validEndTimes, eventStart.getTime())) : parseLocalDate(event.creationDate, eventStart);
+    eventStart.setHours(0, 0, 0, 0);
+    eventEnd.setHours(0, 0, 0, 0);
 
     let fieldToUpdate = 'setupDate';
     let label = 'Inizio Montaggio';
@@ -958,8 +996,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
     } else if (handle === 'show-start') {
       fieldToUpdate = 'eventDate';
       label = 'Inizio Show';
-      initialDateStr = event.eventDate || '';
-      minDate = parseLocalDate(event.setupDate || event.truckLoadDate || event.eventDate);
+      initialDateStr = event.eventDate || event.setupDate || '';
+      const candidateMin = parseLocalDate(event.setupDate || event.truckLoadDate || event.eventDate);
+      const curDate = parseLocalDate(initialDateStr);
+      minDate = candidateMin.getTime() <= curDate.getTime()
+        ? candidateMin
+        : (event.truckLoadDate ? parseLocalDate(event.truckLoadDate) : new Date(timelineStart));
       maxDate = parseLocalDate(event.teardownDate || event.endDate || event.eventDate);
     } else if (handle === 'show-end') {
       fieldToUpdate = 'teardownDate';
@@ -1339,6 +1381,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                       }
                     } else if (activeResizeState.handleType === 'show-start') {
                       updated.eventDate = activeResizeState.previewDateStr;
+                      if (ev.setupDate && ev.setupDate > activeResizeState.previewDateStr) {
+                        updated.setupDate = activeResizeState.previewDateStr;
+                      }
+                      if (ev.truckLoadDate && ev.truckLoadDate > activeResizeState.previewDateStr) {
+                        updated.truckLoadDate = activeResizeState.previewDateStr;
+                      }
+                    } else if (activeResizeState.handleType === 'start') {
+                      if (activeResizeState.fieldToUpdate === 'setupDate' && ev.eventDate && ev.eventDate < activeResizeState.previewDateStr) {
+                        updated.eventDate = activeResizeState.previewDateStr;
+                      }
+                    } else if (activeResizeState.handleType === 'end') {
+                      if (ev.teardownDate && ev.teardownDate > activeResizeState.previewDateStr) {
+                        updated.teardownDate = activeResizeState.previewDateStr;
+                      }
                     }
                     return updated;
                   }
@@ -1379,8 +1435,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                   return ev;
                 })();
 
-                const rawEventStart = parseLocalDate(event.truckLoadDate || event.setupDate || event.eventDate || event.creationDate);
-                const rawEventEnd = parseLocalDate(event.returnDate || event.teardownDate || event.endDate || event.eventDate || event.creationDate, rawEventStart);
+                const validStartTimes = [event.truckLoadDate, event.setupDate, event.eventDate]
+                  .filter((s): s is string => !!(s && s.trim()))
+                  .map(s => parseLocalDate(s).getTime());
+                const rawEventStart = validStartTimes.length > 0 ? new Date(Math.min(...validStartTimes)) : parseLocalDate(event.creationDate);
+
+                const validEndTimes = [event.returnDate, event.teardownDate, event.endDate, event.eventDate]
+                  .filter((s): s is string => !!(s && s.trim()))
+                  .map(s => parseLocalDate(s, rawEventStart).getTime());
+                const rawEventEnd = validEndTimes.length > 0 ? new Date(Math.max(...validEndTimes, rawEventStart.getTime())) : parseLocalDate(event.creationDate, rawEventStart);
+
                 rawEventStart.setHours(0, 0, 0, 0);
                 rawEventEnd.setHours(0, 0, 0, 0);
 
@@ -1474,27 +1538,60 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                           <div className="relative h-full flex overflow-hidden rounded-lg">
                             {(() => {
                               const segments = [];
-                              const truckStart = event.truckLoadDate ? parseLocalDate(event.truckLoadDate, eventStart) : null;
-                              if (truckStart) truckStart.setHours(0, 0, 0, 0);
+                              const rawTruck = event.truckLoadDate?.trim() ? parseLocalDate(event.truckLoadDate, eventStart) : null;
+                              if (rawTruck) rawTruck.setHours(0, 0, 0, 0);
 
-                              // Setup begins at groupStartTime if any zone starts earlier
-                              const baseSetupDate = parseLocalDate(event.setupDate || event.eventDate || event.creationDate, eventStart);
-                              baseSetupDate.setHours(0, 0, 0, 0);
-                              const setupStart = new Date(Math.min(baseSetupDate.getTime(), groupStartTime));
+                              const rawSetup = parseLocalDate(event.setupDate || event.eventDate || event.creationDate, eventStart);
+                              rawSetup.setHours(0, 0, 0, 0);
 
-                              const showStart = parseLocalDate(event.eventDate || event.creationDate, eventStart);
-                              showStart.setHours(0, 0, 0, 0);
+                              const rawShow = parseLocalDate(event.eventDate || event.creationDate, eventStart);
+                              rawShow.setHours(0, 0, 0, 0);
 
-                              const showEnd = parseLocalDate(event.endDate || event.eventDate || event.creationDate, showStart);
-                              showEnd.setHours(0, 0, 0, 0);
+                              const rawShowEnd = parseLocalDate(event.endDate || event.eventDate || event.creationDate, rawShow);
+                              rawShowEnd.setHours(0, 0, 0, 0);
 
-                              const teardownStart = parseLocalDate(event.teardownDate || event.endDate || event.eventDate || event.creationDate, showEnd);
-                              teardownStart.setHours(0, 0, 0, 0);
+                              const rawTeardown = parseLocalDate(event.teardownDate || event.endDate || event.eventDate || event.creationDate, rawShowEnd);
+                              rawTeardown.setHours(0, 0, 0, 0);
 
-                              // Smontaggio ends at groupEndTime if any zone ends later
-                              const baseReturnDate = parseLocalDate(event.returnDate || event.teardownDate || event.endDate || event.eventDate, teardownStart);
-                              baseReturnDate.setHours(0, 0, 0, 0);
-                              const returnEnd = new Date(Math.max(baseReturnDate.getTime(), groupEndTime));
+                              const rawReturn = parseLocalDate(event.returnDate || event.teardownDate || event.endDate || event.eventDate, rawTeardown);
+                              rawReturn.setHours(0, 0, 0, 0);
+
+                              // Strict chronological clamping: truck <= setup <= show <= showEnd <= teardown <= return
+                              let effectiveTruck = rawTruck;
+                              let effectiveSetup = rawSetup;
+                              let effectiveShowStart = rawShow;
+                              let effectiveShowEnd = rawShowEnd;
+                              let effectiveTeardown = rawTeardown;
+                              let effectiveReturn = rawReturn;
+
+                              if (effectiveTruck && effectiveTruck.getTime() > effectiveSetup.getTime()) {
+                                effectiveTruck = new Date(effectiveSetup);
+                              }
+                              if (effectiveSetup.getTime() > effectiveShowStart.getTime()) {
+                                effectiveSetup = new Date(effectiveShowStart);
+                              }
+                              if (effectiveShowStart.getTime() > effectiveShowEnd.getTime()) {
+                                effectiveShowEnd = new Date(effectiveShowStart);
+                              }
+                              if (effectiveShowEnd.getTime() > effectiveTeardown.getTime()) {
+                                effectiveTeardown = new Date(effectiveShowEnd);
+                              }
+                              if (effectiveTeardown.getTime() > effectiveReturn.getTime()) {
+                                effectiveReturn = new Date(effectiveTeardown);
+                              }
+
+                              // Bounding box alignment:
+                              // If truck exists: truck starts at groupStartTime (if zone starts earlier), setup starts at effectiveSetup
+                              // If no truck: setup starts at groupStartTime (if zone starts earlier)
+                              const truckStart = effectiveTruck ? new Date(Math.min(effectiveTruck.getTime(), groupStartTime)) : null;
+                              const setupStart = effectiveTruck 
+                                ? new Date(Math.max(effectiveSetup.getTime(), truckStart!.getTime())) 
+                                : new Date(Math.min(effectiveSetup.getTime(), groupStartTime));
+
+                              const showStart = effectiveShowStart;
+                              const showEnd = effectiveShowEnd;
+                              const teardownStart = effectiveTeardown;
+                              const returnEnd = new Date(Math.max(effectiveReturn.getTime(), teardownStart.getTime(), groupEndTime));
 
                               const getDays = (d1: Date, d2: Date) => {
                                 return Math.max(0, getCalendarDayDiff(d1, d2));
@@ -1583,7 +1680,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                               });
 
                               const totalSegDays = groupDuration;
-                              const hasSetupOrTruck = segments.some(s => s.type === 'setup' || s.type === 'truck');
+                              const hasSetup = segments.some(s => s.type === 'setup');
                               const hasTeardown = segments.some(s => s.type === 'teardown');
 
                               return segments.map((seg, idx) => {
@@ -1629,7 +1726,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                                     )}
 
                                     {/* Internal split handle between Setup and Show */}
-                                    {isDesktop && (seg.type === 'setup' || (seg.type === 'truck' && !hasSetupOrTruck)) && (
+                                    {isDesktop && (seg.type === 'setup' || (seg.type === 'truck' && !hasSetup)) && (
                                       <ResizeHandle 
                                         position="right" 
                                         label="Inizio Show" 
