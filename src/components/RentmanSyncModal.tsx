@@ -28,7 +28,7 @@ import {
 import { InventoryItem, InventoryDatabase, DEFAULT_DATABASE_ID } from '../types';
 import { ParsedRentmanItem, RentmanParseResult, parseRentmanFile } from '../utils/rentmanParser';
 import { getDbBadgeStyle } from '../utils/databaseColors';
-import { db, COLL_INVENTORY, COLL_DATABASES } from '../firebase';
+import { db, COLL_INVENTORY, COLL_DATABASES, rebuildInventoryIndex } from '../firebase';
 import { doc, writeBatch } from 'firebase/firestore';
 import { generateId } from '../utils';
 
@@ -810,6 +810,13 @@ export const RentmanSyncModal: React.FC<RentmanSyncModalProps> = ({
         protectedFields: protectedFieldsCount,
         targetDbName: finalDbName
       });
+
+      // Synchronize compact catalog index so UI has instant up-to-date items
+      try {
+        await rebuildInventoryIndex(db);
+      } catch (idxErr) {
+        console.warn("Notice rebuilding catalog index after Rentman sync:", idxErr);
+      }
 
       setStage('complete');
       if (onSyncComplete) {

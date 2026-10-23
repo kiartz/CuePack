@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { generateId } from '../utils';
-import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter, WifiOff } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase } from '../types';
+import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Redo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter, WifiOff, Info } from 'lucide-react';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase, WarehouseState, ItemReplacementInfo } from '../types';
 import { useNetworkStatus } from '../context/NetworkContext';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -11,13 +12,16 @@ import { Modal } from './Modal';
 import { EventFormModal } from './EventFormModal';
 import { RemindersModal } from './RemindersModal';
 import { ShareEventModal } from './ShareEventModal';
+import { ZoneEditModal } from './ZoneEditModal';
+import { ZoneInfoModal } from './ZoneInfoModal';
+import { EventSummaryModal } from './EventSummaryModal';
 import { getCategoryDefinitions } from '../utils/categories';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
-import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF } from '../utils/export';
+import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF, exportSelectivePDF, exportZonePDF } from '../utils/export';
 import { getDbBadgeStyle } from '../utils/databaseColors';
 import { calculateAvailableQuantity } from '../utils/availability';
 import { openDocumentInBrowser } from '../utils/documentViewer';
@@ -38,6 +42,7 @@ interface PackingListBuilderProps {
   databases?: InventoryDatabase[];
   activeDatabaseId?: string;
   setActiveDatabaseId?: (dbId: string) => void;
+  onEventActiveChange?: (isActive: boolean) => void;
 }
 
 const InlineNoteInput: React.FC<{
@@ -129,7 +134,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   onListAutoEdited,
   databases = [],
   activeDatabaseId = DEFAULT_DATABASE_ID,
-  setActiveDatabaseId
+  setActiveDatabaseId,
+  onEventActiveChange
 }) => { // --- HELPERS ---
   const createDefaultSections = (): ListSection[] => [
     { id: generateId(), name: 'Audio', components: [] },
@@ -143,7 +149,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // --- STATE ---
   const [viewMode, setViewMode] = useState<'list' | 'edit'>('list');
-  const [activeListAction, setActiveListAction] = useState<'duplicate' | 'edit' | 'delete' | null>(null);
+
+  useEffect(() => {
+    const isEditingEvent = viewMode === 'edit' && !!activeListId;
+    onEventActiveChange?.(isEditingEvent);
+    return () => {
+      onEventActiveChange?.(false);
+    };
+  }, [viewMode, activeListId, onEventActiveChange]);
+  const [activeListAction, setActiveListAction] = useState<'duplicate' | 'delete' | null>(null);
   const [listFilter, setListFilter] = useState('');
   
   // Navigation
@@ -245,10 +259,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const activeList = (localList && localList.id === activeListId) ? localList : rawActiveList;
   const pendingWritesRef = useRef(0);
 
-  // Clear local optimistic cache whenever activeListId changes to another list
+  // History Stack for Undo/Redo (max 15 entries)
+  const [historyPast, setHistoryPast] = useState<ListZone[][]>([]);
+  const [historyFuture, setHistoryFuture] = useState<ListZone[][]>([]);
+  const isUndoRedoActionRef = useRef<boolean>(false);
+
+  // Clear local optimistic cache & undo/redo history whenever activeListId changes to another list
   useEffect(() => {
     setLocalList(prev => (prev && prev.id === activeListId ? prev : null));
     activeListRef.current = null;
+    setHistoryPast([]);
+    setHistoryFuture([]);
   }, [activeListId]);
 
   // Synchronize localList when remote rawActiveList arrives and no local writes are in-flight
@@ -258,6 +279,309 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       activeListRef.current = rawActiveList;
     }
   }, [rawActiveList]);
+
+  // --- VERSION DIFF DETECTION, 10s REMINDER BANNER & HISTORY POPUP STATE ---
+  const [activeHistoryTooltipId, setActiveHistoryTooltipId] = useState<string | null>(null);
+  const [historyTooltipAnchor, setHistoryTooltipAnchor] = useState<DOMRect | null>(null);
+  const [showUpdateReminderBanner, setShowUpdateReminderBanner] = useState<boolean>(false);
+  const [dismissedWarehouseBannerListId, setDismissedWarehouseBannerListId] = useState<string | null>(null);
+  const isWarehouseBannerDismissed = dismissedWarehouseBannerListId === activeList?.id;
+  const [warehouseSubModal, setWarehouseSubModal] = useState<{
+    isOpen: boolean;
+    componentName: string;
+    originalQuantity?: number;
+    replacementInfo?: ItemReplacementInfo | null;
+  }>({
+    isOpen: false,
+    componentName: '',
+    originalQuantity: 0,
+    replacementInfo: null
+  });
+  const lastNormalizedZonesRef = useRef<{ listId: string; norm: string } | null>(null);
+
+  useEffect(() => {
+    if (!activeHistoryTooltipId) return;
+    const handleCloseTooltip = () => {
+      setActiveHistoryTooltipId(null);
+      setHistoryTooltipAnchor(null);
+    };
+    window.addEventListener('click', handleCloseTooltip);
+    window.addEventListener('scroll', handleCloseTooltip, true);
+    return () => {
+      window.removeEventListener('click', handleCloseTooltip);
+      window.removeEventListener('scroll', handleCloseTooltip, true);
+    };
+  }, [activeHistoryTooltipId]);
+
+  const getDesignerZones = useCallback((zones?: ListZone[]): ListZone[] => {
+    if (!zones) return [];
+
+    const restoreContents = (contents?: Array<{ itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; replacementInfo?: ItemReplacementInfo; notes?: string }>) => {
+      if (!contents) return contents;
+      const result: typeof contents = [];
+      const handledGroups = new Set<string>();
+
+      for (let i = 0; i < contents.length; i++) {
+        const sub = contents[i];
+        const repInfo = sub.replacementInfo;
+        const groupId = repInfo?.replacementGroupId;
+
+        if (groupId) {
+          if (handledGroups.has(groupId)) continue;
+          handledGroups.add(groupId);
+
+          const groupSubs = contents.filter(s => s.replacementInfo?.replacementGroupId === groupId);
+          const repItemDrafts = repInfo.replacements || groupSubs.filter(s => s.name !== repInfo.originalName).map(s => ({
+            referenceId: s.itemId,
+            name: s.name,
+            quantity: s.quantity,
+            category: s.category
+          }));
+
+          result.push({
+            itemId: repInfo.originalReferenceId || sub.itemId,
+            name: repInfo.originalName,
+            quantity: repInfo.originalQuantity,
+            category: repInfo.originalCategory || sub.category,
+            warehouseState: repInfo.originalWarehouseState || sub.warehouseState,
+            notes: sub.notes,
+            replacementInfo: {
+              ...repInfo,
+              replacements: repItemDrafts
+            }
+          });
+        } else {
+          result.push(sub);
+        }
+      }
+      return result;
+    };
+
+    const restoreComponents = (components: ListComponent[]): ListComponent[] => {
+      const result: ListComponent[] = [];
+      const handledGroups = new Set<string>();
+
+      for (let i = 0; i < components.length; i++) {
+        const comp = components[i];
+        const repInfo = comp.replacementInfo;
+        const groupId = repInfo?.replacementGroupId;
+
+        if (groupId) {
+          if (handledGroups.has(groupId)) continue;
+          handledGroups.add(groupId);
+
+          const groupComps = components.filter(c => c.replacementInfo?.replacementGroupId === groupId);
+          const repItemDrafts = repInfo.replacements || groupComps.filter(c => c.uniqueId.startsWith('rep-')).map(c => ({
+            referenceId: c.referenceId,
+            name: c.name,
+            quantity: c.quantity,
+            category: c.category
+          }));
+
+          const originalComp: ListComponent = {
+            uniqueId: repInfo.originalUniqueId || comp.uniqueId,
+            type: repInfo.originalType || comp.type,
+            referenceId: repInfo.originalReferenceId || comp.referenceId,
+            name: repInfo.originalName,
+            quantity: repInfo.originalQuantity,
+            category: repInfo.originalCategory || comp.category,
+            databaseId: repInfo.originalDatabaseId || comp.databaseId,
+            notes: comp.notes || '',
+            isExternalRental: Boolean(comp.isExternalRental),
+            rentalType: comp.rentalType,
+            externalRentalVendor: comp.externalRentalVendor,
+            contents: repInfo.originalContents ? repInfo.originalContents.map(sub => ({
+              itemId: sub.itemId,
+              name: sub.name,
+              quantity: sub.quantity,
+              category: sub.category,
+              warehouseState: sub.warehouseState
+            })) : restoreContents(comp.contents),
+            warehouseState: repInfo.originalWarehouseState || comp.warehouseState,
+            replacementInfo: {
+              ...repInfo,
+              replacements: repItemDrafts
+            }
+          };
+
+          result.push(originalComp);
+        } else {
+          result.push({
+            ...comp,
+            contents: restoreContents(comp.contents),
+            templateContents: comp.templateContents ? restoreComponents(comp.templateContents) : comp.templateContents
+          });
+        }
+      }
+      return result;
+    };
+
+    return zones.map(z => ({
+      ...z,
+      sections: (z.sections || []).map(s => ({
+        ...s,
+        components: restoreComponents(s.components || [])
+      }))
+    }));
+  }, []);
+
+  const mergeDesignerZonesWithWarehouseReplacements = useCallback((
+    newDesignerZones: ListZone[],
+    rawWarehouseZones?: ListZone[]
+  ): ListZone[] => {
+    if (!rawWarehouseZones || rawWarehouseZones.length === 0) return newDesignerZones;
+
+    const rawGroupMap = new Map<string, ListComponent[]>();
+    rawWarehouseZones.forEach(z => {
+      (z.sections || []).forEach(s => {
+        (s.components || []).forEach(c => {
+          const gid = c.replacementInfo?.replacementGroupId;
+          if (gid) {
+            if (!rawGroupMap.has(gid)) rawGroupMap.set(gid, []);
+            rawGroupMap.get(gid)!.push(c);
+          }
+        });
+      });
+    });
+
+    if (rawGroupMap.size === 0) return newDesignerZones;
+
+    return newDesignerZones.map(z => ({
+      ...z,
+      sections: (z.sections || []).map(s => {
+        const mergedComponents: ListComponent[] = [];
+
+        for (const comp of (s.components || [])) {
+          const gid = comp.replacementInfo?.replacementGroupId;
+          if (gid && rawGroupMap.has(gid)) {
+            const rawGroup = rawGroupMap.get(gid)!;
+            const repInfo = comp.replacementInfo!;
+            const isUntouched = comp.name === repInfo.originalName && comp.quantity === repInfo.originalQuantity;
+            if (isUntouched) {
+              mergedComponents.push(...rawGroup);
+              continue;
+            }
+          }
+          mergedComponents.push(comp);
+        }
+
+        return {
+          ...s,
+          components: mergedComponents
+        };
+      })
+    }));
+  }, []);
+
+  const normalizeZonesForVersionDiff = useCallback((zonesToNorm?: ListZone[]) => {
+    if (!zonesToNorm) return '';
+    const normComp = (c: ListComponent): any => ({
+      uniqueId: c.uniqueId,
+      type: c.type,
+      referenceId: c.referenceId,
+      name: c.name,
+      quantity: c.quantity,
+      notes: c.notes || '',
+      isExternalRental: Boolean(c.isExternalRental),
+      rentalType: c.rentalType || '',
+      externalRentalVendor: c.externalRentalVendor || '',
+      contents: (c.contents || []).map(sub => ({
+        itemId: sub.itemId,
+        name: sub.name,
+        quantity: sub.quantity,
+        notes: sub.notes || ''
+      })),
+      templateContents: (c.templateContents || []).map(normComp)
+    });
+    // Sort zones and sections by ID so reordering does NOT trigger version changes
+    // Exclude zone notes, section notes, and zone metadata: version diff strictly tracks MATERIAL changes
+    const sortedZones = [...zonesToNorm].sort((a, b) => (a.id || a.name || '').localeCompare(b.id || b.name || ''));
+
+    return JSON.stringify(
+      sortedZones.map(z => ({
+        id: z.id,
+        sections: [...(z.sections || [])]
+          .sort((a, b) => (a.id || a.name || '').localeCompare(b.id || b.name || ''))
+          .map(s => ({
+            id: s.id,
+            components: (s.components || []).map(normComp)
+          }))
+      }))
+    );
+  }, []);
+
+  const designerZones = useMemo(() => getDesignerZones(activeList?.zones), [activeList?.zones, getDesignerZones]);
+  const hasWarehouseReplacements = useMemo(() => {
+    if (!activeList?.zones) return false;
+    return activeList.zones.some(z => 
+      z.sections.some(s => 
+        s.components.some(c => 
+          Boolean(c.replacementInfo || c.contents?.some(sub => sub.replacementInfo))
+        )
+      )
+    );
+  }, [activeList?.zones]);
+
+  const currentZonesNormalized = useMemo(() => normalizeZonesForVersionDiff(designerZones), [designerZones, normalizeZonesForVersionDiff]);
+  const snapshotZonesNormalized = useMemo(() => normalizeZonesForVersionDiff(activeList?.snapshot), [activeList?.snapshot, normalizeZonesForVersionDiff]);
+
+  const hasUnsavedVersionChanges = useMemo(() => {
+    if (!activeList || !activeList.isCompleted) return false;
+    if (!activeList.snapshot || activeList.snapshot.length === 0) return false;
+    return currentZonesNormalized !== snapshotZonesNormalized;
+  }, [activeList, currentZonesNormalized, snapshotZonesNormalized]);
+
+  useEffect(() => {
+    if (!activeList || !activeList.isCompleted) {
+      setShowUpdateReminderBanner(false);
+      lastNormalizedZonesRef.current = activeList ? { listId: activeList.id, norm: currentZonesNormalized } : null;
+      return;
+    }
+
+    if (!lastNormalizedZonesRef.current || lastNormalizedZonesRef.current.listId !== activeList.id) {
+      lastNormalizedZonesRef.current = { listId: activeList.id, norm: currentZonesNormalized };
+      if (!hasUnsavedVersionChanges) {
+        setShowUpdateReminderBanner(false);
+      }
+      return;
+    }
+
+    if (lastNormalizedZonesRef.current.norm !== currentZonesNormalized) {
+      lastNormalizedZonesRef.current = { listId: activeList.id, norm: currentZonesNormalized };
+      if (hasUnsavedVersionChanges) {
+        setShowUpdateReminderBanner(true);
+      } else {
+        setShowUpdateReminderBanner(false);
+      }
+    } else if (!hasUnsavedVersionChanges) {
+      setShowUpdateReminderBanner(false);
+    }
+  }, [activeList, currentZonesNormalized, hasUnsavedVersionChanges]);
+
+  useEffect(() => {
+    if (!showUpdateReminderBanner) return;
+    const timer = setTimeout(() => {
+      setShowUpdateReminderBanner(false);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [showUpdateReminderBanner, currentZonesNormalized]);
+
+  // Lookup map of components in activeList.snapshot to detect pending/draft modifications
+  const snapshotComponentMap = useMemo(() => {
+    const map = new Map<string, ListComponent>();
+    if (!activeList?.snapshot || !activeList.isCompleted) return map;
+    activeList.snapshot.forEach(z => {
+      z.sections.forEach(s => {
+        s.components.forEach(c => {
+          map.set(c.uniqueId, c);
+          if (c.type === 'template' && c.templateContents) {
+            c.templateContents.forEach(tc => map.set(tc.uniqueId, tc));
+          }
+        });
+      });
+    });
+    return map;
+  }, [activeList?.snapshot, activeList?.isCompleted]);
 
   const [overbookedModal, setOverbookedModal] = useState<{
       isOpen: boolean;
@@ -305,9 +629,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // REPLACEMENT STATE
   const [replacingComponentId, setReplacingComponentId] = useState<string | null>(null);
 
-  // DRAG & DROP FOR SECTIONS
+  // DRAG & DROP FOR SECTIONS & ZONES
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
   const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null);
+  const [draggedZoneId, setDraggedZoneId] = useState<string | null>(null);
+  const [dragOverZoneId, setDragOverZoneId] = useState<string | null>(null);
 
   // New Item Modal
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
@@ -335,6 +661,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     targetId: undefined as string | undefined,
     name: ''
   });
+
+  const [zoneForEdit, setZoneForEdit] = useState<ListZone | null>(null);
+  const [zoneForInfo, setZoneForInfo] = useState<ListZone | null>(null);
+  const [summaryEvent, setSummaryEvent] = useState<PackingList | null>(null);
 
   const [zoneNoteModal, setZoneNoteModal] = useState({
     isOpen: false,
@@ -401,6 +731,151 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   // Versioning/Feedback Modal State
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportSelectedZones, setExportSelectedZones] = useState<Set<string>>(new Set());
+  const [exportSelectedSections, setExportSelectedSections] = useState<Set<string>>(new Set());
+
+  const handleOpenExportModal = () => {
+    setExportSelectedZones(new Set());
+    setExportSelectedSections(new Set());
+    setIsExportModalOpen(true);
+  };
+
+  const handleToggleZoneExport = (zoneId: string) => {
+    const targetZone = activeList?.zones?.find(z => z.id === zoneId);
+    if (!targetZone) return;
+
+    const hasSections = targetZone.sections && targetZone.sections.length > 0;
+    const isCurrentlyFull = hasSections
+      ? targetZone.sections.every(s => exportSelectedSections.has(`${zoneId}__${s.id}`))
+      : exportSelectedZones.has(zoneId);
+
+    setExportSelectedZones(prev => {
+      const next = new Set(prev);
+      if (isCurrentlyFull) {
+        next.delete(zoneId);
+      } else {
+        next.add(zoneId);
+      }
+      return next;
+    });
+
+    if (hasSections) {
+      setExportSelectedSections(prev => {
+        const next = new Set(prev);
+        targetZone.sections.forEach(s => {
+          const key = `${zoneId}__${s.id}`;
+          if (isCurrentlyFull) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
+        });
+        return next;
+      });
+    }
+  };
+
+  const handleToggleSectionExport = (zoneId: string, sectionId: string) => {
+    const key = `${zoneId}__${sectionId}`;
+    const targetZone = activeList?.zones?.find(z => z.id === zoneId);
+
+    setExportSelectedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      if (targetZone && targetZone.sections) {
+        const allSelected = targetZone.sections.every(s =>
+          s.id === sectionId ? !prev.has(key) : next.has(`${zoneId}__${s.id}`)
+        );
+        setExportSelectedZones(prevZones => {
+          const nextZones = new Set(prevZones);
+          if (allSelected) {
+            nextZones.add(zoneId);
+          } else {
+            nextZones.delete(zoneId);
+          }
+          return nextZones;
+        });
+      }
+
+      return next;
+    });
+  };
+
+  const handleSelectAllExport = () => {
+    if (!activeList?.zones) return;
+    const allZones = new Set<string>();
+    const allSections = new Set<string>();
+    activeList.zones.forEach(z => {
+      allZones.add(z.id);
+      z.sections?.forEach(s => {
+        allSections.add(`${z.id}__${s.id}`);
+      });
+    });
+    setExportSelectedZones(allZones);
+    setExportSelectedSections(allSections);
+  };
+
+  const handleClearExportSelection = () => {
+    setExportSelectedZones(new Set());
+    setExportSelectedSections(new Set());
+  };
+
+  const handleExportSelected = () => {
+    if (!activeList || !activeList.zones) return;
+    const targets: { zoneId: string; sectionIds?: string[] }[] = [];
+
+    activeList.zones.forEach(zone => {
+      if (!zone.sections || zone.sections.length === 0) {
+        if (exportSelectedZones.has(zone.id)) {
+          targets.push({ zoneId: zone.id });
+        }
+        return;
+      }
+
+      const selectedSecs = zone.sections.filter(s => exportSelectedSections.has(`${zone.id}__${s.id}`));
+      if (selectedSecs.length === zone.sections.length || exportSelectedZones.has(zone.id)) {
+        targets.push({ zoneId: zone.id });
+      } else if (selectedSecs.length > 0) {
+        targets.push({ zoneId: zone.id, sectionIds: selectedSecs.map(s => s.id) });
+      }
+    });
+
+    if (targets.length === 0) return;
+    exportSelectivePDF(activeList, targets);
+    setIsExportModalOpen(false);
+  };
+
+  const exportCounts = useMemo(() => {
+    if (!activeList?.zones) return { fullZones: 0, partialSections: 0, totalItems: 0 };
+    let fullZones = 0;
+    let partialSections = 0;
+
+    activeList.zones.forEach(z => {
+      const hasSections = z.sections && z.sections.length > 0;
+      const isFull = hasSections
+        ? z.sections.every(s => exportSelectedSections.has(`${z.id}__${s.id}`))
+        : exportSelectedZones.has(z.id);
+
+      if (isFull) {
+        fullZones++;
+      } else if (hasSections) {
+        const count = z.sections.filter(s => exportSelectedSections.has(`${z.id}__${s.id}`)).length;
+        partialSections += count;
+      }
+    });
+
+    return {
+      fullZones,
+      partialSections,
+      totalItems: fullZones + partialSections
+    };
+  }, [activeList, exportSelectedZones, exportSelectedSections]);
+
   const [draftVersionInput, setDraftVersionInput] = useState('');
   const [versionError, setVersionError] = useState<string | null>(null);
   const [feedbackModal, setFeedbackModal] = useState<{ isOpen: boolean, title: string, message: string, type?: 'success' | 'info' | 'error' } | null>(null);
@@ -466,6 +941,31 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
 
   const propagateKitUpdates = async (updatedKit: Kit) => {
+    // Generate fresh contents from the updated kit master
+    const generateFreshKitContents = (k: Kit) => {
+      return (k.items || []).flatMap(ki => {
+        const inv = inventory.find(i => i.id === ki.itemId);
+        const main = {
+          itemId: ki.itemId,
+          name: inv?.name || '?',
+          quantity: ki.quantity,
+          category: inv?.category || 'Altro'
+        };
+        const accs = (ki.accessories || []).map(acc => {
+          const accItem = inventory.find(i => i.id === acc.itemId);
+          return {
+            itemId: acc.itemId,
+            name: accItem?.name || '?',
+            quantity: acc.quantity,
+            category: accItem?.category || 'Altro'
+          };
+        });
+        return [main, ...accs];
+      });
+    };
+
+    const freshContents = generateFreshKitContents(updatedKit);
+
     const updatedLists = lists.map(list => {
         let listModified = false;
         const newZones = list.zones?.map(zone => ({
@@ -474,9 +974,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 ...section,
                 components: section.components.map(comp => {
                     if (comp.type === 'kit' && comp.referenceId === updatedKit.id) {
-                        if (comp.name !== updatedKit.name) {
+                        const nameChanged = comp.name !== updatedKit.name;
+                        const currentSimple = (comp.contents || []).map(c => ({ itemId: c.itemId, quantity: c.quantity }));
+                        const masterSimple = freshContents.map(c => ({ itemId: c.itemId, quantity: c.quantity }));
+                        const contentsChanged = JSON.stringify(currentSimple) !== JSON.stringify(masterSimple);
+
+                        if (nameChanged || contentsChanged) {
                             listModified = true;
-                            return { ...comp, name: updatedKit.name };
+                            return { ...comp, name: updatedKit.name, contents: freshContents };
                         }
                     }
                     return comp;
@@ -489,6 +994,13 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     const modifiedLists = updatedLists.filter((l, i) => l !== lists[i]);
     if (modifiedLists.length > 0) {
         await Promise.all(modifiedLists.map(l => addOrUpdateItem(COLL_LISTS, l)));
+        // Also update local activeList if it was modified
+        if (activeList) {
+          const updatedActive = updatedLists.find(l => l.id === activeList.id);
+          if (updatedActive && updatedActive !== activeList) {
+            updateActiveList({ zones: updatedActive.zones }, true);
+          }
+        }
     }
   };
 
@@ -530,7 +1042,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       activeListRef.current = null;
   }, [activeListId]);
 
-  const zones = activeList?.zones || [];
+  const zones = designerZones;
   const activeZone = zones.find(z => z.id === activeZoneId);
   const sections = activeZone?.sections || [];
   const activeSection = sections.find(s => s.id === activeSectionId);
@@ -836,7 +1348,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   // --- AUTO-SYNC KITS & ACCESSORIES ---
   useEffect(() => {
-      if (!activeList || activeList.version || !activeList.zones) return;
+      if (!activeList || !activeList.zones) return;
 
       let hasChanges = false;
       const updatedZones = activeList.zones.map(zone => ({
@@ -854,7 +1366,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                           (master.items || []).forEach(ki => {
                               masterItems.push({ itemId: ki.itemId, quantity: ki.quantity });
                               (ki.accessories || []).forEach(acc => {
-                                  masterItems.push({ itemId: acc.itemId, quantity: acc.quantity * ki.quantity });
+                                  masterItems.push({ itemId: acc.itemId, quantity: acc.quantity });
                               });
                           });
                           masterItems.sort((a, b) => (a.itemId || '').localeCompare(b.itemId || ''));
@@ -883,7 +1395,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                       return {
                                           itemId: acc.itemId,
                                           name: accItem?.name || '?',
-                                          quantity: acc.quantity * ki.quantity,
+                                          quantity: acc.quantity,
                                           category: accItem?.category || 'Altro'
                                       };
                                   });
@@ -980,7 +1492,45 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       const baseList = activeListRef.current || activeList;
       if (!baseList) return;
       
-      const updatedList = { ...baseList, ...updates };
+      const mergedZones = updates.zones
+        ? mergeDesignerZonesWithWarehouseReplacements(updates.zones, rawActiveList?.zones)
+        : undefined;
+      const effectiveUpdates = mergedZones ? { ...updates, zones: mergedZones } : updates;
+
+      // History tracking: if zones are modified and this is not an undo/redo execution, push previous zones to historyPast
+      if (effectiveUpdates.zones && !isUndoRedoActionRef.current && baseList.zones) {
+          const prevZones = baseList.zones;
+          // Check if zones actually changed before pushing to history
+          if (JSON.stringify(prevZones) !== JSON.stringify(effectiveUpdates.zones)) {
+              setHistoryPast(past => [...past.slice(-14), prevZones]);
+              setHistoryFuture([]); // clear redo stack on new user modification
+          }
+      }
+
+      // If list is completed and has a snapshot, mirror zone metadata in the snapshot so it stays in sync
+      if (baseList.snapshot && effectiveUpdates.zones) {
+        const updatedSnapshot = baseList.snapshot.map(sz => {
+          const matchingZone = effectiveUpdates.zones!.find(z => (z.id && sz.id ? z.id === sz.id : z.name === sz.name));
+          if (!matchingZone) return sz;
+          return {
+            ...sz,
+            name: matchingZone.name,
+            notes: matchingZone.notes,
+            location: matchingZone.location,
+            setupCompany: matchingZone.setupCompany,
+            setupDate: matchingZone.setupDate,
+            showDate: matchingZone.showDate,
+            showTimeStart: matchingZone.showTimeStart,
+            showTimeEnd: matchingZone.showTimeEnd,
+            teardownDate: matchingZone.teardownDate,
+            returnDate: matchingZone.returnDate,
+            personnel: matchingZone.personnel,
+          };
+        });
+        effectiveUpdates.snapshot = updatedSnapshot;
+      }
+
+      const updatedList = { ...baseList, ...effectiveUpdates };
       activeListRef.current = updatedList as PackingList; // Optimistic sync
       setLocalList(updatedList as PackingList); // Update UI instantly
 
@@ -988,12 +1538,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         if (pendingUpdatesRef.current) {
           await flushPendingListUpdates();
         }
-        pendingUpdatesRef.current = { listId: baseList.id, updates: { ...updates } };
+        pendingUpdatesRef.current = { listId: baseList.id, updates: { ...effectiveUpdates } };
         pendingWritesRef.current++;
       } else {
         pendingUpdatesRef.current.updates = {
           ...pendingUpdatesRef.current.updates,
-          ...updates
+          ...effectiveUpdates
         };
       }
 
@@ -1009,8 +1559,48 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           debounceCommitTimerRef.current = setTimeout(async () => {
             await flushPendingListUpdates();
             resolve();
-          }, 350);
+          }, 300); // 300ms coalescing debounce for fast multi-user propagation
         });
+      }
+  };
+
+  const handleUndoList = async () => {
+      if (historyPast.length === 0) return;
+      const baseList = activeListRef.current || activeList;
+      if (!baseList || !baseList.zones) return;
+
+      const previousZones = historyPast[historyPast.length - 1];
+      const newPast = historyPast.slice(0, -1);
+      const currentZones = baseList.zones;
+
+      setHistoryPast(newPast);
+      setHistoryFuture(future => [...future.slice(-14), currentZones]);
+
+      isUndoRedoActionRef.current = true;
+      try {
+          await updateActiveList({ zones: previousZones });
+      } finally {
+          isUndoRedoActionRef.current = false;
+      }
+  };
+
+  const handleRedoList = async () => {
+      if (historyFuture.length === 0) return;
+      const baseList = activeListRef.current || activeList;
+      if (!baseList || !baseList.zones) return;
+
+      const nextZones = historyFuture[historyFuture.length - 1];
+      const newFuture = historyFuture.slice(0, -1);
+      const currentZones = baseList.zones;
+
+      setHistoryFuture(newFuture);
+      setHistoryPast(past => [...past.slice(-14), currentZones]);
+
+      isUndoRedoActionRef.current = true;
+      try {
+          await updateActiveList({ zones: nextZones });
+      } finally {
+          isUndoRedoActionRef.current = false;
       }
   };
 
@@ -1112,6 +1702,66 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       
       const draggedIndex = sections.findIndex(s => s.id === draggedSectionId);
       const currentIndex = sections.findIndex(s => s.id === currentSectionId);
+      
+      if (draggedIndex === -1 || currentIndex === -1) return '';
+      
+      if (draggedIndex < currentIndex) {
+          return 'border-r-4 border-r-blue-500 pr-1 transition-all';
+      } else {
+          return 'border-l-4 border-l-blue-500 pl-1 transition-all';
+      }
+  };
+
+  // Drag & drop handlers for zones
+  const handleZoneDragStart = (e: React.DragEvent, id: string) => {
+      e.dataTransfer.setData('text/plain', id);
+      setDraggedZoneId(id);
+  };
+
+  const handleZoneDragOver = (e: React.DragEvent, id: string) => {
+      e.preventDefault();
+      if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+      }
+      if (dragOverZoneId !== id) {
+          setDragOverZoneId(id);
+      }
+  };
+
+  const handleZoneDragLeave = () => {
+      setDragOverZoneId(null);
+  };
+
+  const handleZoneDragEnd = () => {
+      setDraggedZoneId(null);
+      setDragOverZoneId(null);
+  };
+
+  const handleZoneDrop = (e: React.DragEvent, targetId: string) => {
+      e.preventDefault();
+      const sourceId = e.dataTransfer.getData('text/plain') || draggedZoneId;
+      setDraggedZoneId(null);
+      setDragOverZoneId(null);
+      
+      if (!sourceId || sourceId === targetId || !activeList || !activeList.zones) return;
+      
+      const newZones = [...activeList.zones];
+      const sourceIndex = newZones.findIndex(z => z.id === sourceId);
+      const targetIndex = newZones.findIndex(z => z.id === targetId);
+      
+      if (sourceIndex === -1 || targetIndex === -1) return;
+      
+      const [removed] = newZones.splice(sourceIndex, 1);
+      newZones.splice(targetIndex, 0, removed);
+      
+      updateActiveList({ zones: newZones });
+  };
+
+  const getZoneDragIndicatorClass = (currentZoneId: string) => {
+      if (!draggedZoneId || dragOverZoneId !== currentZoneId || draggedZoneId === currentZoneId) return '';
+      
+      const draggedIndex = zones.findIndex(z => z.id === draggedZoneId);
+      const currentIndex = zones.findIndex(z => z.id === currentZoneId);
       
       if (draggedIndex === -1 || currentIndex === -1) return '';
       
@@ -1341,15 +1991,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setClipboardPasted(true);
   };
   const handleBulkDelete = () => {
-      if (!activeList || !activeList.zones) return;
-      // We need to iterate ALL sections in ALL zones because selection can be cross-section? 
-      // Actually, selection currently resets when changing section. So we only delete from active section usually.
-      // But let's be safe and filter from active section.
-      if (activeSection) {
-          const newComps = activeSection.components.filter(c => !selectedIds.has(c.uniqueId));
-          updateActiveSection({ components: newComps });
-          setSelectedIds(new Set());
-      }
+      if (!activeList || !activeList.zones || selectedIds.size === 0) return;
+      setGenericConfirm({
+          isOpen: true,
+          title: "Elimina Elementi Selezionati",
+          message: `Confermi di voler eliminare ${selectedIds.size} elemento/i selezionato/i da "${activeSection?.name || 'questa sezione'}"?`,
+          confirmText: "Elimina",
+          variant: "danger",
+          onConfirm: () => {
+              if (activeSection) {
+                  const newComps = activeSection.components.filter(c => !selectedIds.has(c.uniqueId));
+                  updateActiveSection({ components: newComps });
+                  setSelectedIds(new Set());
+              }
+              setGenericConfirm(null);
+          }
+      });
   };
 
 
@@ -1540,7 +2197,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 return {
                   itemId: acc.itemId,
                   name: accItem?.name || '?',
-                  quantity: acc.quantity * ki.quantity,
+                  quantity: acc.quantity,
                   category: accItem?.category || 'Altro'
                 };
               });
@@ -1580,6 +2237,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   c.uniqueId === replacingComponentId ? { 
                       ...c, 
                       ...newBase, 
+                      warehouseState: c.warehouseState,
+                      contents: newBase.contents?.map((acc, accIdx) => {
+                          const oldSub = c.contents?.find(os => os.itemId === acc.itemId) || c.contents?.[accIdx];
+                          return {
+                              ...acc,
+                              warehouseState: oldSub?.warehouseState
+                          };
+                      }),
+                      replacementInfo: undefined,
                       isExternalRental,
                       rentalType,
                       externalRentalVendor: vendor
@@ -1697,9 +2363,21 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
 
   const removeComponent = (uniqueId: string) => {
-      updateActiveSection(currentSection => ({
-          components: currentSection.components.filter(c => c.uniqueId !== uniqueId)
-      }));
+      const comp = activeSection?.components.find(c => c.uniqueId === uniqueId);
+      const itemName = comp?.name || "questo elemento";
+      setGenericConfirm({
+          isOpen: true,
+          title: "Elimina Elemento",
+          message: `Confermi di voler rimuovere "${itemName}" dalla distinta?`,
+          confirmText: "Elimina",
+          variant: "danger",
+          onConfirm: () => {
+              updateActiveSection(currentSection => ({
+                  components: currentSection.components.filter(c => c.uniqueId !== uniqueId)
+              }));
+              setGenericConfirm(null);
+          }
+      });
   };
 
   const handleDragStart = (e: React.DragEvent, sectionId: string, index: number, uniqueId: string) => {
@@ -1776,9 +2454,51 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const computeVersionSnapshotDiff = (
     currentZones: ListZone[],
     previousSnapshot?: ListZone[],
-    isBump: boolean = true
+    isBump: boolean = true,
+    newVersion: string = '1.0',
+    nowIso: string = new Date().toISOString()
   ): { updatedZones: ListZone[]; newDeletedItems: any[] } => {
     const newDeletedItems: any[] = [...(activeList?.deletedItems || [])];
+
+    const buildVersionHistory = (
+      oldHistory: { version: string; name: string; quantity: number; wasChecked?: boolean; updatedAt?: string }[] | undefined,
+      prevEntry: { version: string; name: string; quantity: number; wasChecked: boolean; updatedAt: string },
+      newEntry: { version: string; name: string; quantity: number; wasChecked: boolean; updatedAt: string }
+    ) => {
+      const base = (oldHistory || []).map(h => {
+        if (h.version.toLowerCase() === prevEntry.version.toLowerCase()) {
+          return {
+            ...h,
+            wasChecked: prevEntry.wasChecked,
+            updatedAt: h.updatedAt || prevEntry.updatedAt
+          };
+        }
+        return h;
+      });
+      const hasPrev = base.some(h => h.version.toLowerCase() === prevEntry.version.toLowerCase());
+      const withPrev = hasPrev ? base : [...base, prevEntry];
+      const hasNew = withPrev.some(h => h.version.toLowerCase() === newEntry.version.toLowerCase());
+      return hasNew
+        ? withPrev.map(h => h.version.toLowerCase() === newEntry.version.toLowerCase() ? newEntry : h)
+        : [...withPrev, newEntry];
+    };
+
+    const syncHistoryCheckState = (
+      existingChangeLog: WarehouseState['changeLog'] | undefined,
+      isChecked: boolean
+    ): WarehouseState['changeLog'] | undefined => {
+      if (!existingChangeLog) return undefined;
+      if (!existingChangeLog.history || existingChangeLog.history.length === 0) {
+        return existingChangeLog;
+      }
+      const updatedHistory = existingChangeLog.history.map((h, i, arr) =>
+        i === arr.length - 1 ? { ...h, wasChecked: isChecked } : h
+      );
+      return {
+        ...existingChangeLog,
+        history: updatedHistory
+      };
+    };
 
     // 1. Identify deleted items from previous snapshot
     if (previousSnapshot && previousSnapshot.length > 0 && isBump) {
@@ -1806,7 +2526,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     originalComponent: tc,
                     zoneName: prevZone.name,
                     sectionName: prevSection.name,
-                    deletedAt: new Date().toISOString()
+                    deletedAt: nowIso
                   });
                 }
               });
@@ -1816,7 +2536,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   originalComponent: prevComp,
                   zoneName: prevZone.name,
                   sectionName: prevSection.name,
-                  deletedAt: new Date().toISOString()
+                  deletedAt: nowIso
                 });
               }
             }
@@ -1861,39 +2581,47 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
       // If there was a previous snapshot and this is an actual version bump
       if (isBump && previousSnapshot && previousSnapshot.length > 0) {
-        // Case 1: Existing item with modified quantity
-        if (prevComp && prevComp.quantity !== comp.quantity) {
-          const resetContents = comp.contents?.map(content => ({
-            ...content,
-            warehouseState: {
-              ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-              inDistinta: false,
-              loaded: false
-            }
-          }));
+        const cleanPrevVer = (activeList?.version || '1.0').toString().replace(/^[vV]+/, '');
+        const prevVerLabel = `v${cleanPrevVer}`;
+        const cleanNewVer = newVersion.toString().replace(/^[vV]+/, '');
+        const newVerLabel = `v${cleanNewVer}`;
+        const listPrevTimestamp = activeList?.completedAt || activeList?.creationDate || nowIso;
 
-          return {
-            ...comp,
-            contents: resetContents,
-            warehouseState: {
-              ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-              inDistinta: false,
-              loaded: false,
-              changeLog: { previousQuantity: prevComp.quantity, changedAt: new Date().toISOString() }
-            }
-          };
-        }
-
-        // Case 2: Brand new item added in this updated version
+        // Case 3: Brand new item added in this updated version (prevComp not found)
         if (!prevComp) {
-          const resetContents = comp.contents?.map(content => ({
-            ...content,
-            warehouseState: {
-              ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
-              inDistinta: false,
-              loaded: false
-            }
-          }));
+          const resetContents = comp.contents?.map(content => {
+            const subTotalQty = content.quantity * comp.quantity;
+            return {
+              ...content,
+              warehouseState: {
+                ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                inDistinta: false,
+                loaded: false,
+                changeLog: {
+                  previousQuantity: 0,
+                  previousVersion: prevVerLabel,
+                  wasChecked: false,
+                  history: [
+                    {
+                      version: prevVerLabel,
+                      name: content.name,
+                      quantity: 0,
+                      wasChecked: false,
+                      updatedAt: listPrevTimestamp
+                    },
+                    {
+                      version: newVerLabel,
+                      name: content.name,
+                      quantity: subTotalQty,
+                      wasChecked: false,
+                      updatedAt: nowIso
+                    }
+                  ],
+                  changedAt: nowIso
+                }
+              }
+            };
+          });
 
           return {
             ...comp,
@@ -1902,14 +2630,200 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
               inDistinta: false,
               loaded: false,
-              changeLog: { previousQuantity: 0, changedAt: new Date().toISOString() }
+              changeLog: {
+                previousQuantity: 0,
+                previousVersion: prevVerLabel,
+                wasChecked: false,
+                history: [
+                  {
+                    version: prevVerLabel,
+                    name: comp.name,
+                    quantity: 0,
+                    wasChecked: false,
+                    updatedAt: listPrevTimestamp
+                  },
+                  {
+                    version: newVerLabel,
+                    name: comp.name,
+                    quantity: comp.quantity,
+                    wasChecked: false,
+                    updatedAt: nowIso
+                  }
+                ],
+                changedAt: nowIso
+              }
             }
           };
         }
 
-        // Case 3: Unchanged item (prevComp.quantity === comp.quantity)
-        // Keep existing warehouseState intact!
-        return comp;
+        // Case 1: Item was replaced by another material (different referenceId, name, or type)
+        // Note: We compare directly against prevComp to avoid re-triggering from old changeLog.previousName!
+        const isReplaced = Boolean(
+          prevComp.referenceId !== comp.referenceId ||
+          prevComp.name !== comp.name ||
+          prevComp.type !== comp.type
+        );
+
+        // Case 2: Existing item with modified quantity
+        const isQuantityModified = Boolean(prevComp.quantity !== comp.quantity);
+
+        const prevCompTimestamp = prevComp.warehouseState?.changeLog?.changedAt || listPrevTimestamp;
+        // Preserve wasChecked status checking live state first, fallback to snapshot
+        const wasCompChecked = Boolean(
+          comp.warehouseState?.loaded || comp.warehouseState?.inDistinta ||
+          prevComp.warehouseState?.loaded || prevComp.warehouseState?.inDistinta
+        );
+
+        // Process sub-items/accessories for kit or items with contents
+        let anySubChanged = false;
+        const processedContents = comp.contents?.map((content, idx) => {
+          const prevSub = prevComp.contents?.find(ps => (content.itemId && ps.itemId && ps.itemId === content.itemId) || ps.name === content.name)
+            || prevComp.contents?.[idx];
+          const prevSubTotalQty = prevSub ? prevSub.quantity * prevComp.quantity : 0;
+          const currentSubTotalQty = content.quantity * comp.quantity;
+          const prevSubName = (prevSub && prevSub.name !== content.name) ? prevSub.name : undefined;
+          const wasSubChecked = Boolean(
+            content.warehouseState?.loaded || content.warehouseState?.inDistinta ||
+            prevSub?.warehouseState?.loaded || prevSub?.warehouseState?.inDistinta
+          );
+
+          const isSubReplaced = !prevSub || prevSub.itemId !== content.itemId || prevSub.name !== content.name;
+          const isSubQtyChanged = prevSub ? prevSubTotalQty !== currentSubTotalQty : true;
+          const subHasChanged = isReplaced || isQuantityModified || isSubReplaced || isSubQtyChanged;
+
+          if (subHasChanged) {
+            anySubChanged = true;
+            const oldSubHistory = prevSub?.warehouseState?.changeLog?.history || content.warehouseState?.changeLog?.history;
+            const prevSubTimestamp = prevSub?.warehouseState?.changeLog?.changedAt || prevCompTimestamp;
+            const newSubHistory = buildVersionHistory(
+              oldSubHistory,
+              {
+                version: prevVerLabel,
+                name: prevSub ? prevSub.name : content.name,
+                quantity: prevSubTotalQty,
+                wasChecked: wasSubChecked,
+                updatedAt: prevSubTimestamp
+              },
+              {
+                version: newVerLabel,
+                name: content.name,
+                quantity: currentSubTotalQty,
+                wasChecked: false,
+                updatedAt: nowIso
+              }
+            );
+
+            return {
+              ...content,
+              warehouseState: {
+                ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                inDistinta: false,
+                loaded: false,
+                changeLog: {
+                  previousQuantity: prevSubTotalQty,
+                  previousName: prevSubName || (isReplaced ? (prevSub ? prevSub.name : undefined) : undefined),
+                  previousVersion: prevVerLabel,
+                  wasChecked: wasSubChecked,
+                  history: newSubHistory,
+                  changedAt: nowIso
+                }
+              }
+            };
+          } else {
+            // UNCHANGED ACCESSORY: preserve checkmarks, notes, AND prior version history if it was modified in an earlier version
+            const baseSubWs = content.warehouseState || prevSub?.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
+            const priorSubChangeLog = syncHistoryCheckState(
+              prevSub?.warehouseState?.changeLog || content.warehouseState?.changeLog,
+              wasSubChecked
+            );
+            const { changeLog: _subOldChangeLog, ...cleanSubWs } = baseSubWs;
+            return {
+              ...content,
+              warehouseState: priorSubChangeLog
+                ? { ...cleanSubWs, changeLog: priorSubChangeLog }
+                : (cleanSubWs as any)
+            };
+          }
+        });
+
+        // If the item or its quantity or any of its contents changed:
+        if (isReplaced || isQuantityModified || anySubChanged) {
+          const oldCompHistory = prevComp.warehouseState?.changeLog?.history || comp.warehouseState?.changeLog?.history;
+          const resetParentChecks = isReplaced || isQuantityModified;
+          const newCompHistory = buildVersionHistory(
+            oldCompHistory,
+            {
+              version: prevVerLabel,
+              name: prevComp.name,
+              quantity: prevComp.quantity,
+              wasChecked: wasCompChecked,
+              updatedAt: prevCompTimestamp
+            },
+            {
+              version: newVerLabel,
+              name: comp.name,
+              quantity: comp.quantity,
+              wasChecked: resetParentChecks ? false : wasCompChecked,
+              updatedAt: nowIso
+            }
+          );
+
+          const previousName = isReplaced ? prevComp.name : undefined;
+
+          return {
+            ...comp,
+            contents: processedContents,
+            warehouseState: {
+              ...comp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+              inDistinta: resetParentChecks ? false : (comp.warehouseState?.inDistinta || false),
+              loaded: resetParentChecks ? false : (comp.warehouseState?.loaded || false),
+              changeLog: { 
+                previousQuantity: prevComp.quantity, 
+                previousName,
+                previousVersion: prevVerLabel,
+                wasChecked: wasCompChecked,
+                history: newCompHistory,
+                changedAt: nowIso 
+              }
+            }
+          };
+        }
+
+        // Case 4: Unchanged item in this version bump
+        // Preserve current warehouse checkmarks, notes, AND any prior version changeLog so history is retained across v1.1 -> v1.2!
+        const baseCompWs = comp.warehouseState || prevComp.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
+        const priorCompChangeLog = syncHistoryCheckState(
+          prevComp.warehouseState?.changeLog || comp.warehouseState?.changeLog,
+          wasCompChecked
+        );
+        const { changeLog: _oldChangeLog, ...cleanWs } = baseCompWs;
+        const cleanContents = comp.contents?.map((content, idx) => {
+          const prevSub = prevComp.contents?.find(ps => ps.itemId === content.itemId) || prevComp.contents?.[idx];
+          const wasSubChecked = Boolean(
+            content.warehouseState?.loaded || content.warehouseState?.inDistinta ||
+            prevSub?.warehouseState?.loaded || prevSub?.warehouseState?.inDistinta
+          );
+          const baseSubWs = content.warehouseState || prevSub?.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
+          const priorSubChangeLog = syncHistoryCheckState(
+            prevSub?.warehouseState?.changeLog || content.warehouseState?.changeLog,
+            wasSubChecked
+          );
+          const { changeLog: _subOldChangeLog, ...cleanSubWs } = baseSubWs;
+          return {
+            ...content,
+            warehouseState: priorSubChangeLog
+              ? { ...cleanSubWs, changeLog: priorSubChangeLog }
+              : (cleanSubWs as any)
+          };
+        });
+
+        return {
+          ...comp,
+          contents: cleanContents || comp.contents,
+          warehouseState: priorCompChangeLog
+            ? { ...cleanWs, changeLog: priorCompChangeLog }
+            : (cleanWs as any)
+        };
       }
 
       return comp;
@@ -1928,42 +2842,111 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   const handleCompleteList = async (isUpdate: boolean = false) => {
     if (!activeList || !activeList.zones) return;
+    if (isUpdate && !hasUnsavedVersionChanges) return;
     
     let newVersion = '1.0';
     if (activeList.version) {
-        const parts = activeList.version.split('.');
-        const major = parseInt(parts[0]) || 0;
-        const minor = parseInt(parts[1] || '0');
+        const cleanVer = activeList.version.toString().replace(/^[vV]+/, '');
+        const parts = cleanVer.split('.');
+        const major = parseInt(parts[0], 10) || 0;
+        const minor = parseInt(parts[1] || '0', 10);
 
         if (isUpdate) {
             newVersion = `${major >= 1 ? major : 1}.${minor + 1}`;
         } else {
-            if (major >= 1) newVersion = activeList.version;
+            if (major >= 1) newVersion = cleanVer;
             else newVersion = '1.0';
         }
     }
 
-    const currentZones = activeList.zones;
+    const nowIso = new Date().toISOString();
+
+    // Merge live warehouse states from remote rawActiveList into currentZones
+    // so no technician checkmarks that arrived from Firestore are missed
+    const remoteZones = rawActiveList?.zones;
+    let baseZones = designerZones;
+    if (remoteZones && remoteZones.length > 0) {
+      const remoteMap = new Map<string, { ws?: WarehouseState; contents?: any[] }>();
+      remoteZones.forEach(rz => rz.sections.forEach(rs => rs.components.forEach(rc => {
+        remoteMap.set(rc.uniqueId, { ws: rc.warehouseState, contents: rc.contents });
+      })));
+
+      baseZones = designerZones.map(z => ({
+        ...z,
+        sections: z.sections.map(s => ({
+          ...s,
+          components: s.components.map(c => {
+            const rem = remoteMap.get(c.uniqueId);
+            if (!rem) return c;
+
+            const remWs = rem.ws;
+            const currentWs = c.warehouseState;
+            const mergedWs = {
+              ...currentWs,
+              loaded: remWs?.loaded || currentWs?.loaded || false,
+              inDistinta: remWs?.inDistinta || currentWs?.inDistinta || false,
+              returned: remWs?.returned || currentWs?.returned || false,
+              isBroken: remWs?.isBroken !== undefined ? remWs.isBroken : currentWs?.isBroken,
+              warehouseNote: remWs?.warehouseNote || currentWs?.warehouseNote || ''
+            };
+
+            let mergedContents = c.contents;
+            if (c.contents && rem.contents) {
+              mergedContents = c.contents.map((sub, idx) => {
+                const remSub = rem.contents?.find((rs: any) => (sub.itemId && rs.itemId && rs.itemId === sub.itemId) || rs.name === sub.name) || rem.contents?.[idx];
+                if (!remSub?.warehouseState) return sub;
+                return {
+                  ...sub,
+                  warehouseState: {
+                    ...sub.warehouseState,
+                    loaded: remSub.warehouseState.loaded || sub.warehouseState?.loaded || false,
+                    inDistinta: remSub.warehouseState.inDistinta || sub.warehouseState?.inDistinta || false,
+                    returned: remSub.warehouseState.returned || sub.warehouseState?.returned || false,
+                    isBroken: remSub.warehouseState.isBroken !== undefined ? remSub.warehouseState.isBroken : sub.warehouseState?.isBroken,
+                    warehouseNote: remSub.warehouseState.warehouseNote || sub.warehouseState?.warehouseNote || ''
+                  }
+                };
+              });
+            }
+
+            return {
+              ...c,
+              warehouseState: mergedWs,
+              contents: mergedContents
+            };
+          })
+        }))
+      }));
+    }
+
     const { updatedZones, newDeletedItems } = computeVersionSnapshotDiff(
-      currentZones,
+      baseZones,
       activeList.snapshot,
-      isUpdate
+      isUpdate,
+      newVersion,
+      nowIso
     );
+
+    setShowUpdateReminderBanner(false);
+
+    const mergedWithWarehouse = mergeDesignerZonesWithWarehouseReplacements(updatedZones, rawActiveList?.zones);
 
     await updateActiveList({
         version: newVersion,
         snapshot: updatedZones,
-        zones: updatedZones,
+        zones: mergedWithWarehouse,
         deletedItems: newDeletedItems,
-        completedAt: new Date().toISOString(),
+        completedAt: nowIso,
         isCompleted: true,
         isDraftVisible: false
-    });
+    }, true);
     
     setFeedbackModal({ 
         isOpen: true, 
-        title: 'Operazione Completata', 
-        message: `Lista completata con successo! Versione: ${newVersion}`,
+        title: isUpdate ? 'Versione Aggiornata' : 'Operazione Completata', 
+        message: isUpdate 
+            ? `Lista aggiornata alla versione v${newVersion}!`
+            : `Lista completata con successo! Versione: ${newVersion}`,
         type: 'success'
     });
   };
@@ -1993,36 +2976,341 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     });
   };
 
-  const handleShowDraftInWarehouse = async () => {
+  const handleShowDraftInWarehouse = () => {
     if (!activeList) return;
-    
-    let newVersion = activeList.version || '0.1';
-    if (activeList.version) {
-        const parts = activeList.version.split('.');
-        const minor = parseInt(parts[1] || '0');
-        newVersion = `0.${minor + 1}`;
-    }
 
-    const { updatedZones, newDeletedItems } = computeVersionSnapshotDiff(
-      activeList.zones,
-      activeList.snapshot,
-      true
+    setGenericConfirm({
+        isOpen: true,
+        title: 'Rendi Visibile Bozza',
+        message: 'Confermi di voler rendere visibile questa BOZZA di materiale in Preparazione Eventi (Magazzino)? Il magazzino potrà esclusivamente visualizzarla in sola lettura senza possibilità di modifica o spunta.',
+        confirmText: 'Conferma Bozza',
+        variant: 'primary',
+        onConfirm: async () => {
+            let newVersion = activeList.version || '0.1';
+            if (activeList.version) {
+                const cleanVer = activeList.version.toString().replace(/^[vV]+/, '');
+                const parts = cleanVer.split('.');
+                const minor = parseInt(parts[1] || '0', 10);
+                newVersion = `0.${minor + 1}`;
+            }
+
+            const { updatedZones, newDeletedItems } = computeVersionSnapshotDiff(
+              activeList.zones,
+              activeList.snapshot,
+              true
+            );
+
+            await updateActiveList({
+                isDraftVisible: true,
+                version: newVersion,
+                snapshot: updatedZones,
+                zones: updatedZones,
+                deletedItems: newDeletedItems
+            });
+            
+            setFeedbackModal({ 
+                isOpen: true, 
+                title: 'Bozza Inviata', 
+                message: `Bozza resa visibile in Preparazione Eventi! (v${newVersion})`,
+                type: 'success'
+            });
+        }
+    });
+  };
+
+  const formatBuilderHistoryDateTime = (isoStr?: string) => {
+    if (!isoStr) return '-';
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '-';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = String(d.getFullYear()).slice(-2);
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
+  };
+
+  const renderBuilderHistoryBadge = (
+    tooltipKey: string,
+    changeLog?: WarehouseState['changeLog'],
+    materialName?: string,
+    currentQty?: number,
+    isCheckedNow?: boolean,
+    pendingChange?: { isPending: boolean; prevName?: string; prevQuantity?: number }
+  ) => {
+    const isPending = Boolean(pendingChange?.isPending);
+    const hasHistoryData = Boolean(
+      changeLog && (
+        (changeLog.history && changeLog.history.length > 0) ||
+        changeLog.previousQuantity !== undefined ||
+        Boolean(changeLog.previousName)
+      )
     );
+    if (!isPending && (!hasHistoryData || !changeLog)) return null;
 
-    await updateActiveList({
-        isDraftVisible: true,
-        version: newVersion,
-        snapshot: updatedZones,
-        zones: updatedZones,
-        deletedItems: newDeletedItems
-    });
-    
-    setFeedbackModal({ 
-        isOpen: true, 
-        title: 'Bozza Inviata', 
-        message: `Bozza inviata al Magazzino! (v${newVersion})`,
-        type: 'success'
-    });
+    const isTooltipOpen = activeHistoryTooltipId === tooltipKey;
+    const prevVerDefault = (() => {
+      if (!activeList?.version) return '1.0';
+      const parts = activeList.version.split('.');
+      const major = parseInt(parts[0]) || 1;
+      const minor = parseInt(parts[1] || '0');
+      return minor > 0 ? `${major}.${minor - 1}` : '1.0';
+    })();
+
+    const nextVerLabel = (() => {
+      if (!activeList?.version) return 'v1.1';
+      const parts = activeList.version.split('.');
+      const major = parseInt(parts[0]) || 1;
+      const minor = parseInt(parts[1] || '0');
+      return `v${major >= 1 ? major : 1}.${minor + 1}`;
+    })();
+
+    return (
+      <div className="relative inline-flex items-center shrink-0">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (activeHistoryTooltipId === tooltipKey) {
+              setActiveHistoryTooltipId(null);
+              setHistoryTooltipAnchor(null);
+            } else {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setHistoryTooltipAnchor(rect);
+              setActiveHistoryTooltipId(tooltipKey);
+            }
+          }}
+          className={`p-1 rounded-full border shadow-md flex items-center justify-center shrink-0 cursor-pointer transition-all hover:scale-110 ${
+            isPending
+              ? 'bg-amber-950/80 border-amber-500 text-amber-400 hover:bg-amber-900 animate-pulse shadow-amber-900/30'
+              : 'bg-emerald-950/80 border-emerald-500 text-emerald-400 hover:bg-emerald-900 shadow-emerald-900/30'
+          }`}
+          title={
+            isPending
+              ? "Modifica in attesa di aggiornamento (non ancora inviata al magazzino) - Clicca per visualizzare"
+              : "Storico modifiche versioni - Clicca per visualizzare"
+          }
+        >
+          <AlertTriangle
+            size={13}
+            className={
+              isPending
+                ? "text-amber-400 fill-amber-500/20"
+                : "text-emerald-400 fill-emerald-500/20"
+            }
+          />
+        </button>
+
+        {isTooltipOpen && historyTooltipAnchor && typeof document !== 'undefined' && createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[190] bg-transparent cursor-default"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveHistoryTooltipId(null);
+                setHistoryTooltipAnchor(null);
+              }}
+            />
+            {(() => {
+              const tooltipWidth = Math.min(420, (typeof window !== 'undefined' ? window.innerWidth : 440) - 20);
+              const margin = 10;
+              const buttonCenterX = historyTooltipAnchor.left + historyTooltipAnchor.width / 2;
+
+              let left = buttonCenterX - tooltipWidth / 2;
+              if (left < margin) left = margin;
+              if (left + tooltipWidth > window.innerWidth - margin) {
+                left = window.innerWidth - margin - tooltipWidth;
+              }
+
+              const showBelow = historyTooltipAnchor.top < 200;
+              const top = showBelow
+                ? historyTooltipAnchor.bottom + 8
+                : Math.max(margin, historyTooltipAnchor.top - 8);
+
+              const historyRows: { version: string; name: string; quantity: number; wasChecked: boolean; updatedAt?: string; isDraft?: boolean }[] = [];
+              const currVer = `V${(activeList?.version || '1.0').toString().replace(/^[vV]+/, '')}`;
+              const rawPrevVer = (changeLog?.previousVersion || prevVerDefault).toString().replace(/^[vV]+/, '');
+              const prevVer = `V${rawPrevVer}`;
+
+              if (isPending) {
+                // If there were historical versions before this snapshot
+                if (changeLog?.history && changeLog.history.length > 0) {
+                  changeLog.history.forEach((h) => {
+                    const normVer = `V${(h.version || '').toString().replace(/^[vV]+/, '')}`;
+                    if (normVer.toUpperCase() !== currVer.toUpperCase()) {
+                      historyRows.push({
+                        version: normVer,
+                        name: h.name,
+                        quantity: h.quantity,
+                        wasChecked: Boolean(h.wasChecked),
+                        updatedAt: h.updatedAt || changeLog?.changedAt || activeList?.creationDate
+                      });
+                    }
+                  });
+                }
+
+                // Add the snapshot/current confirmed version row
+                const snapshotQty = pendingChange?.prevQuantity !== undefined
+                  ? pendingChange.prevQuantity
+                  : (changeLog?.previousQuantity ?? 0);
+                const snapshotName = pendingChange?.prevName || changeLog?.previousName || materialName || 'Materiale';
+
+                historyRows.push({
+                  version: currVer,
+                  name: snapshotName,
+                  quantity: snapshotQty,
+                  wasChecked: Boolean(isCheckedNow ?? changeLog?.wasChecked),
+                  updatedAt: activeList?.completedAt || activeList?.creationDate
+                });
+
+                // Add the pending draft row
+                historyRows.push({
+                  version: `${nextVerLabel.toUpperCase()} (Bozza)`,
+                  name: materialName || 'Materiale',
+                  quantity: currentQty ?? 0,
+                  wasChecked: false,
+                  updatedAt: undefined,
+                  isDraft: true
+                });
+              } else if (changeLog) {
+                if (changeLog.history && changeLog.history.length > 0) {
+                  changeLog.history.forEach((h, idx) => {
+                    const normVer = h.version.toUpperCase().startsWith('V') ? h.version.toUpperCase() : `V${h.version}`;
+                    const isLastRow = idx === changeLog.history!.length - 1;
+                    const isCurrentOrLastPostChange = normVer === currVer.toUpperCase() || (isLastRow && changeLog.history!.length >= 2 && Boolean(h.updatedAt));
+                    historyRows.push({
+                      version: normVer,
+                      name: h.name,
+                      quantity: h.quantity,
+                      wasChecked: isCurrentOrLastPostChange ? Boolean(isCheckedNow ?? h.wasChecked) : Boolean(h.wasChecked),
+                      updatedAt: h.updatedAt || (isLastRow ? (changeLog.changedAt || activeList?.completedAt) : activeList?.creationDate)
+                    });
+                  });
+
+                  const lastEntry = changeLog.history[changeLog.history.length - 1];
+                  const hasPostChangeRow =
+                    historyRows.some(h => h.version.toUpperCase() === currVer.toUpperCase()) ||
+                    (historyRows.length >= 2 && Boolean(lastEntry?.updatedAt));
+                  if (!hasPostChangeRow) {
+                    historyRows.push({
+                      version: currVer,
+                      name: materialName || changeLog.previousName || 'Materiale',
+                      quantity: currentQty ?? 0,
+                      wasChecked: Boolean(isCheckedNow),
+                      updatedAt: changeLog.changedAt || activeList?.completedAt
+                    });
+                  }
+                } else {
+                  if (changeLog.previousQuantity !== undefined || changeLog.previousName) {
+                    historyRows.push({
+                      version: prevVer,
+                      name: changeLog.previousName || materialName || 'Materiale',
+                      quantity: changeLog.previousQuantity ?? 0,
+                      wasChecked: Boolean(changeLog.wasChecked),
+                      updatedAt: activeList?.creationDate
+                    });
+                  }
+                  historyRows.push({
+                    version: currVer,
+                    name: materialName || 'Materiale',
+                    quantity: currentQty ?? 0,
+                    wasChecked: Boolean(isCheckedNow),
+                    updatedAt: changeLog.changedAt || activeList?.completedAt
+                  });
+                }
+              }
+
+              return (
+                <div
+                  className={`fixed z-[200] p-3 bg-slate-900 border-2 ${
+                    isPending ? 'border-amber-500/90 shadow-amber-950/50' : 'border-emerald-500/90 shadow-emerald-950/50'
+                  } rounded-xl shadow-2xl text-xs text-slate-200 pointer-events-auto animate-in zoom-in-95 duration-150 ${showBelow ? '' : '-translate-y-full'}`}
+                  style={{ top: `${top}px`, left: `${left}px`, width: `${tooltipWidth}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-bold ${isPending ? 'text-amber-400' : 'text-emerald-400'} text-xs uppercase tracking-wider`}>
+                        {isPending ? 'Modifica non inviata' : 'Aggiornato'}
+                      </span>
+                      {isPending && (
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 rounded font-bold uppercase">
+                          In attesa
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveHistoryTooltipId(null);
+                        setHistoryTooltipAnchor(null);
+                      }}
+                      className="text-slate-500 hover:text-white p-0.5 rounded transition-colors"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+
+                  {isPending && (
+                    <div className="mb-2 p-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 flex items-start gap-1.5 leading-snug">
+                      <AlertTriangle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        Modifica non ancora inviata al magazzino. Premi <strong>Aggiorna {nextVerLabel}</strong> per confermarla!
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-[11px]">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-semibold">
+                          <th className="py-1 pr-1.5">Ver.</th>
+                          <th className="py-1 px-1.5">Data / Ora</th>
+                          <th className="py-1 px-1.5">Materiale</th>
+                          <th className="py-1 px-1.5 text-center">Q.tà</th>
+                          <th className="py-1 pl-1.5 text-center">Spunta</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {historyRows.map((row, idx) => (
+                          <tr key={idx} className={row.isDraft ? 'text-amber-200 bg-amber-500/5' : 'text-slate-200'}>
+                            <td className={`py-1.5 pr-1.5 font-mono font-bold whitespace-nowrap ${row.isDraft ? 'text-amber-400 font-extrabold' : 'text-amber-400'}`}>
+                              {row.version}
+                            </td>
+                            <td className="py-1.5 px-1.5 font-mono text-[10px] text-slate-400 whitespace-nowrap">
+                              {row.updatedAt ? formatBuilderHistoryDateTime(row.updatedAt) : (
+                                <span className="text-amber-400/90 font-sans font-bold text-[10px]">In attesa</span>
+                              )}
+                            </td>
+                            <td className="py-1.5 px-1.5 font-medium text-white max-w-[130px] truncate" title={row.name}>
+                              {row.name}
+                            </td>
+                            <td className="py-1.5 px-1.5 font-mono font-bold text-center whitespace-nowrap text-amber-300">
+                              x{row.quantity}
+                            </td>
+                            <td className="py-1.5 pl-1.5 text-center">
+                              <div className="inline-flex items-center justify-center">
+                                {row.wasChecked ? (
+                                  <CheckSquare size={14} className="text-emerald-400" />
+                                ) : (
+                                  <Square size={14} className="text-slate-600" />
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </>,
+          document.body
+        )}
+      </div>
+    );
   };
 
   const handleUpdateDraftVersion = async () => {
@@ -2107,7 +3395,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           
           <div className="flex items-center gap-2 w-full xl:w-auto">
              <button onClick={() => setActiveListAction(p => p === 'duplicate' ? null : 'duplicate')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'duplicate' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Copia"><ClipboardCopy size={18}/> <span className="hidden sm:inline">Copia</span></button>
-             <button onClick={() => setActiveListAction(p => p === 'edit' ? null : 'edit')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'edit' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Modifica"><Edit2 size={18}/> <span className="hidden sm:inline">Modifica</span></button>
              <button onClick={() => setActiveListAction(p => p === 'delete' ? null : 'delete')} className={`p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:flex-none gap-2 font-medium transition-colors whitespace-nowrap ${activeListAction === 'delete' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} title="Elimina"><Trash2 size={18}/> <span className="hidden sm:inline">Elimina</span></button>
              <button onClick={() => { handleCreateList(); setActiveListAction(null); }} className="bg-purple-600 hover:bg-purple-500 text-white p-3 sm:px-4 sm:py-3 rounded-lg flex items-center justify-center flex-1 md:w-auto gap-2 font-medium transition-colors xl:ml-auto" title="Nuovo Evento"><Plus size={20} /> <span className="hidden sm:inline">Nuovo Evento</span></button>
           </div>
@@ -2120,8 +3407,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 <div key={list.id} 
                      onClick={(e) => { 
                          if (activeListAction === 'duplicate') { handleDuplicateList(list, e as any); setActiveListAction(null); } 
-                         else if (activeListAction === 'edit') { openEventModal(list, e as any); setActiveListAction(null); } 
-                         else if (activeListAction === 'delete') { setListToDeleteInfo({ id: list.id, name: list.eventName }); setActiveListAction(null); } 
+                         else if (activeListAction === 'delete') { setListToDeleteInfo({ id: list.id, name: list.eventName || (list as any).name || 'Senza Nome' }); setActiveListAction(null); } 
                          else { handleListSelect(list.id); } 
                      }} 
                      className={`bg-slate-800 border rounded-lg p-3 sm:p-4 cursor-pointer transition-all relative flex flex-col md:flex-row items-start md:items-center gap-2 sm:gap-4 ${activeListAction ? 'hover:border-emerald-500 hover:bg-slate-700 ring-4 ring-transparent hover:ring-emerald-500/20' : 'border-slate-700 hover:border-slate-500 group'}`}
@@ -2131,11 +3417,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   <div className="flex-1 min-w-0 w-full">
                       <div className="flex items-center gap-4">
                         <div className="hidden sm:flex w-12 h-12 rounded bg-emerald-900/20 items-center justify-center text-emerald-500 shrink-0 font-bold text-xl">
-                            {list.eventName.substring(0, 1).toUpperCase()}
+                            {(list.eventName || (list as any).name || 'E').substring(0, 1).toUpperCase()}
                         </div>
                         <div className="min-w-0 flex-1">
                              <div className="flex flex-nowrap items-center justify-between gap-2 overflow-hidden">
-                                <h3 className="font-bold text-base sm:text-lg text-white group-hover:text-emerald-400 transition-colors truncate min-w-0 flex-1">{list.eventName}</h3>
+                                <h3 className="font-bold text-base sm:text-lg text-white group-hover:text-emerald-400 transition-colors truncate min-w-0 flex-1">{list.eventName || (list as any).name || 'Senza Nome'}</h3>
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); setActiveRemindersListId(list.id); }}
                                   className={`p-1.5 rounded-full hover:bg-slate-700 transition-colors shrink-0 ${list.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-600 hover:text-slate-300'}`}
@@ -2144,18 +3430,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                   <Lightbulb size={20} className={list.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
                                 </button>
                                 <button 
+                                  onClick={(e) => { e.stopPropagation(); setSummaryEvent(list); }}
+                                  className="p-1.5 rounded-full hover:bg-slate-700 text-slate-400 hover:text-cyan-400 transition-colors shrink-0"
+                                  title="Dettagli e Schema Zone"
+                                >
+                                  <Info size={18} />
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); openEventModal(list, e); }}
+                                  className="p-1.5 rounded-full hover:bg-slate-700 text-slate-400 hover:text-emerald-400 transition-colors shrink-0"
+                                  title="Modifica Evento"
+                                >
+                                  <Edit2 size={18} />
+                                </button>
+                                <button 
                                   onClick={(e) => { e.stopPropagation(); setListToShare(list); }}
                                   className="p-1.5 rounded-full hover:bg-slate-700 text-slate-400 hover:text-blue-400 transition-colors shrink-0"
                                   title="Condividi Evento"
                                 >
                                   <Share2 size={18} />
                                 </button>
-                                {list.databaseId && list.databaseId !== 'default' && (
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950/70 border border-blue-800/50 text-blue-300 flex items-center gap-1 shrink-0" title={`Database: ${databases?.find(d => d.id === list.databaseId)?.name || list.databaseId}`}>
-                                    <Database size={11} className="text-blue-400" />
-                                    <span>{databases?.find(d => d.id === list.databaseId)?.name || list.databaseId}</span>
-                                  </span>
-                                )}
                                 {list.version && <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono shrink-0">v{list.version}</span>}
                              </div>
                              <div className="hidden md:flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-1 text-sm text-slate-400 mt-1">
@@ -2270,20 +3564,116 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   }
 
   return (
-    <div className={`h-full flex flex-col p-4 overflow-hidden transition-all duration-300 ${isPickerFilterModalOpen ? 'lg:mr-[400px]' : ''}`}>
-      <div className="flex-1 flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
+    <div className={`h-full flex flex-col p-0 sm:p-4 overflow-hidden transition-all duration-300 ${isPickerFilterModalOpen ? 'lg:mr-[400px]' : ''}`}>
+      {/* MODALITÀ SOSTITUZIONE BANNER (Compact, non copre i bottoni del builder) */}
+      {replacingComponentId && (
+        <div className="shrink-0 z-40 bg-amber-900/95 border-b border-amber-500/60 px-3 py-1.5 sm:py-2 text-amber-100 flex items-center justify-between shadow-lg text-xs sm:text-sm animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-2 font-bold min-w-0">
+            <ArrowLeftRight className="shrink-0 text-amber-300 animate-pulse" size={16} />
+            <span className="truncate">
+              Sostituzione in corso: <span className="text-amber-200 underline font-semibold">{activeSection?.components?.find(c => c.uniqueId === replacingComponentId)?.name || 'Elemento selezionato'}</span>
+            </span>
+          </div>
+          <button 
+            onClick={() => setReplacingComponentId(null)} 
+            className="ml-2 px-2.5 py-1 bg-amber-950/80 hover:bg-amber-800 text-amber-200 border border-amber-600/60 rounded-md text-xs font-bold shrink-0 transition-colors shadow-sm"
+          >
+            Annulla
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col gap-0 bg-transparent sm:bg-slate-900 border-0 sm:border sm:border-slate-800 rounded-none sm:rounded-xl overflow-hidden shadow-none sm:shadow-2xl relative">
         
-        {/* TOP HEADER */}
-        <div className="p-1.5 sm:p-3 bg-slate-950 border-b border-slate-800 flex flex-col gap-1.5 sm:gap-3">
+        {/* MOBILE BULK ACTIONS BAR (Appears above the list header on smartphone when items are selected or copied) */}
+        {(selectedIds.size > 0 || clipboard.length > 0) && (
+            <div className="md:hidden flex items-center justify-between gap-1 px-2 py-1.5 bg-slate-900 border-b border-slate-700/80 shadow-md animate-in slide-in-from-top-2 shrink-0 z-30">
+                <div className="flex items-center gap-1 min-w-0">
+                    <span className="text-[11px] font-bold text-blue-400 bg-blue-950/80 border border-blue-800/60 px-1.5 py-0.5 rounded shrink-0">
+                        {selectedIds.size} sel.
+                    </span>
+                    <button 
+                        onClick={selectAllInSection} 
+                        className="text-[10px] font-bold uppercase text-slate-400 hover:text-white px-1 py-0.5"
+                    >
+                        Tutti
+                    </button>
+                    <button 
+                        onClick={deselectAll} 
+                        className="text-[10px] font-bold uppercase text-slate-400 hover:text-white px-1 py-0.5"
+                    >
+                        Nessuno
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                    {selectedIds.size > 0 && (
+                        <>
+                            {selectedIds.size === 1 && (
+                                <button 
+                                    onClick={() => setReplacingComponentId(Array.from(selectedIds)[0])} 
+                                    className={`p-1.5 rounded-lg border transition-colors ${replacingComponentId === Array.from(selectedIds)[0] ? 'bg-amber-600 text-white border-amber-500' : 'bg-slate-800 text-amber-400 border-slate-700 hover:bg-slate-700'}`} 
+                                    title="Sostituisci"
+                                >
+                                    <ArrowLeftRight size={15} />
+                                </button>
+                            )}
+                            <button 
+                                onClick={handleCut} 
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-lg border border-slate-700 transition-colors" 
+                                title="Taglia"
+                            >
+                                <Scissors size={15} />
+                            </button>
+                            <button 
+                                onClick={handleCopy} 
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-lg border border-slate-700 transition-colors" 
+                                title="Copia"
+                            >
+                                <ClipboardCopy size={15} />
+                            </button>
+                            <button 
+                                onClick={handleBulkDelete} 
+                                className="p-1.5 bg-slate-800 hover:bg-rose-900/40 text-rose-400 rounded-lg border border-slate-700 transition-colors" 
+                                title="Elimina"
+                            >
+                                <Trash2 size={15} />
+                            </button>
+                        </>
+                    )}
+                    {clipboard.length > 0 && (
+                        <div className="flex items-center gap-0.5 ml-1 bg-slate-800 rounded-lg border border-slate-700 p-0.5">
+                            <button 
+                                onClick={handlePaste} 
+                                className={`px-2 py-1 rounded text-xs font-bold flex items-center gap-1 ${clipboardPasted ? 'bg-orange-600' : 'bg-emerald-600'} text-white transition-colors`}
+                                title="Incolla"
+                            >
+                                <Clipboard size={13} /> Incolla ({clipboard.length})
+                            </button>
+                            <button 
+                                onClick={() => { setClipboard([]); setClipboardPasted(false); }} 
+                                className="p-1 text-slate-400 hover:text-rose-400" 
+                                title="Annulla appunto"
+                            >
+                                <X size={13} />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* TOP HEADER (Seamless on mobile phones without dark box/border, styled container from md up) */}
+        <div className="p-1 pt-[calc(0.25rem+env(safe-area-inset-top))] sm:p-3 sm:pt-3 bg-transparent md:bg-slate-950 md:border-b md:border-slate-800 flex flex-col gap-1.5 sm:gap-3">
           <div className="flex items-center justify-between gap-1.5 sm:gap-3">
             <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
                 <button 
                   onClick={handleBackToList} 
-                  className="p-1.5 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-2"
+                  className="p-1.5 xl:px-3 xl:py-2 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-2"
                   title="Crea Eventi"
                 >
                   <List size={18} />
-                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-wider text-white">Crea Eventi</span>
+                  <span className="hidden xl:inline text-xs font-bold uppercase tracking-wider text-white">Crea Eventi</span>
                 </button>
 
                 {/* Mobile-only Checklist Shortcut */}
@@ -2293,7 +3683,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 title="Checklist"
                 >
                 <ClipboardList size={18} />
-                <span className="text-xs font-bold uppercase tracking-tight text-white">Check</span>
+                <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight text-white">Check</span>
                 {activeList && activeList.checklistCheckedItems && activeList.checklistCheckedItems.length > 0 && (
                     <span className="bg-blue-600 text-white px-1 rounded-full text-xs min-w-[14px] text-center font-bold">
                         {activeList.checklistCheckedItems.length}
@@ -2301,14 +3691,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 )}
                 </button>
 
-                {/* Desktop Checklist Toggle */}
+                {/* Desktop/Tablet Checklist Toggle */}
                 <button 
                 onClick={() => setIsDesktopChecklistOpen(!isDesktopChecklistOpen)} 
-                className={`hidden md:flex p-1.5 sm:px-3 sm:py-2 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 items-center gap-1.5 transition-colors ${isDesktopChecklistOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white'}`}
+                className={`hidden md:flex p-1.5 xl:px-3 xl:py-2 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 items-center gap-1.5 transition-colors ${isDesktopChecklistOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white'}`}
                 title="Checklist"
                 >
                 <ClipboardList size={18} className={isDesktopChecklistOpen ? '' : 'text-blue-400'} />
-                <span className="text-xs font-bold uppercase tracking-wider text-white">Checklist</span>
+                <span className="hidden xl:inline text-xs font-bold uppercase tracking-wider text-white">Checklist</span>
                 {activeList && activeList.checklistCheckedItems && activeList.checklistCheckedItems.length > 0 && (
                     <span className="bg-white/20 text-white px-1.5 rounded-full text-xs min-w-[16px] text-center font-bold">
                         {activeList.checklistCheckedItems.length}
@@ -2319,17 +3709,27 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 {/* Reminders/Notes Shortcut */}
                 <button 
                   onClick={() => setActiveRemindersListId(activeList?.id || null)} 
-                  className={`p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center gap-1.5 transition-colors ${activeList?.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-400 hover:text-white'}`}
+                  className={`p-1.5 xl:px-2.5 xl:py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center justify-center transition-colors ${activeList?.reminders?.some(r => !r.isCompleted) ? 'text-yellow-400' : 'text-slate-400 hover:text-white'}`}
                   title="Note & Promemoria"
+                  aria-label="Note & Promemoria"
                 >
                   <Lightbulb size={18} className={activeList?.reminders?.some(r => !r.isCompleted) ? "fill-current" : ""} />
-                  <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight text-white">Note</span>
+                </button>
+
+                {/* Event Details & Zones Schema Info Button */}
+                <button 
+                  onClick={() => setSummaryEvent(activeList)} 
+                  className="p-1.5 xl:px-2.5 xl:py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 shadow-lg shrink-0 flex items-center justify-center text-slate-400 hover:text-cyan-400 transition-colors"
+                  title="Dettagli Evento e Schema Zone"
+                  aria-label="Dettagli Evento e Schema Zone"
+                >
+                  <Info size={18} />
                 </button>
                 
-                <div className="flex flex-col min-w-0 overflow-hidden">
+                <div className="flex flex-col min-w-0 flex-1 overflow-hidden">
                     <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-white font-bold text-xs sm:text-lg truncate">{activeList?.eventName}</span>
-                        {activeList?.version && <span className="text-xs sm:text-xs bg-slate-800 text-emerald-400 px-1 rounded font-bold shrink-0">v{activeList.version}</span>}
+                        <span className="text-white font-bold text-xs sm:text-base lg:text-lg truncate" title={activeList?.eventName}>{activeList?.eventName}</span>
+                        {activeList?.version && <span className="text-xs bg-slate-800 text-emerald-400 px-1.5 py-0.5 rounded font-bold shrink-0">v{activeList.version}</span>}
                         {!isOnline && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse shrink-0" title="Sei offline: tutte le modifiche sono protette e salvate in memoria sul dispositivo.">
                                 <WifiOff size={11} />
@@ -2342,48 +3742,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             </div>
 
             {/* HEADER ACTIONS (Compact row) */}
-            <div className="flex items-center gap-0.5 sm:gap-2 shrink-0">
-                {/* BULK ACTIONS (Mobile Overlay in Top bar) */}
-                {(selectedIds.size > 0 || clipboard.length > 0) && (
-                    <div className="flex md:hidden items-center gap-1 mr-1 pr-1 border-r border-slate-800">
-                        {selectedIds.size > 0 && (
-                            <>
-                                {selectedIds.size === 1 && (
-                                    <button 
-                                        onClick={() => setReplacingComponentId(Array.from(selectedIds)[0])} 
-                                        className="p-1.5 text-amber-500"
-                                    >
-                                        <ArrowLeftRight size={16} />
-                                    </button>
-                                )}
-                                <button onClick={handleCopy} className="p-1.5 text-blue-400"><ClipboardCopy size={16} /></button>
-                                <button onClick={handleBulkDelete} className="p-1.5 text-rose-500"><Trash2 size={16} /></button>
-                            </>
-                        )}
-                        {clipboard.length > 0 && (
-                            <button onClick={handlePaste} className={`p-1.5 rounded ${clipboardPasted ? 'text-orange-500' : 'text-emerald-500'}`}><Clipboard size={16} /></button>
-                        )}
-                    </div>
-                )}
+            <div className="flex items-center gap-0.5 sm:gap-1.5 xl:gap-2 shrink-0">
 
                 {/* SHARE BUTTON */}
                 <button 
                     onClick={() => setListToShare(activeList || null)} 
                     title="Condividi Evento" 
-                    className="flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
+                    className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-3 xl:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
                 >
                     <Share2 size={18}/> 
-                    <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Condividi</span>
+                    <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">Condividi</span>
                 </button>
 
                 {/* SINGLE EXPORT BUTTON */}
                 <button 
-                    onClick={() => setIsExportModalOpen(true)} 
+                    onClick={handleOpenExportModal} 
                     title="Export Lista" 
-                    className="hidden lg:flex items-center gap-1.5 p-1.5 sm:px-3 sm:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
+                    className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-3 xl:py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/80 bg-slate-950/20 shadow-sm"
                 >
                     <Share size={18}/> 
-                    <span className="hidden lg:inline text-xs font-bold uppercase tracking-tight">Export</span>
+                    <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">Export</span>
                 </button>
 
                 <div className="w-[1px] h-6 bg-slate-800 mx-1 hidden sm:block"></div>
@@ -2392,94 +3770,172 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 <div className="flex items-center gap-1 sm:gap-2">
                     {activeList?.isCompleted ? (
                         <div className="flex gap-1 sm:gap-2">
-                            <button onClick={() => handleCompleteList(true)} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded-lg border border-emerald-500/30 transition-all font-bold" title={`Aggiorna Versione (v${
-                                activeList.version ? `${activeList.version.split('.')[0]}.${parseInt(activeList.version.split('.')[1] || '0') + 1}` : '1.1'
-                            })`}>
-                                <Save size={18} /> <span className="hidden sm:inline text-xs uppercase tracking-tight">Aggiorna v{
+                            <button
+                                onClick={() => handleCompleteList(true)}
+                                disabled={!hasUnsavedVersionChanges}
+                                className={`flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 rounded-lg border transition-all font-bold ${
+                                    hasUnsavedVersionChanges
+                                        ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border-emerald-500/40 shadow-sm cursor-pointer'
+                                        : 'bg-slate-900/50 text-slate-600 border-slate-800/80 opacity-50 cursor-not-allowed'
+                                }`}
+                                title={
+                                    hasUnsavedVersionChanges
+                                        ? `Aggiorna Versione (v${activeList.version ? `${activeList.version.split('.')[0]}.${parseInt(activeList.version.split('.')[1] || '0') + 1}` : '1.1'})`
+                                        : 'Nessuna modifica da aggiornare rispetto alla versione attuale'
+                                }
+                            >
+                                <Save size={18} /> <span className="hidden xl:inline text-xs uppercase tracking-tight">Aggiorna v{
                                     activeList.version ? `${activeList.version.split('.')[0]}.${parseInt(activeList.version.split('.')[1] || '0') + 1}` : '1.1'
                                 }</span>
                             </button>
-                            <button onClick={handleUndoCompletion} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-slate-800 text-amber-500 rounded-lg border border-slate-700 hover:bg-slate-700 transition-colors" title="Torna a Bozza">
-                                <Undo2 size={18} /> <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Bozza</span>
+                            <button onClick={handleUndoCompletion} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-slate-800 text-amber-500 rounded-lg border border-slate-700 hover:bg-slate-700 transition-colors" title="Torna a Bozza">
+                                <Undo2 size={18} /> <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">Bozza</span>
                             </button>
                         </div>
                     ) : activeList?.isDraftVisible ? (
                         <div className="flex gap-1 sm:gap-2">
-                            <button onClick={handleWithdrawDraft} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-rose-950/20 text-rose-500 hover:bg-rose-950/40 rounded-lg border border-rose-900/30 transition-colors" title="Ritira"><X size={18} /> <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Ritira</span></button>
-                            <button onClick={handleUpdateDraftVersion} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-amber-900/20 text-amber-500 hover:bg-amber-900/40 rounded-lg border border-amber-900/30 transition-colors" title="Aggiorna Bozza"><Save size={18} /> <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Salva</span></button>
-                            <button onClick={() => handleCompleteList()} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg shadow-lg font-bold transition-colors" title="Completa"><CheckCircle size={18} /> <span className="hidden sm:inline text-xs uppercase tracking-tight">Completa</span></button>
+                            <button onClick={handleWithdrawDraft} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-rose-950/20 text-rose-500 hover:bg-rose-950/40 rounded-lg border border-rose-900/30 transition-colors" title="Ritira"><X size={18} /> <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">Ritira</span></button>
+                            <button onClick={handleUpdateDraftVersion} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-amber-900/20 text-amber-500 hover:bg-amber-900/40 rounded-lg border border-amber-900/30 transition-colors" title="Aggiorna Bozza"><Save size={18} /> <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">Salva</span></button>
+                            <button onClick={() => handleCompleteList()} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg shadow-lg font-bold transition-colors" title="Completa"><CheckCircle size={18} /> <span className="hidden xl:inline text-xs uppercase tracking-tight">Completa</span></button>
                         </div>
                     ) : (
                         <div className="flex gap-1 sm:gap-2">
-                            <button onClick={handleShowDraftInWarehouse} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-slate-800 text-slate-400 hover:text-emerald-400 rounded-lg border border-slate-700 hover:border-emerald-500/50 transition-colors" title="Invia al Magazzino"><Share size={18} /> <span className="hidden sm:inline text-xs font-bold uppercase tracking-tight">Invia</span></button>
-                            <button onClick={() => handleCompleteList()} className="flex items-center gap-1.5 p-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg shadow-lg font-bold transition-colors" title="Completa"><CheckCircle size={18} /> <span className="hidden sm:inline text-xs uppercase tracking-tight">Completa</span></button>
+                            <button onClick={handleShowDraftInWarehouse} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-slate-800 text-amber-400 hover:text-amber-300 rounded-lg border border-slate-700 hover:border-amber-500/50 transition-colors" title="Rendi visibile bozza in Preparazione Eventi"><Share size={18} /> <span className="hidden xl:inline text-xs font-bold uppercase tracking-tight">BOZZA</span></button>
+                            <button onClick={() => handleCompleteList()} className="flex items-center gap-1.5 p-1.5 sm:p-2 xl:px-4 xl:py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-lg shadow-lg font-bold transition-colors" title="Completa"><CheckCircle size={18} /> <span className="hidden xl:inline text-xs uppercase tracking-tight">Completa</span></button>
                         </div>
                     )}
                 </div>
             </div>
           </div>
 
-          <div className="md:hidden flex flex-col gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs">
-             <div className="flex items-center gap-2">
-                <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <div className="shrink-0 flex items-center gap-1 text-slate-500 font-bold uppercase">
-                        <Box size={14} /> Zona
-                    </div>
-                    <select 
-                        value={activeZoneId} 
-                        onChange={(e) => setActiveZoneId(e.target.value)}
-                        className="flex-1 bg-slate-900 text-emerald-400 font-bold rounded border border-slate-800 px-1 py-1 outline-none min-w-0"
-                    >
-                        {zones.map(z => {
-                            const label = highlightedItemName 
-                                ? `${z.name} (${getZoneHighlightedQty(z)})` 
-                                : z.name;
-                            return <option key={z.id} value={z.id}>{label}</option>;
-                        })}
-                    </select>
-                    <button onClick={() => openMgmtModal('zone', 'create')} className="p-1.5 bg-emerald-900/20 rounded text-emerald-500 border border-emerald-900/30"><Plus size={14} /></button>
-                </div>
-                
-                <div className="w-[1px] h-4 bg-slate-800"></div>
- 
-                <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <div className="shrink-0 flex items-center gap-1 text-slate-500 font-bold uppercase">
-                        <AlignLeft size={14} /> Set.
-                    </div>
-                    <select 
-                        value={activeSectionId} 
-                        onChange={(e) => setActiveSectionId(e.target.value)}
-                        className="flex-1 bg-slate-900 text-blue-400 font-bold rounded border border-slate-800 px-1 py-1 outline-none min-w-0"
-                    >
-                        {sections.map(s => {
-                            const label = highlightedItemName 
-                                ? `${s.name} (${getSectionHighlightedQty(s)})` 
-                                : `${s.name} (${s.components.length})`;
-                            return <option key={s.id} value={s.id}>{label}</option>;
-                        })}
-                    </select>
-                    {sections.length > 1 && (
-                        <div className="flex items-center gap-0.5 shrink-0">
-                            <button 
-                                disabled={sections.findIndex(s => s.id === activeSectionId) === 0}
-                                onClick={() => handleMoveSection(activeSectionId, 'left')} 
-                                className="p-1 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded disabled:opacity-30 disabled:pointer-events-none"
-                                title="Sposta a sinistra"
-                            >
-                                <ChevronLeft size={12} />
-                            </button>
-                            <button 
-                                disabled={sections.findIndex(s => s.id === activeSectionId) === sections.length - 1}
-                                onClick={() => handleMoveSection(activeSectionId, 'right')} 
-                                className="p-1 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded disabled:opacity-30 disabled:pointer-events-none"
-                                title="Sposta a destra"
-                            >
-                                <ChevronRight size={12} />
-                            </button>
-                        </div>
-                    )}
-                    <button onClick={() => openMgmtModal('section', 'create')} className="p-1.5 bg-blue-900/20 rounded text-blue-500 border border-blue-900/30"><Plus size={14} /></button>
-                </div>
+          {/* WAREHOUSE REPLACEMENT INFORMATIONAL NOTICE */}
+          {hasWarehouseReplacements && !isWarehouseBannerDismissed && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs font-medium shadow-md animate-in slide-in-from-top-1 fade-in duration-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <Info size={16} className="text-amber-400 shrink-0" />
+                <span className="leading-snug">
+                  <strong>Avviso Magazzino:</strong> Il personale di magazzino ha effettuato sostituzioni di materiale in <em>Preparazione Eventi</em>. I materiali originali di progetto restano invariati qui in <em>Crea Liste</em>.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDismissedWarehouseBannerListId(activeList?.id || '')}
+                className="p-1 text-amber-400 hover:text-white rounded hover:bg-amber-500/20 transition-colors shrink-0"
+                title="Chiudi avviso"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          )}
+
+          {/* 10-SECOND UPDATE REMINDER BANNER */}
+          {activeList?.isCompleted && showUpdateReminderBanner && hasUnsavedVersionChanges && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs font-medium shadow-md animate-in slide-in-from-top-2 fade-in duration-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle size={15} className="text-amber-400 shrink-0 animate-bounce" />
+                <span className="leading-snug">
+                  Hai modificato la lista materiale. Ricordati di premere{' '}
+                  <button
+                    type="button"
+                    onClick={() => handleCompleteList(true)}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 font-bold underline decoration-emerald-400/60 cursor-pointer transition-colors"
+                  >
+                    Aggiorna v{activeList.version ? `${activeList.version.split('.')[0]}.${parseInt(activeList.version.split('.')[1] || '0') + 1}` : '1.1'}
+                  </button>{' '}
+                  dopo aver terminato le modifiche!
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUpdateReminderBanner(false)}
+                className="p-1 rounded-md text-amber-400 hover:text-white hover:bg-amber-500/20 transition-colors shrink-0"
+                title="Chiudi avviso"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {/* MOBILE ZONE & SECTION SELECTOR */}
+          <div className="md:hidden flex flex-col gap-1.5 bg-slate-950 p-2 rounded-xl border border-slate-800/80 shadow-sm text-xs">
+             {/* Row 1: Zona */}
+             <div className="flex items-center gap-1.5 min-w-0">
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-950/70 border border-emerald-800/50 text-emerald-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
+                   <Box size={13} /> Zona
+                </span>
+                <select 
+                   value={activeZoneId} 
+                   onChange={(e) => setActiveZoneId(e.target.value)}
+                   className="flex-1 bg-slate-900 text-emerald-300 font-bold rounded-lg border border-slate-700/80 px-2.5 py-1.5 text-xs outline-none min-w-0 truncate focus:border-emerald-500 shadow-inner"
+                >
+                   {zones.map(z => {
+                       const label = highlightedItemName 
+                           ? `${z.name} (${getZoneHighlightedQty(z)})` 
+                           : z.name;
+                       return <option key={z.id} value={z.id}>{label}</option>;
+                   })}
+                </select>
+                {activeZone && (
+                   <>
+                      <button 
+                         type="button"
+                         onClick={() => setZoneForInfo(activeZone)} 
+                         className={`p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700/80 shrink-0 transition-colors active:scale-95 ${
+                             activeZone.notes && activeZone.notes.trim()
+                                 ? 'text-yellow-400 hover:text-yellow-300 drop-shadow-[0_0_6px_rgba(250,204,21,0.7)]'
+                                 : 'text-white hover:text-slate-200'
+                         }`}
+                         title={activeZone.notes && activeZone.notes.trim() ? "Info Zona (Presente Nota)" : "Info Zona"}
+                         aria-label="Info Zona"
+                      >
+                         <Info size={15} />
+                      </button>
+                      <button 
+                         type="button"
+                         onClick={() => setZoneForEdit(activeZone)} 
+                         className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-emerald-400 border border-slate-700/80 shrink-0 transition-colors active:scale-95"
+                         title="Modifica Zona"
+                         aria-label="Modifica Zona"
+                      >
+                         <Edit2 size={15} />
+                      </button>
+                   </>
+                )}
+                <button 
+                   onClick={() => openMgmtModal('zone', 'create')} 
+                   className="p-1.5 bg-emerald-900/30 hover:bg-emerald-900/50 rounded-lg text-emerald-400 border border-emerald-800/40 shrink-0 transition-colors active:scale-95"
+                   title="Nuova Zona"
+                   aria-label="Nuova Zona"
+                >
+                   <Plus size={15} />
+                </button>
+             </div>
+
+             {/* Row 2: Settore */}
+             <div className="flex items-center gap-1.5 min-w-0">
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-950/70 border border-blue-800/50 text-blue-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
+                   <AlignLeft size={13} /> Set.
+                </span>
+                <select 
+                   value={activeSectionId} 
+                   onChange={(e) => setActiveSectionId(e.target.value)}
+                   className="flex-1 bg-slate-900 text-blue-300 font-bold rounded-lg border border-slate-700/80 px-2.5 py-1.5 text-xs outline-none min-w-0 truncate focus:border-blue-500 shadow-inner"
+                >
+                   {sections.map(s => {
+                       const label = highlightedItemName 
+                           ? `${s.name} (${getSectionHighlightedQty(s)})` 
+                           : `${s.name} (${s.components.length})`;
+                       return <option key={s.id} value={s.id}>{label}</option>;
+                   })}
+                </select>
+                <button 
+                   onClick={() => openMgmtModal('section', 'create')} 
+                   className="p-1.5 bg-blue-900/30 hover:bg-blue-900/50 rounded-lg text-blue-400 border border-blue-800/40 shrink-0 transition-colors active:scale-95"
+                   title="Nuovo Settore"
+                   aria-label="Nuovo Settore"
+                >
+                   <Plus size={15} />
+                </button>
              </div>
           </div>
         </div>
@@ -2506,12 +3962,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             <div className="flex-1 flex flex-col overflow-hidden relative min-w-0">
         {/* --- ZONE TABS (Desktop Only) --- */}
         {activeList && zones.length > 0 && (
-            <div className="hidden md:flex items-center gap-1 px-4 pt-4 border-b border-slate-800 bg-slate-950/50 overflow-x-auto">
+            <div className="hidden md:flex items-center gap-1 px-4 pt-1.5 border-b border-slate-800 bg-slate-950/50 overflow-x-auto">
                 {zones.map(z => (
                     <div 
                         key={z.id}
+                        draggable={true}
+                        onDragStart={(e) => handleZoneDragStart(e, z.id)}
+                        onDragOver={(e) => handleZoneDragOver(e, z.id)}
+                        onDragLeave={handleZoneDragLeave}
+                        onDragEnd={handleZoneDragEnd}
+                        onDrop={(e) => handleZoneDrop(e, z.id)}
                         onClick={() => setActiveZoneId(z.id)}
-                        className={`px-4 py-2 rounded-t-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 border-t border-x ${activeZoneId === z.id ? 'bg-slate-900 text-white border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'}`}
+                        className={`px-4 py-2 rounded-t-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 border-t border-x ${draggedZoneId === z.id ? 'opacity-30 scale-95 border-dashed border-slate-700' : ''} ${activeZoneId === z.id ? 'bg-slate-900 text-white border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'} ${getZoneDragIndicatorClass(z.id)}`}
                     >
                         {z.name}
                         {highlightedItemName && (
@@ -2523,11 +3985,44 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 {getZoneHighlightedQty(z)}
                             </span>
                         )}
+                        {/* Info Button */}
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setZoneForInfo(z); }}
+                            className={`p-1 rounded transition-colors ${
+                                z.notes && z.notes.trim()
+                                    ? 'text-yellow-400 hover:text-yellow-300 drop-shadow-[0_0_6px_rgba(250,204,21,0.7)]'
+                                    : 'text-white hover:text-slate-200'
+                            }`}
+                            title={z.notes && z.notes.trim() ? "Info Zona (Presente Nota)" : "Info Zona"}
+                            aria-label="Info Zona"
+                        >
+                            <Info size={13} />
+                        </button>
+
+                        {/* Edit & Delete Buttons for active zone */}
                         {activeZoneId === z.id && (
-                            <div className="flex items-center gap-1 ml-2 opacity-50 hover:opacity-100">
-                                <Edit2 size={12} onClick={(e) => { e.stopPropagation(); openMgmtModal('zone', 'rename', z.id, z.name); }} className="hover:text-emerald-400" />
-                                <StickyNote size={12} onClick={(e) => { e.stopPropagation(); setZoneNoteModal({ isOpen: true, zoneId: z.id, note: z.notes || '' }); }} className="hover:text-yellow-400" />
-                                {zones.length > 1 && <Trash2 size={12} className="hover:text-rose-500" onClick={(e) => { e.stopPropagation(); setZoneToDelete(z.id); }} />}
+                            <div className="flex items-center gap-1 ml-1 opacity-70 hover:opacity-100">
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setZoneForEdit(z); }}
+                                    className="p-1 text-slate-400 hover:text-emerald-400 rounded transition-colors"
+                                    title="Modifica Zona"
+                                    aria-label="Modifica Zona"
+                                >
+                                    <Edit2 size={13} />
+                                </button>
+                                {zones.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setZoneToDelete(z.id); }}
+                                        className="p-1 text-slate-400 hover:text-rose-500 rounded transition-colors"
+                                        title="Elimina Zona"
+                                        aria-label="Elimina Zona"
+                                    >
+                                        <Trash2 size={13} />
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>
@@ -2536,13 +4031,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             </div>
         )}
 
-        {/* --- ZONE NOTE --- */}
-        {activeZone && activeZone.notes && (
-            <div className="bg-yellow-900/10 border-b border-slate-800 px-4 py-2 text-sm text-yellow-200/80 italic flex items-start gap-2">
-                <StickyNote size={14} className="mt-1 shrink-0 text-yellow-500" />
-                {activeZone.notes}
-            </div>
-        )}
+
 
         {/* --- SECTION TABS (Inside Active Zone) (Desktop Only) --- */}
         {activeZone && (
@@ -2603,18 +4092,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         {/* --- TOOLBAR / SEARCH --- */}
         {activeSection && (
-            <div className="px-2 py-1.5 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="px-2 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center gap-1.5 sm:gap-2">
                 {/* Search Input Row */}
                 <div 
-                    className="relative flex-1"
+                    className="relative flex-1 min-w-0"
                     onMouseEnter={() => handlePickerEnter(true)}
                     onMouseLeave={() => handlePickerLeave(true)}
                 >
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                    <Search className="absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
                     <input 
                         ref={pickerInputRef}
                         placeholder={`Cerca in ${activeSection.name}...`}
-                        className="w-full bg-slate-950 border border-slate-700 text-white pl-9 pr-3 py-2 rounded-lg text-sm outline-none focus:border-emerald-500"
+                        className="w-full bg-slate-950 border border-slate-700 text-white pl-8 sm:pl-9 pr-2 sm:pr-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm outline-none focus:border-emerald-500"
                         value={pickerSearch}
                         onChange={e => setPickerSearch(e.target.value)}
                         onFocus={() => handlePickerEnter(false)}
@@ -2622,7 +4111,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     />
                     {/* PICKER DROPDOWN */}
                     {pickerSearch && isPickerHovered && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+                      <div className="fixed md:absolute inset-x-2 md:inset-x-auto md:left-0 md:right-0 top-auto md:top-full mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 max-h-72 md:max-h-64 overflow-y-auto w-auto md:w-full min-w-0 md:min-w-[420px]">
                         
                         {/* Templates matches */}
                         {filteredPickerTemplates.length > 0 && (
@@ -2856,12 +4345,44 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 </div>
                 
                 {/* Category & Action Buttons Row */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    {/* UNDO / REDO BUTTONS (Max 15 levels) */}
+                    <div className="flex items-center gap-1 shrink-0">
+                        <button
+                            type="button"
+                            onClick={handleUndoList}
+                            disabled={historyPast.length === 0}
+                            className={`p-1.5 sm:p-2 rounded-lg flex items-center justify-center transition-all ${
+                                historyPast.length > 0
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 hover:bg-amber-500/30 shadow-sm shadow-amber-900/30 cursor-pointer active:scale-95'
+                                    : 'bg-slate-950 text-slate-600 border border-slate-800/80 opacity-40 cursor-not-allowed'
+                            }`}
+                            title={historyPast.length > 0 ? `Annulla operazione (${historyPast.length}/15 indietro)` : "Nessuna operazione da annullare"}
+                            aria-label="Annulla"
+                        >
+                            <Undo2 size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleRedoList}
+                            disabled={historyFuture.length === 0}
+                            className={`p-1.5 sm:p-2 rounded-lg flex items-center justify-center transition-all ${
+                                historyFuture.length > 0
+                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/50 hover:bg-blue-500/30 shadow-sm shadow-blue-900/30 cursor-pointer active:scale-95'
+                                    : 'bg-slate-950 text-slate-600 border border-slate-800/80 opacity-40 cursor-not-allowed'
+                            }`}
+                            title={historyFuture.length > 0 ? `Ripristina operazione (${historyFuture.length}/15 avanti)` : "Nessuna operazione da ripristinare"}
+                            aria-label="Ripristina"
+                        >
+                            <Redo2 size={15} />
+                        </button>
+                    </div>
+
                     <div className="relative group/filter shrink-0">
                         <button
                             type="button"
                             onClick={() => setIsPickerFilterModalOpen(true)}
-                            className={`p-2 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-all shrink-0 ${
+                            className={`p-1.5 sm:p-2 rounded-lg flex items-center justify-center gap-1 text-xs font-semibold transition-all shrink-0 ${
                                 activePickerFiltersCount > 0
                                     ? 'bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600/30 shadow-sm shadow-blue-900/30'
                                     : 'bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-700'
@@ -2888,13 +4409,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             setTempItemFormData({ name: '', quantity: 1, category: activeSection?.name || '', notes: '' });
                             setIsTempItemModalOpen(true);
                         }}
-                        className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg flex items-center gap-1.5 font-bold text-xs transition-all shrink-0 shadow-lg shadow-amber-900/20"
+                        className="bg-amber-600 hover:bg-amber-500 text-white px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg flex items-center gap-1 font-bold text-xs transition-all shrink-0 shadow-md shadow-amber-900/20 active:scale-95"
                         title="Articolo Temporaneo"
                     >
-                        <Plus size={14} /> <span className="hidden md:inline">Temp.</span><span className="md:hidden">T</span>
+                        <Plus size={13} /> <span className="hidden sm:inline">Temp.</span><span className="sm:hidden">T</span>
                     </button>
 
-                    <button onClick={() => setIsNewItemModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white p-2 rounded-lg shrink-0" title="Nuovo Articolo"><Plus size={16} /></button>
+                    <button 
+                        onClick={() => setIsNewItemModalOpen(true)} 
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 sm:p-2 rounded-lg shrink-0 shadow-md shadow-emerald-900/20 active:scale-95" 
+                        title="Nuovo Articolo"
+                        aria-label="Nuovo Articolo"
+                    >
+                        <Plus size={15} />
+                    </button>
                 </div>
 
                 {/* INLINE BULK ACTIONS (Desktop) */}
@@ -2931,7 +4459,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                       <button 
                         onClick={() => handleOpenMasterEditor(highlightedItemName!)}
                         className="underline hover:text-white/80 transition-colors cursor-pointer text-left"
-                        title="Clicca per modificare l'oggetto master e i suoi accessori"
+                        title="Clicca per modificare l'oggetto e i suoi accessori"
                       >
                         {highlightedItemName}
                       </button>
@@ -2976,6 +4504,27 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
                   const hasAccessories = comp.contents && comp.contents.length > 0;
                   const isDragOver = isDragging && activeDragOverIdx === idx && activeDragOverSectionId === activeSection.id;
+
+                  // Snapshot comparison for pending draft changes detection
+                  const prevComp = snapshotComponentMap.get(comp.uniqueId);
+                  const isListCompletedWithSnapshot = Boolean(activeList?.isCompleted && activeList?.snapshot && activeList.snapshot.length > 0);
+                  const isCompBrandNew = Boolean(isListCompletedWithSnapshot && !prevComp);
+                  const isCompReplaced = Boolean(isListCompletedWithSnapshot && prevComp && (prevComp.referenceId !== comp.referenceId || prevComp.name !== comp.name || prevComp.type !== comp.type));
+                  const isCompQtyChanged = Boolean(isListCompletedWithSnapshot && prevComp && prevComp.quantity !== comp.quantity);
+                  const isAnySubPending = Boolean(
+                    isListCompletedWithSnapshot && comp.contents && comp.contents.some((c, i) => {
+                      const prevSub = prevComp?.contents?.find(ps => ps.itemId === c.itemId) || prevComp?.contents?.[i];
+                      const curQty = c.quantity * comp.quantity;
+                      const prevQty = prevComp && prevSub ? prevSub.quantity * prevComp.quantity : 0;
+                      return isCompBrandNew || !prevComp || !prevSub || prevSub.itemId !== c.itemId || prevSub.name !== c.name || prevQty !== curQty;
+                    })
+                  );
+                  const isCompPending = isCompBrandNew || isCompReplaced || isCompQtyChanged || isAnySubPending;
+                  const compPendingChange = isCompPending ? {
+                    isPending: true,
+                    prevName: isCompBrandNew ? undefined : prevComp?.name,
+                    prevQuantity: isCompBrandNew ? 0 : prevComp?.quantity
+                  } : undefined;
 
                   return (
                       <div 
@@ -3100,6 +4649,26 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                               {comp.type === 'template' && <span className="text-xs bg-emerald-900 text-emerald-200 px-1 rounded align-middle no-underline font-bold">Tmpl</span>}
                                               {comp.type === 'kit' && <span className="text-xs bg-purple-900 text-purple-200 px-1 rounded align-middle no-underline font-bold">Kit</span>}
                                               {comp.type === 'item' && hasAccessories && <span className="text-xs bg-cyan-900 text-cyan-200 px-1 rounded align-middle no-underline font-bold">Con accessori</span>}
+                                               {comp.replacementInfo && (
+                                                   <button 
+                                                       type="button"
+                                                       onClick={(e) => {
+                                                           e.stopPropagation();
+                                                           setWarehouseSubModal({
+                                                               isOpen: true,
+                                                               componentName: comp.name,
+                                                               originalQuantity: comp.quantity,
+                                                               replacementInfo: comp.replacementInfo
+                                                           });
+                                                       }}
+                                                       className="text-xs bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/50 px-1.5 py-0.5 rounded align-middle font-bold flex items-center gap-1 shrink-0 cursor-pointer transition-colors active:scale-95 shadow-sm"
+                                                       title="Clicca per visualizzare la sostituzione del magazzino"
+                                                   >
+                                                       <ArrowLeftRight size={11} className="text-amber-400 shrink-0" />
+                                                       <span className="hidden sm:inline">Sostituito a magazzino</span>
+                                                       <span className="sm:hidden text-[10px]">Sost. Mag.</span>
+                                                   </button>
+                                               )}
                                               {originalItem?.documents && originalItem.documents.length > 0 && (
                                                   <button 
                                                     onClick={(e) => { 
@@ -3137,33 +4706,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                   </div>
                               </div>
                               <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                    {/* MOBILE ACTIONS TOGGLE */}
-                                    <div className="flex md:hidden items-center gap-1">
-                                        {activeActionMenuId === comp.uniqueId ? (
-                                            <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1 animate-in slide-in-from-right-2">
-                                                <button onClick={() => setReplacingComponentId(comp.uniqueId)} className={`p-2 rounded ${isReplacing ? 'text-amber-500 bg-amber-900/30' : 'text-slate-400'}`} title="Sostituisci">
-                                                    <ArrowLeftRight size={16} />
-                                                </button>
-                                                <button onClick={() => { const s = new Set(openNoteIds); s.has(comp.uniqueId)?s.delete(comp.uniqueId):s.add(comp.uniqueId); setOpenNoteIds(s); }} className={`p-2 rounded ${comp.notes ? 'text-yellow-400' : 'text-slate-400'}`} title="Nota">
-                                                    <StickyNote size={16} />
-                                                </button>
-                                                <button onClick={() => removeComponent(comp.uniqueId)} className="p-2 text-rose-500" title="Elimina">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                                <button onClick={() => setActiveActionMenuId(null)} className="p-2 text-slate-500 border-l border-slate-700 ml-1">
-                                                    <X size={14} />
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <button 
-                                                onClick={() => setActiveActionMenuId(comp.uniqueId)}
-                                                className="p-2 bg-slate-800 text-slate-400 rounded-lg border border-slate-700"
-                                            >
-                                                <Settings2 size={16} />
-                                            </button>
-                                        )}
-                                    </div>
-
+                                    {renderBuilderHistoryBadge(
+                                        `builder-comp-${comp.uniqueId}`,
+                                        comp.warehouseState?.changeLog,
+                                        comp.name,
+                                        comp.quantity,
+                                        Boolean(comp.warehouseState?.inDistinta || comp.warehouseState?.loaded),
+                                        compPendingChange
+                                    )}
                                     {/* DESKTOP ACTIONS (Always visible on md+) */}
                                     <div className="hidden md:flex items-center gap-1">
 
@@ -3175,8 +4725,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                             <StickyNote size={14} />
                                         </button>
                                         
-                                        <button onClick={() => removeComponent(comp.uniqueId)} className="p-1.5 ml-1 text-slate-500 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+                                        <button onClick={() => removeComponent(comp.uniqueId)} className="p-1.5 ml-1 text-slate-500 hover:text-rose-500 hover:bg-rose-950/40 rounded transition-colors" title="Elimina Oggetto"><Trash2 size={14} /></button>
                                     </div>
+
+                                    {/* MOBILE TRASH BUTTON (Visible on screens < md) */}
+                                    <button 
+                                        onClick={() => removeComponent(comp.uniqueId)} 
+                                        className="md:hidden p-1.5 text-slate-500 hover:text-rose-400 active:text-rose-500 transition-colors" 
+                                        title="Elimina Oggetto"
+                                    >
+                                        <Trash2 size={15} />
+                                    </button>
                                     
                                     {/* QTY CONTROLS - ULTRA COMPACT */}
                                     <div className="flex items-center bg-slate-950 border border-slate-700 rounded-lg overflow-hidden ml-1 sm:ml-2">
@@ -3264,9 +4823,40 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 {comp.contents?.map((c, i) => {
                                     const isAccMissing = c.itemId ? !inventory.some(inv => inv.id === c.itemId) : false;
                                     const isChildMatch = highlightedItemName && c.name === highlightedItemName;
+                                    const prevSub = prevComp?.contents?.find(ps => ps.itemId === c.itemId) || prevComp?.contents?.[i];
+                                    const currentSubTotalQty = c.quantity * comp.quantity;
+                                    const prevSubTotalQty = prevComp && prevSub ? prevSub.quantity * prevComp.quantity : 0;
+                                    const isSubPending = Boolean(
+                                        isListCompletedWithSnapshot && (
+                                            isCompBrandNew ||
+                                            !prevComp ||
+                                            !prevSub ||
+                                            prevSub.itemId !== c.itemId ||
+                                            prevSub.name !== c.name ||
+                                            prevSubTotalQty !== currentSubTotalQty
+                                        )
+                                    );
+                                    const subPendingChange = isSubPending ? {
+                                        isPending: true,
+                                        prevName: (!prevComp || !prevSub) ? undefined : prevSub.name,
+                                        prevQuantity: prevSubTotalQty
+                                    } : undefined;
+
+                                    const subEffectiveChangeLog = c.warehouseState?.changeLog || (comp.warehouseState?.changeLog ? {
+                                        ...comp.warehouseState.changeLog,
+                                        previousQuantity: comp.warehouseState.changeLog.previousQuantity !== undefined
+                                            ? comp.warehouseState.changeLog.previousQuantity * c.quantity
+                                            : undefined,
+                                        previousName: undefined,
+                                        history: comp.warehouseState.changeLog.history?.map(h => ({
+                                            ...h,
+                                            name: c.name,
+                                            quantity: h.quantity * c.quantity
+                                        }))
+                                    } : undefined);
 
                                     return (
-                                        <div key={`acc-${i}`} className={`text-xs flex justify-between w-full max-w-md leading-tight group/acc ${isChildMatch ? 'text-blue-400' : 'text-slate-400'}`}>
+                                        <div key={`acc-${i}`} className={`text-xs flex justify-between items-center w-full max-w-md leading-tight group/acc ${isChildMatch ? 'text-blue-400' : 'text-slate-400'}`}>
                                             <span className="flex items-center gap-1 min-w-0">
                                                 {isAccMissing && (
                                                     <AlertTriangle size={10} className="text-rose-500 shrink-0" />
@@ -3285,8 +4875,38 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                 >
                                                     {c.name}
                                                 </span>
+                                                {c.replacementInfo && (
+                                                    <button 
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setWarehouseSubModal({
+                                                                isOpen: true,
+                                                                componentName: c.name,
+                                                                originalQuantity: c.quantity * comp.quantity,
+                                                                replacementInfo: c.replacementInfo
+                                                            });
+                                                        }}
+                                                        className="text-[9px] bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/50 px-1 py-0.5 rounded font-bold flex items-center gap-1 shrink-0 cursor-pointer transition-colors active:scale-95 shadow-sm"
+                                                        title="Clicca per visualizzare la sostituzione del magazzino"
+                                                    >
+                                                        <ArrowLeftRight size={9} className="text-amber-400 shrink-0" />
+                                                        <span className="hidden sm:inline">Sostituito</span>
+                                                        <span className="sm:hidden text-[9px]">Sost.</span>
+                                                    </button>
+                                                )}
                                             </span>
-                                            <span className="shrink-0 pl-2 opacity-60">x{c.quantity * comp.quantity}</span>
+                                            <span className="shrink-0 pl-2 flex items-center gap-1.5">
+                                                <span className="opacity-60">x{c.quantity * comp.quantity}</span>
+                                                {renderBuilderHistoryBadge(
+                                                    `builder-sub-${comp.uniqueId}-${i}`,
+                                                    subEffectiveChangeLog,
+                                                    c.name,
+                                                    c.quantity * comp.quantity,
+                                                    Boolean(c.warehouseState?.inDistinta || c.warehouseState?.loaded || comp.warehouseState?.inDistinta || comp.warehouseState?.loaded),
+                                                    subPendingChange
+                                                )}
+                                            </span>
                                         </div>
                                     );
                                 })}
@@ -3295,10 +4915,20 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                 {comp.templateContents?.map((tc, i) => {
                                     const isChildMatch = highlightedItemName && tc.name === highlightedItemName;
                                     const hasSubContents = tc.contents && tc.contents.length > 0;
+                                    const prevTc = snapshotComponentMap.get(tc.uniqueId);
+                                    const isTcBrandNew = Boolean(isListCompletedWithSnapshot && !prevTc);
+                                    const isTcReplaced = Boolean(isListCompletedWithSnapshot && prevTc && (prevTc.referenceId !== tc.referenceId || prevTc.name !== tc.name || prevTc.type !== tc.type));
+                                    const isTcQtyChanged = Boolean(isListCompletedWithSnapshot && prevTc && prevTc.quantity * comp.quantity !== tc.quantity * comp.quantity);
+                                    const isTcPending = isTcBrandNew || isTcReplaced || isTcQtyChanged;
+                                    const tcPendingChange = isTcPending ? {
+                                        isPending: true,
+                                        prevName: isTcBrandNew ? undefined : prevTc?.name,
+                                        prevQuantity: isTcBrandNew ? 0 : (prevTc?.quantity ? prevTc.quantity * (prevComp?.quantity || comp.quantity) : 0)
+                                    } : undefined;
                                     
                                     return (
                                         <div key={`tmpl-child-${i}`} className="space-y-1">
-                                            <div className={`text-xs flex justify-between w-full max-w-md leading-tight group/tmpl ${isChildMatch ? 'text-blue-400' : 'text-emerald-400/90'}`}>
+                                            <div className={`text-xs flex justify-between items-center w-full max-w-md leading-tight group/tmpl ${isChildMatch ? 'text-blue-400' : 'text-emerald-400/90'}`}>
                                                 <span className="flex items-center gap-1 min-w-0">
                                                     <span 
                                                         className={`truncate cursor-pointer hover:underline font-medium ${isChildMatch ? 'font-bold underline text-blue-400' : ''}`}
@@ -3316,7 +4946,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                     </span>
                                                     {tc.type === 'kit' && <span className="text-xs bg-emerald-900/40 text-emerald-300 px-1 rounded uppercase font-bold shrink-0">Kit</span>}
                                                 </span>
-                                                <span className="shrink-0 pl-2 opacity-70">x{tc.quantity * comp.quantity}</span>
+                                                <span className="shrink-0 pl-2 flex items-center gap-1.5">
+                                                    <span className="opacity-70">x{tc.quantity * comp.quantity}</span>
+                                                    {renderBuilderHistoryBadge(
+                                                        `builder-tmpl-${comp.uniqueId}-${tc.uniqueId || i}`,
+                                                        tc.warehouseState?.changeLog,
+                                                        tc.name,
+                                                        tc.quantity * comp.quantity,
+                                                        Boolean(tc.warehouseState?.inDistinta || tc.warehouseState?.loaded),
+                                                        tcPendingChange
+                                                    )}
+                                                </span>
                                             </div>
                                             
                                             {/* Nested Kit Items or Machine Accessories inside Template */}
@@ -3324,8 +4964,27 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                 <div className="ml-3 border-l border-emerald-900/30 pl-2 space-y-0.5">
                                                     {tc.contents?.map((sub, si) => {
                                                         const isSubMatch = highlightedItemName && sub.name === highlightedItemName;
+                                                        const prevTcSub = prevTc?.contents?.find(ps => ps.itemId === sub.itemId) || prevTc?.contents?.[si];
+                                                        const currentTcSubTotalQty = sub.quantity * tc.quantity * comp.quantity;
+                                                        const prevTcSubTotalQty = prevTc && prevTcSub ? prevTcSub.quantity * prevTc.quantity * (prevComp?.quantity || comp.quantity) : 0;
+                                                        const isTcSubPending = Boolean(
+                                                            isListCompletedWithSnapshot && (
+                                                                isTcBrandNew ||
+                                                                !prevTc ||
+                                                                !prevTcSub ||
+                                                                prevTcSub.itemId !== sub.itemId ||
+                                                                prevTcSub.name !== sub.name ||
+                                                                prevTcSubTotalQty !== currentTcSubTotalQty
+                                                            )
+                                                        );
+                                                        const tmplSubPendingChange = isTcSubPending ? {
+                                                            isPending: true,
+                                                            prevName: (!prevTc || !prevTcSub) ? undefined : prevTcSub.name,
+                                                            prevQuantity: prevTcSubTotalQty
+                                                        } : undefined;
+
                                                         return (
-                                                            <div key={si} className={`text-xs flex justify-between w-full max-w-sm leading-tight ${isSubMatch ? 'text-blue-400 font-bold' : 'text-slate-500'}`}>
+                                                            <div key={si} className={`text-xs flex justify-between items-center w-full max-w-sm leading-tight ${isSubMatch ? 'text-blue-400 font-bold' : 'text-slate-500'}`}>
                                                                 <span 
                                                                     className="truncate cursor-pointer hover:underline"
                                                                     onClick={(e) => {
@@ -3340,7 +4999,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                                                                 >
                                                                     - {sub.name}
                                                                 </span>
-                                                                <span className="shrink-0 pl-2 opacity-50">x{sub.quantity * tc.quantity * comp.quantity}</span>
+                                                                <span className="shrink-0 pl-2 flex items-center gap-1.5">
+                                                                    <span className="opacity-50">x{sub.quantity * tc.quantity * comp.quantity}</span>
+                                                                    {renderBuilderHistoryBadge(
+                                                                        `builder-tmpl-sub-${comp.uniqueId}-${tc.uniqueId || i}-${si}`,
+                                                                        sub.warehouseState?.changeLog,
+                                                                        sub.name,
+                                                                        sub.quantity * tc.quantity * comp.quantity,
+                                                                        Boolean(sub.warehouseState?.inDistinta || sub.warehouseState?.loaded || tc.warehouseState?.inDistinta || tc.warehouseState?.loaded),
+                                                                        tmplSubPendingChange
+                                                                    )}
+                                                                </span>
                                                             </div>
                                                         );
                                                     })}
@@ -3401,6 +5070,69 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
          </div>
       </Modal>
 
+      {/* ZONE EDIT MODAL */}
+      {zoneForEdit && (
+        <ZoneEditModal
+          isOpen={!!zoneForEdit}
+          onClose={() => setZoneForEdit(null)}
+          zone={zoneForEdit}
+          event={activeList}
+          onSave={async (updatedFields) => {
+            if (!activeList || !zoneForEdit) return;
+            const targetId = zoneForEdit.id;
+            const targetName = zoneForEdit.name;
+            const newZones = (activeList.zones || []).map(z => 
+              (z.id && targetId ? z.id === targetId : z.name === targetName) ? { ...z, ...updatedFields } : z
+            );
+            await updateActiveList({ zones: newZones }, true);
+            setZoneForEdit(null);
+          }}
+        />
+      )}
+
+      {/* ZONE INFO MODAL */}
+      {zoneForInfo && (
+        <ZoneInfoModal
+          isOpen={!!zoneForInfo}
+          onClose={() => setZoneForInfo(null)}
+          zone={zoneForInfo}
+          event={activeList}
+          onEdit={() => {
+            const z = zoneForInfo;
+            setZoneForInfo(null);
+            setZoneForEdit(z);
+          }}
+        />
+      )}
+
+      {/* EVENT SUMMARY & ZONES SCHEMA MODAL */}
+      {summaryEvent && (
+        <EventSummaryModal
+          event={summaryEvent}
+          isOpen={!!summaryEvent}
+          onClose={() => setSummaryEvent(null)}
+          onEdit={() => {
+            const target = summaryEvent;
+            setSummaryEvent(null);
+            openEventModal(target);
+          }}
+          onOpenList={() => {
+            if (summaryEvent) {
+              handleOpenList(summaryEvent);
+            }
+            setSummaryEvent(null);
+          }}
+          onUpdateZone={async (zoneId, updatedFields) => {
+            if (activeList && activeList.id === summaryEvent.id) {
+              const newZones = (activeList.zones || []).map(z => 
+                (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
+              );
+              await updateActiveList({ zones: newZones }, true);
+            }
+          }}
+        />
+      )}
+
       <RemindersModal 
         isOpen={!!activeRemindersListId}
         onClose={() => setActiveRemindersListId(null)}
@@ -3440,53 +5172,53 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           isOpen={isExportModalOpen} 
           onClose={() => setIsExportModalOpen(false)} 
           title="Export Lista Materiale"
-          size="md"
+          size="lg"
       >
           <div className="space-y-4">
               <p className="text-sm text-slate-400">
                   Seleziona il formato in cui desideri esportare la lista per l'evento <strong>{activeList?.eventName}</strong>:
               </p>
               
-              <div className="grid grid-cols-1 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* OPTION 1: PDF LISTA */}
                   <button 
                       onClick={() => { exportPDF(activeList!); setIsExportModalOpen(false); }}
-                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-blue-500/50 rounded-xl text-left transition-all duration-200 group"
+                      className="flex items-center gap-3.5 p-3.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-blue-500/50 rounded-xl text-left transition-all duration-200 group"
                   >
-                      <div className="p-3 bg-blue-900/30 text-blue-400 rounded-lg group-hover:scale-110 transition-transform">
-                          <FileText size={24} />
+                      <div className="p-2.5 bg-blue-900/30 text-blue-400 rounded-lg group-hover:scale-105 transition-transform shrink-0">
+                          <FileText size={20} />
                       </div>
                       <div className="min-w-0 flex-1">
                           <h4 className="font-bold text-white text-sm">Lista Materiale (PDF)</h4>
-                          <p className="text-xs text-slate-400 mt-0.5">Ordinata per zone e reparti con caselle di spunta (check-list).</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">Completa, per zone e reparti con checklist.</p>
                       </div>
                   </button>
 
                   {/* OPTION 2: PDF TOTALI */}
                   <button 
                       onClick={() => { exportTotalsPDF(activeList!); setIsExportModalOpen(false); }}
-                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-purple-500/50 rounded-xl text-left transition-all duration-200 group"
+                      className="flex items-center gap-3.5 p-3.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-purple-500/50 rounded-xl text-left transition-all duration-200 group"
                   >
-                      <div className="p-3 bg-purple-900/30 text-purple-400 rounded-lg group-hover:scale-110 transition-transform">
-                          <ClipboardList size={24} />
+                      <div className="p-2.5 bg-purple-900/30 text-purple-400 rounded-lg group-hover:scale-105 transition-transform shrink-0">
+                          <ClipboardList size={20} />
                       </div>
                       <div className="min-w-0 flex-1">
                           <h4 className="font-bold text-white text-sm">Riepilogo Totali (PDF)</h4>
-                          <p className="text-xs text-slate-400 mt-0.5">Raggruppamento globale dei totali divisi tra Kit e materiale sfuso.</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">Totali globali divisi tra Kit e materiale sfuso.</p>
                       </div>
                   </button>
 
                   {/* OPTION 3: CSV EXCEL */}
                   <button 
                       onClick={() => { exportCSV(activeList!); setIsExportModalOpen(false); }}
-                      className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-left transition-all duration-200 group"
+                      className="flex items-center gap-3.5 p-3.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-left transition-all duration-200 group"
                   >
-                      <div className="p-3 bg-emerald-900/30 text-emerald-400 rounded-lg group-hover:scale-110 transition-transform">
-                          <FileDown size={24} />
+                      <div className="p-2.5 bg-emerald-900/30 text-emerald-400 rounded-lg group-hover:scale-105 transition-transform shrink-0">
+                          <FileDown size={20} />
                       </div>
                       <div className="min-w-0 flex-1">
                           <h4 className="font-bold text-white text-sm">Export in CSV (Excel)</h4>
-                          <p className="text-xs text-slate-400 mt-0.5">Scarica un file CSV tabellare compatibile con Excel o altri gestionali.</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">File CSV tabellare compatibile con Excel.</p>
                       </div>
                   </button>
 
@@ -3494,53 +5226,136 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   {activeZone && activeSection && (
                       <button 
                           onClick={() => { exportSectionPDF(activeList!, activeZone.id, activeSection.id); setIsExportModalOpen(false); }}
-                          className="flex items-center gap-4 p-4 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl text-left transition-all duration-200 group border-dashed"
+                          className="flex items-center gap-3.5 p-3.5 bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-amber-500/50 rounded-xl text-left transition-all duration-200 group border-dashed"
                       >
-                          <div className="p-3 bg-amber-900/30 text-amber-500 rounded-lg group-hover:scale-110 transition-transform">
-                              <Layers size={24} />
+                          <div className="p-2.5 bg-amber-900/30 text-amber-500 rounded-lg group-hover:scale-105 transition-transform shrink-0">
+                              <Layers size={20} />
                           </div>
                           <div className="min-w-0 flex-1">
-                              <h4 className="font-bold text-white text-sm">Reparto Attivo: "{activeSection.name}" (PDF)</h4>
-                              <p className="text-xs text-slate-400 mt-0.5">Esporta solo il reparto "{activeSection.name}" della zona "{activeZone.name}".</p>
+                              <h4 className="font-bold text-white text-sm">Reparto Attivo: "{activeSection.name}"</h4>
+                              <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">Solo "{activeSection.name}" di "{activeZone.name}".</p>
                           </div>
                       </button>
                   )}
               </div>
 
-              {/* ALL OTHER DEPARTMENTS SELECTOR */}
+              {/* ESPORTAZIONE SINGOLA / SELETTIVA */}
               {activeList && activeList.zones && activeList.zones.length > 0 && (
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-4 text-left transition-all duration-200">
-                          <div className="p-2.5 bg-slate-800 text-slate-400 rounded-lg border border-slate-700/50">
-                              <Layers size={18} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                              <h4 className="font-bold text-white text-xs uppercase tracking-wider opacity-80">Seleziona un singolo Reparto</h4>
-                              <p className="text-[11px] text-slate-500 mt-0.5">Esporta solo il PDF di uno dei reparti configurati:</p>
-                          </div>
-                      </div>
-                      <div className="space-y-2.5 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                          {activeList.zones.map(zone => (
-                              <div key={zone.id} className="space-y-1">
-                                  <div className="text-[10px] uppercase font-extrabold text-slate-500 tracking-widest pl-1">{zone.name}</div>
-                                  <div className="flex flex-wrap gap-1.5 pl-2 pb-1">
-                                      {zone.sections?.map(section => {
-                                          const isActive = zone.id === activeZone?.id && section.id === activeSection?.id;
-                                          return (
-                                              <button
-                                                  key={section.id}
-                                                  disabled={isActive}
-                                                  onClick={() => { exportSectionPDF(activeList, zone.id, section.id); setIsExportModalOpen(false); }}
-                                                  className={`px-2 py-1 text-[11px] font-bold rounded border transition-all ${isActive ? 'bg-amber-600/20 border-amber-500/30 text-amber-400 cursor-not-allowed' : 'bg-slate-950 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'}`}
-                                              >
-                                                  {section.name}
-                                              </button>
-                                          );
-                                      })}
-                                  </div>
+                  <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3 shadow-lg">
+                      <div className="flex items-center justify-between gap-3 text-left">
+                          <div className="flex items-center gap-3 min-w-0">
+                              <div className="p-2.5 bg-amber-900/30 text-amber-400 rounded-lg border border-amber-700/40 shrink-0">
+                                  <Layers size={18} />
                               </div>
-                          ))}
+                              <div className="min-w-0">
+                                  <h4 className="font-bold text-white text-xs uppercase tracking-wider">Esportazione singola</h4>
+                                  <p className="text-[11px] text-slate-400 mt-0.5">Seleziona una o più zone e reparti da esportare:</p>
+                              </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                  type="button"
+                                  onClick={handleSelectAllExport}
+                                  className="text-[10px] font-bold uppercase text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+                              >
+                                  Tutti
+                              </button>
+                              <button
+                                  type="button"
+                                  onClick={handleClearExportSelection}
+                                  className="text-[10px] font-bold uppercase text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+                              >
+                                  Nessuno
+                              </button>
+                          </div>
                       </div>
+
+                      {/* LIST OF ZONES AND DEPARTMENTS */}
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1.5 custom-scrollbar">
+                          {activeList.zones.map(zone => {
+                              const hasSections = zone.sections && zone.sections.length > 0;
+                              const isFullZone = hasSections
+                                  ? zone.sections.every(s => exportSelectedSections.has(`${zone.id}__${s.id}`))
+                                  : exportSelectedZones.has(zone.id);
+                              const isPartialZone = !isFullZone && hasSections && zone.sections.some(s => exportSelectedSections.has(`${zone.id}__${s.id}`));
+
+                              return (
+                                  <div key={zone.id} className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-2">
+                                      {/* Zone Row */}
+                                      <div className="flex items-center justify-between gap-2">
+                                          <div className="text-[11px] uppercase font-bold text-slate-300 tracking-wider truncate flex items-center gap-1.5 min-w-0">
+                                              <Box size={13} className="text-emerald-400 shrink-0" />
+                                              <span className="truncate">{zone.name}</span>
+                                          </div>
+                                          <button
+                                              type="button"
+                                              onClick={() => handleToggleZoneExport(zone.id)}
+                                              className={`px-2.5 py-1 text-[10px] font-bold rounded-md border transition-all shrink-0 flex items-center gap-1 ${
+                                                  isFullZone
+                                                      ? 'bg-emerald-600 border-emerald-500 text-white shadow-sm shadow-emerald-900/40'
+                                                      : isPartialZone
+                                                      ? 'bg-emerald-950/80 border-emerald-600/60 text-emerald-300'
+                                                      : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                              }`}
+                                          >
+                                              {isFullZone && <CheckCircle size={11} />}
+                                              <span>{isFullZone ? 'Zona Selezionata' : 'Tutta la Zona'}</span>
+                                          </button>
+                                      </div>
+
+                                      {/* Department buttons */}
+                                      {hasSections && (
+                                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                              {zone.sections.map(section => {
+                                                  const isSelected = exportSelectedSections.has(`${zone.id}__${section.id}`);
+                                                  return (
+                                                      <button
+                                                          key={section.id}
+                                                          type="button"
+                                                          onClick={() => handleToggleSectionExport(zone.id, section.id)}
+                                                          className={`px-2.5 py-1 text-[11px] font-bold rounded-md border transition-all flex items-center gap-1.5 ${
+                                                              isSelected
+                                                                  ? 'bg-blue-600 border-blue-500 text-white shadow-sm shadow-blue-900/40'
+                                                                  : 'bg-slate-900 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'
+                                                          }`}
+                                                      >
+                                                          {isSelected && <span className="text-[10px]">✓</span>}
+                                                          <span>{section.name}</span>
+                                                      </button>
+                                                  );
+                                              })}
+                                          </div>
+                                      )}
+                                  </div>
+                              );
+                          })}
+                      </div>
+
+                      {/* Export Action Button */}
+                      <button
+                          type="button"
+                          disabled={exportCounts.totalItems === 0}
+                          onClick={handleExportSelected}
+                          className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-lg ${
+                              exportCounts.totalItems > 0
+                                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-900/40 cursor-pointer active:scale-[0.98]'
+                                  : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60'
+                          }`}
+                      >
+                          <FileDown size={16} />
+                          <span>
+                              {exportCounts.totalItems > 0
+                                  ? `Esporta (${
+                                      exportCounts.fullZones > 0 && exportCounts.partialSections > 0
+                                          ? `${exportCounts.fullZones} ${exportCounts.fullZones === 1 ? 'Zona' : 'Zone'}, ${exportCounts.partialSections} ${exportCounts.partialSections === 1 ? 'Reparto' : 'Reparti'}`
+                                          : exportCounts.fullZones > 0
+                                          ? `${exportCounts.fullZones} ${exportCounts.fullZones === 1 ? 'Zona' : 'Zone'}`
+                                          : `${exportCounts.partialSections} ${exportCounts.partialSections === 1 ? 'Reparto' : 'Reparti'}`
+                                  })`
+                                  : 'Seleziona Zone o Reparti da esportare'}
+                          </span>
+                      </button>
                   </div>
               )}
 
@@ -3642,7 +5457,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         initialData={editingItem}
         inventory={inventory} 
         onCreateAccessory={handleCreateInventoryItemOnly}
-        title="Modifica Materiale Master" 
+        title="Modifica Materiale" 
         databases={effectiveDatabases}
         activeDatabaseId={activeList?.databaseId || activeDatabaseId}
         packingLists={lists}
@@ -3659,7 +5474,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         }}
         initialData={editingKit}
         inventory={inventory}
-        title="Modifica Kit Master"
+        title="Modifica Kit"
         databases={effectiveDatabases}
         activeDatabaseId={activeList?.databaseId || activeDatabaseId}
         kits={kits}
@@ -3965,7 +5780,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           </div>
       </Modal>
 
-      {replacingComponentId && <div className="absolute inset-x-0 top-0 z-20 bg-amber-900/95 border-b border-amber-500/50 p-4 shadow-xl text-center text-amber-100 font-bold"><ArrowLeftRight className="inline mr-2"/> Modalità Sostituzione <button onClick={() => setReplacingComponentId(null)} className="ml-4 underline text-sm font-normal">Annulla</button></div>}
       
       {/* SHARE EVENT MODAL */}
       <ShareEventModal 
@@ -4089,6 +5903,97 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm shadow-lg shadow-blue-900/30 transition-all active:scale-95"
             >
               Applica Filtri
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* WAREHOUSE REPLACEMENT DETAILS MODAL */}
+      <Modal
+        isOpen={warehouseSubModal.isOpen}
+        onClose={() => setWarehouseSubModal({ isOpen: false, componentName: '', originalQuantity: 0, replacementInfo: null })}
+        title="Dettagli Sostituzione Magazzino"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200 text-xs flex items-start gap-2.5">
+            <Info size={16} className="text-amber-400 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              Questa modifica è stata effettuata durante la fase di preparazione in magazzino. La lista originale di progetto non è stata alterata.
+            </p>
+          </div>
+
+          {/* Original Material */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+              Materiale Originale Previsto
+            </span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold text-white text-sm">
+                {warehouseSubModal.replacementInfo?.originalName || warehouseSubModal.componentName}
+              </span>
+              <span className="text-xs font-mono font-bold bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 shrink-0">
+                Qtà: {warehouseSubModal.replacementInfo?.originalQuantity ?? warehouseSubModal.originalQuantity ?? 1}
+              </span>
+            </div>
+            {warehouseSubModal.replacementInfo?.originalRemainingQuantity !== undefined && warehouseSubModal.replacementInfo.originalRemainingQuantity > 0 && (
+              <p className="text-xs text-slate-400">
+                Pezzi originali mantenuti: <strong className="text-slate-200">{warehouseSubModal.replacementInfo.originalRemainingQuantity}</strong>
+              </p>
+            )}
+          </div>
+
+          {/* Warehouse Replacements */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-amber-400 flex items-center gap-1.5">
+              <ArrowLeftRight size={13} />
+              Materiale Inserito dal Magazzino
+            </span>
+            {warehouseSubModal.replacementInfo?.replacements && warehouseSubModal.replacementInfo.replacements.length > 0 ? (
+              <div className="space-y-1.5">
+                {warehouseSubModal.replacementInfo.replacements.map((rep: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-100">
+                    <span className="font-medium truncate mr-2">{rep.name}</span>
+                    <span className="font-mono font-bold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded shrink-0">
+                      x{rep.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400 italic">
+                Nessun materiale alternativo specificato o materiale azzerato/rimosso.
+              </div>
+            )}
+          </div>
+
+          {/* Reason if available */}
+          {warehouseSubModal.replacementInfo?.reason && (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1 text-xs">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+                Motivazione del magazziniere
+              </span>
+              <p className="text-slate-200 italic">
+                "{warehouseSubModal.replacementInfo.reason}"
+              </p>
+            </div>
+          )}
+
+          {/* Date / Author */}
+          {warehouseSubModal.replacementInfo?.replacedAt && (
+            <div className="text-[11px] text-slate-500 text-right">
+              Sostituito il: {new Date(warehouseSubModal.replacementInfo.replacedAt).toLocaleString('it-IT')}
+              {warehouseSubModal.replacementInfo.replacedBy ? ` da ${warehouseSubModal.replacementInfo.replacedBy}` : ''}
+            </div>
+          )}
+
+          <div className="pt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setWarehouseSubModal({ isOpen: false, componentName: '', originalQuantity: 0, replacementInfo: null })}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition-colors"
+            >
+              Chiudi
             </button>
           </div>
         </div>

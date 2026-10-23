@@ -1334,56 +1334,57 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         }
       >
         {/* 1. TOP APP BAR / PAGE HEADER */}
-        <header className="h-16 border-b border-slate-800 bg-slate-900/95 backdrop-blur px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-lg z-20">
-          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+        <header className="h-14 sm:h-16 border-b border-slate-800 bg-slate-900/95 backdrop-blur px-2.5 sm:px-6 flex items-center justify-between gap-2 shrink-0 shadow-lg z-20">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
             <button
               type="button"
               onClick={handleAttemptClose}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs sm:text-sm font-bold transition-all border border-slate-700 active:scale-95 shrink-0"
+              className="flex items-center gap-2 p-2 sm:px-3 sm:py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs sm:text-sm font-bold transition-all border border-slate-700 active:scale-95 shrink-0"
               title={backButtonLabel || (isQuickMode ? "Annulla e chiudi" : "Torna all'Inventario")}
             >
               {isQuickMode ? <X size={18} /> : <ArrowLeft size={18} />}
               <span className="hidden sm:inline">{backButtonLabel || (isQuickMode ? "Annulla" : "Torna all'Inventario")}</span>
             </button>
             
-            <div className="h-6 w-[1px] bg-slate-800 hidden sm:block"></div>
+            <div className="h-6 w-[1px] bg-slate-800 hidden sm:block shrink-0"></div>
 
-            <div className="flex items-center gap-2.5 truncate">
+            <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1 overflow-hidden">
               {isQuickMode && (
-                <span className="px-2.5 py-1 bg-cyan-950/80 text-cyan-400 border border-cyan-800/80 rounded-lg text-xs font-mono font-bold shrink-0">
+                <span className="hidden md:inline-block px-2 py-0.5 bg-cyan-950/80 text-cyan-400 border border-cyan-800/80 rounded-lg text-xs font-mono font-bold shrink-0">
                   Accessorio Rapido
                 </span>
               )}
               {formData.productCode && (
-                <span className="px-2.5 py-1 bg-blue-950 text-blue-400 border border-blue-800/80 rounded-lg text-xs font-mono font-bold shrink-0">
+                <span className="px-1.5 sm:px-2.5 py-0.5 sm:py-1 bg-blue-950 text-blue-400 border border-blue-800/80 rounded-lg text-[10px] sm:text-xs font-mono font-bold shrink-0">
                   Cod. {formData.productCode}
                 </span>
               )}
-              <h1 className="text-sm sm:text-base md:text-lg font-black text-white truncate tracking-tight">
+              <h1 className="text-xs sm:text-base md:text-lg font-black text-white truncate tracking-tight min-w-0 flex-1">
                 {formData.name ? formData.name : (title || (isQuickMode ? 'Nuovo Accessorio Rapido' : 'Nuovo Materiale'))}
               </h1>
             </div>
           </div>
 
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={handleAttemptClose}
-            className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition-colors"
-          >
-            Annulla
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!formData.name}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-900/30 transition-all active:scale-95"
-          >
-            <Check size={18} />
-            <span>{isQuickMode ? 'Crea & Collega' : 'Salva Materiale'}</span>
-          </button>
-        </div>
-      </header>
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={handleAttemptClose}
+              className="hidden md:inline-flex px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!formData.name}
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-1.5 sm:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-900/30 transition-all active:scale-95 shrink-0"
+            >
+              <Check size={16} className="sm:w-[18px] sm:h-[18px]" />
+              <span className="sm:hidden">{isQuickMode ? 'Crea' : 'Salva'}</span>
+              <span className="hidden sm:inline">{isQuickMode ? 'Crea & Collega' : 'Salva Materiale'}</span>
+            </button>
+          </div>
+        </header>
 
       {/* 2. TAB NAVIGATION BAR */}
       {!isQuickMode && (

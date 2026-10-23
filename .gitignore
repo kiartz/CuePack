@@ -59,4 +59,12 @@ firebase_migration.py
 .tmp/
 Oggetti di riferimento/
 
+# Firebase Emulator exports & local scratch
+firebase-export-*/
+emulator-data/
+emulator_auth_export.json
+seed_emulator_live.js
+*.cjs
+
+
 

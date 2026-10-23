@@ -1,12 +1,16 @@
 {
   "name": "cuepack-manager",
   "private": true,
-  "version": "0.5.8.2",
+  "version": "0.5.8.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "emulators": "firebase emulators:start --import=\"../CuePack Firebase/Local DB for Emu\" --export-on-exit=\"../CuePack Firebase/Local DB for Emu\"",
+    "emulators:export": "firebase emulators:export \"../CuePack Firebase/Local DB for Emu\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:benchmark": "node scripts/benchmark_concurrency.mjs",
+    "test:index": "node scripts/test_index_search.mjs"
   },
   "dependencies": {
     "@types/react-datepicker": "^6.2.0",

@@ -5,14 +5,16 @@ import {
   persistentLocalCache, 
   persistentMultipleTabManager,
   waitForPendingWrites,
+  connectFirestoreEmulator,
   collection, 
   doc, 
+  getDoc,
   setDoc, 
   deleteDoc, 
   updateDoc, 
   writeBatch 
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { InventoryItem, Kit, PackingList, ChecklistCategory, Template } from './types';
 
 // Define a Union type for all possible database items
@@ -55,6 +57,28 @@ try {
 
 export const db = firestoreDb;
 export const auth = getAuth(app);
+
+// --- FIREBASE LOCAL EMULATOR CONNECTION (ZERO CLOUD READS) ---
+export const isEmulatorActive = 
+  typeof import.meta !== 'undefined' && 
+  (import.meta as any).env?.DEV && 
+  (import.meta as any).env?.VITE_USE_FIREBASE_EMULATOR === 'true';
+
+const isEmulatorEnabled = isEmulatorActive;
+
+if (isEmulatorEnabled && typeof window !== 'undefined') {
+  const host = window.location.hostname || '127.0.0.1';
+  if (!(db as any)._emulatorInitialized) {
+    try {
+      connectFirestoreEmulator(db, host, 8085);
+      connectAuthEmulator(auth, `http://${host}:9099`, { disableWarnings: true });
+      (db as any)._emulatorInitialized = true;
+      console.log(`%c⚡ [CUEPACK EMULATOR] Connesso all'emulatore locale (${host}) - 0 Letture Cloud!`, 'color: #10b981; font-weight: bold; font-size: 13px;');
+    } catch (e) {
+      console.warn("Notice connecting to Firebase Emulator:", e);
+    }
+  }
+}
 
 /**
  * Waits for all pending offline writes to be committed to Firestore remote servers.
@@ -100,21 +124,16 @@ export const getTemplatesCollection = (_dbId?: string): string => {
 
 // --- Generic Helper Functions ---
 
-/**
- * Strips 'undefined' values recursively from an object to prevent Firestore errors.
- */
-export const cleanData = (obj: any): any => {
-  if (Array.isArray(obj)) {
-    return obj.map(item => cleanData(item));
-  } else if (obj !== null && typeof obj === 'object') {
-    return Object.fromEntries(
-      Object.entries(obj)
-        .filter(([_, value]) => value !== undefined)
-        .map(([key, value]) => [key, cleanData(value)])
-    );
-  }
-  return obj;
-};
+export { cleanData } from './utils';
+import { cleanData } from './utils';
+import { telemetry } from './services/firestoreTelemetry';
+import { 
+  COLL_INVENTORY_INDEX, 
+  updateItemInIndex, 
+  deleteItemFromIndex, 
+  rebuildInventoryIndex 
+} from './services/catalogIndexService';
+export { COLL_INVENTORY_INDEX, rebuildInventoryIndex };
 
 /**
  * Adds or Overwrites a document in a collection with a specific ID.
@@ -124,6 +143,14 @@ export const addOrUpdateItem = async <T extends { id: string }>(collectionName: 
     const docRef = doc(db, collectionName, item.id);
     const cleaned = cleanData(item);
     await setDoc(docRef, cleaned);
+    telemetry.recordWrite(collectionName, item.id, 1, `addOrUpdateItem`);
+
+    // Synchronize catalog index if updating inventory item
+    if (collectionName === COLL_INVENTORY) {
+      updateItemInIndex(db, item as unknown as InventoryItem).catch(err => {
+        console.warn("Notice updating catalog index on addOrUpdate:", err);
+      });
+    }
   } catch (error) {
     console.error(`Error writing to ${collectionName}:`, error);
     throw error;
@@ -138,12 +165,22 @@ export const updateItemFields = async <T extends object>(collectionName: string,
     const docRef = doc(db, collectionName, id);
     const cleaned = cleanData(fields);
     await updateDoc(docRef, cleaned); 
+    const updatedKeys = Object.keys(fields).join(', ');
+    telemetry.recordWrite(collectionName, id, 1, `updateFields: [${updatedKeys}]`);
+
+    // Synchronize catalog index if updating inventory item fields
+    if (collectionName === COLL_INVENTORY) {
+      getDoc(docRef).then(snap => {
+        if (snap.exists()) {
+          updateItemInIndex(db, { ...snap.data(), id: snap.id } as InventoryItem);
+        }
+      }).catch(err => console.warn("Notice updating catalog index on field update:", err));
+    }
   } catch (error) {
     console.error(`Error updating ${collectionName}:`, error);
     throw error;
   }
 };
-
 
 /**
  * Deletes a document.
@@ -151,6 +188,14 @@ export const updateItemFields = async <T extends object>(collectionName: string,
 export const deleteItem = async (collectionName: string, id: string) => {
   try {
     await deleteDoc(doc(db, collectionName, id));
+    telemetry.recordDelete(collectionName, id);
+
+    // Synchronize catalog index if deleting from inventory
+    if (collectionName === COLL_INVENTORY) {
+      deleteItemFromIndex(db, id).catch(err => {
+        console.warn("Notice removing item from catalog index:", err);
+      });
+    }
   } catch (error) {
     console.error(`Error deleting from ${collectionName}:`, error);
     throw error;
@@ -170,5 +215,13 @@ export const batchWriteItems = async <T extends { id: string }>(collectionName: 
             batch.set(docRef, cleaned);
         });
         await batch.commit();
+        telemetry.recordBatchWrite(collectionName, chunk.length, `batch chunk size ${chunk.length}`);
+    }
+
+    // Rebuild index after batch import/reset
+    if (collectionName === COLL_INVENTORY) {
+      rebuildInventoryIndex(db, items as unknown as InventoryItem[]).catch(err => {
+        console.warn("Notice rebuilding catalog index after batch write:", err);
+      });
     }
 };

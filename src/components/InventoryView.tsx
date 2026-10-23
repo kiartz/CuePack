@@ -8,7 +8,8 @@ import { openDocumentInBrowser } from '../utils/documentViewer';
 import { ConfirmationModal } from './ConfirmationModal';
 import { Modal } from './Modal';
 import { getCategoryDefinitions } from '../utils/categories';
-import { addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
+import { db, addOrUpdateItem, deleteItem, COLL_INVENTORY, COLL_LISTS, getInventoryCollection } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { getDbBadgeStyle, getDbDotColor } from '../utils/databaseColors';
 import { tokenizeQuery, scoreSearchMatch } from '../utils/searchUtils';
 
@@ -221,6 +222,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const handleOpenModal = (item?: InventoryItem) => {
     if (item) {
       setEditingItem(item);
+      // Fetch full raw document on-demand (costs only 1 read) to load full attachments, custom logs and notes
+      getDoc(doc(db, COLL_INVENTORY, item.id)).then(snap => {
+        if (snap.exists()) {
+          const fullData = { ...snap.data(), id: snap.id } as InventoryItem;
+          setEditingItem(prev => (prev && prev.id === item.id ? { ...prev, ...fullData } : prev));
+        }
+      }).catch(err => {
+        console.warn("Notice loading full item details on edit:", err);
+      });
     } else {
       setEditingItem(null);
     }

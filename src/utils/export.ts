@@ -647,3 +647,205 @@ export const exportSectionPDF = (activeList: PackingList, zoneId: string, sectio
   const safeSectionName = (section.name || 'reparto').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
   doc.save(`${safeEventName}_${safeSectionName}_${year}-${month}-${day}_${hours}-${minutes}.pdf`);
 };
+
+export interface SelectiveExportTarget {
+  zoneId: string;
+  sectionIds?: string[];
+}
+
+export const exportSelectivePDF = (
+  activeList: PackingList,
+  targets: SelectiveExportTarget[]
+) => {
+  if (!activeList || !activeList.zones || !targets || targets.length === 0) return;
+
+  const validTargets = targets.filter(t => activeList.zones.some(z => z.id === t.zoneId));
+  if (validTargets.length === 0) return;
+
+  const doc = new jsPDF();
+  let isFirstPage = true;
+
+  validTargets.forEach((target) => {
+    const zone = activeList.zones.find(z => z.id === target.zoneId);
+    if (!zone) return;
+
+    // Filter sections to include
+    const sectionsToInclude = target.sectionIds && target.sectionIds.length > 0
+      ? zone.sections.filter(s => target.sectionIds!.includes(s.id))
+      : zone.sections;
+
+    if (!sectionsToInclude || sectionsToInclude.length === 0) return;
+
+    if (!isFirstPage) {
+      doc.addPage();
+    }
+    isFirstPage = false;
+
+    const printHeader = (zoneName: string, subHeader: string | undefined, pageNumber: number) => {
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0);
+      const eventName = activeList.eventName.toUpperCase();
+      doc.text(eventName, 14, 12);
+
+      const versionText = activeList.version ? `v${activeList.version}` : 'LISTA NON PRONTA';
+      const titleWidth = doc.getTextWidth(eventName);
+      doc.setFontSize(10);
+      if (!activeList.version) doc.setTextColor(220, 0, 0);
+      else doc.setTextColor(100);
+      doc.text(versionText, 14 + titleWidth + 3, 12);
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100);
+      doc.text(`${activeList.eventDate}  |  Pagina ${pageNumber}`, pageWidth - 14, 12, { align: 'right' });
+
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0);
+      const headerTitle = subHeader
+        ? `ZONA: ${zoneName.toUpperCase()}  |  REPARTO: ${subHeader.toUpperCase()}`
+        : `ZONA: ${zoneName.toUpperCase()}`;
+      doc.text(headerTitle, 14, 20);
+    };
+
+    let currentY = 25;
+    if (zone.notes) {
+      const noteText = `NOTE ZONA: ${zone.notes}`;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "italic");
+
+      const textWidth = doc.getTextWidth(noteText);
+      doc.setFillColor(255, 255, 204);
+      doc.rect(14, currentY - 3.5, textWidth + 2, 5, 'F');
+      doc.setTextColor(0, 0, 0);
+      doc.text(noteText, 15, currentY);
+
+      currentY += 8;
+    }
+
+    const zoneTotals = calculateZoneTotals(zone);
+    const tableBody: any[] = [];
+
+    sectionsToInclude.forEach(section => {
+      const flatComponents = flattenComponents(section.components);
+      if (flatComponents.length === 0) return;
+
+      tableBody.push([{
+        content: section.name.toUpperCase(),
+        colSpan: 4,
+        styles: { fillColor: [230, 230, 230], fontStyle: 'bold', textColor: [0, 0, 0] }
+      }]);
+
+      flatComponents.forEach(comp => {
+        let nameContent = comp.name;
+        if (comp.isTemporary) nameContent += ' (TEMP)';
+        if (comp.type === 'kit') nameContent = `[KIT] ${comp.name}`;
+
+        if (comp.notes) {
+          nameContent += `\nNOTE: ${comp.notes}`;
+        }
+
+        const zoneTotal = zoneTotals.get(comp.name) || 0;
+        tableBody.push([nameContent, comp.quantity, zoneTotal, '']);
+
+        comp.contents?.forEach(sub => {
+          const subZoneTotal = zoneTotals.get(sub.name) || 0;
+          tableBody.push([{
+            content: `  - ${sub.name}`,
+            styles: { fontSize: 10, textColor: [80, 80, 80] }
+          }, sub.quantity * comp.quantity, subZoneTotal, '']);
+        });
+      });
+    });
+
+    const isSingleSectionMode = sectionsToInclude.length === 1 && target.sectionIds && target.sectionIds.length === 1;
+    const subHeaderName = isSingleSectionMode ? sectionsToInclude[0].name : undefined;
+
+    autoTable(doc, {
+      head: [['Materiale', 'Qta', 'Totale Zona', 'Check']],
+      body: tableBody,
+      startY: currentY,
+      margin: { top: 25 },
+      theme: 'grid',
+      headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [200, 200, 200] },
+      styles: { fontSize: 11, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.1 },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 20, halign: 'center' },
+        2: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
+        3: { cellWidth: 20 }
+      },
+      willDrawCell: (data) => {
+        if (data.column.index === 0 && data.cell.text && data.cell.text.length > 1) {
+          const cell = data.cell;
+          const padding = cell.styles.cellPadding;
+          let paddingTop = 3;
+          let paddingLeft = 3;
+          if (typeof padding === 'number') {
+            paddingTop = padding;
+            paddingLeft = padding;
+          } else if (Array.isArray(padding)) {
+            paddingTop = padding[0] !== undefined ? padding[0] : 3;
+            paddingLeft = padding[3] !== undefined ? padding[3] : 3;
+          } else if (padding && typeof padding === 'object') {
+            const p = padding as any;
+            paddingTop = p.top !== undefined ? p.top : 3;
+            paddingLeft = p.left !== undefined ? p.left : 3;
+          }
+          const fontSize = cell.styles.fontSize || 11;
+
+          let isNoteLine = false;
+          cell.text.forEach((line, i) => {
+            if (line.includes('NOTE:')) {
+              isNoteLine = true;
+            }
+            if (isNoteLine) {
+              const textWidth = doc.getTextWidth(line);
+              const yRect = cell.y + paddingTop + (i * fontSize * 1.15) + (fontSize * 0.05);
+
+              doc.setFillColor(255, 255, 204);
+              doc.rect(cell.x + paddingLeft, yRect, textWidth + 1, fontSize * 0.9, 'F');
+            }
+          });
+        }
+      },
+      didDrawPage: (data) => {
+        printHeader(zone.name, subHeaderName, data.pageNumber);
+      }
+    });
+  });
+
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const safeEventName = (activeList.eventName || 'evento').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
+
+  let suffix = 'selezione';
+  if (validTargets.length === 1) {
+    const singleTarget = validTargets[0];
+    const targetZone = activeList.zones.find(z => z.id === singleTarget.zoneId);
+    const safeZoneName = (targetZone?.name || 'zona').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
+    if (!singleTarget.sectionIds || singleTarget.sectionIds.length === 0 || singleTarget.sectionIds.length === targetZone?.sections.length) {
+      suffix = `Zona_${safeZoneName}`;
+    } else if (singleTarget.sectionIds.length === 1) {
+      const targetSection = targetZone?.sections.find(s => s.id === singleTarget.sectionIds![0]);
+      const safeSecName = (targetSection?.name || 'reparto').replace(/[^a-z0-9\s-_]/gi, '').trim().replace(/\s+/g, '_');
+      suffix = `${safeZoneName}_${safeSecName}`;
+    } else {
+      suffix = `${safeZoneName}_reparti`;
+    }
+  }
+
+  doc.save(`${safeEventName}_${suffix}_${year}-${month}-${day}_${hours}-${minutes}.pdf`);
+};
+
+export const exportZonePDF = (activeList: PackingList, zoneId: string) => {
+  exportSelectivePDF(activeList, [{ zoneId }]);
+};
+

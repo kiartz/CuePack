@@ -1,0 +1,201 @@
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  getDoc, 
+  setDoc, 
+  writeBatch,
+  Firestore 
+} from 'firebase/firestore';
+import { InventoryItem } from '../types';
+import { cleanData } from '../utils';
+
+export const COLL_INVENTORY = 'inventory';
+export const COLL_INVENTORY_INDEX = 'inventory_index';
+export const INDEX_CHUNK_SIZE = 800;
+
+export interface IndexChunk {
+  chunkIndex: number;
+  items: InventoryItem[];
+  updatedAt: string;
+}
+
+/**
+ * Parses snapshot of `inventory_index` collection and reassembles all inventory items.
+ */
+export function parseIndexSnapshot(snapshot: any): InventoryItem[] {
+  const chunks: { chunkIndex: number; items: InventoryItem[] }[] = [];
+  snapshot.forEach((docSnap: any) => {
+    const data = docSnap.data();
+    if (data && Array.isArray(data.items)) {
+      chunks.push({
+        chunkIndex: typeof data.chunkIndex === 'number' ? data.chunkIndex : 0,
+        items: data.items
+      });
+    }
+  });
+
+  // Sort chunks in sequential order
+  chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+  const allItems: InventoryItem[] = [];
+  chunks.forEach(c => {
+    allItems.push(...c.items);
+  });
+
+  return allItems;
+}
+
+/**
+ * Strips heavy secondary metadata (full PDF base64/blobs, excessive logs) 
+ * while keeping all fields required for search, tables, pickers, accessories, and serials badge.
+ */
+export function extractCompactItem(item: InventoryItem): InventoryItem {
+  return cleanData({
+    id: item.id,
+    name: item.name || '',
+    category: item.category || 'Altro',
+    subcategory: item.subcategory || '',
+    productCode: item.productCode || '',
+    qrCode: item.qrCode || '',
+    inStock: item.inStock ?? 1,
+    databaseId: item.databaseId || 'default',
+    description: item.description || '',
+    rentalPrice: item.rentalPrice || 0,
+    purchasePrice: item.purchasePrice,
+    subhirePrice: item.subhirePrice,
+    weight: item.weight,
+    powerConsumption: item.powerConsumption,
+    powerPhase: item.powerPhase,
+    powerConnector: item.powerConnector,
+    accessories: item.accessories || [],
+    instances: (item.instances || []).map(i => ({
+      id: i.id,
+      serialNumber: i.serialNumber || '',
+      status: i.status || 'active'
+    })),
+    documents: (item.documents || []).map(d => ({
+      id: d.id,
+      name: d.name || '',
+      url: d.url || '',
+      type: d.type || 'link'
+    }))
+  });
+}
+
+/**
+ * Rebuilds the entire compact catalog index from all raw inventory items.
+ * Chunks 3,000+ items into ~4 documents of ~250KB each (vastly below 1MB limit).
+ */
+export async function rebuildInventoryIndex(db: Firestore, preloadedItems?: InventoryItem[]): Promise<InventoryItem[]> {
+  let sourceItems = preloadedItems;
+
+  if (!sourceItems || sourceItems.length === 0) {
+    const invSnap = await getDocs(collection(db, COLL_INVENTORY));
+    sourceItems = invSnap.docs.map(d => ({ ...d.data(), id: d.id } as InventoryItem));
+  }
+
+  const compactItems = sourceItems.map(extractCompactItem);
+  const chunksCount = Math.max(1, Math.ceil(compactItems.length / INDEX_CHUNK_SIZE));
+
+  for (let c = 0; c < chunksCount; c++) {
+    const slice = compactItems.slice(c * INDEX_CHUNK_SIZE, (c + 1) * INDEX_CHUNK_SIZE);
+    const chunkRef = doc(db, COLL_INVENTORY_INDEX, `chunk_${c}`);
+    await setDoc(chunkRef, {
+      chunkIndex: c,
+      items: slice,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  console.log(`⚡ [CATALOG INDEX] Creati con successo ${chunksCount} chunks di indice per ${compactItems.length} articoli.`);
+  return compactItems;
+}
+
+/**
+ * Updates or adds an item in the compact index chunks.
+ */
+export async function updateItemInIndex(db: Firestore, item: InventoryItem): Promise<void> {
+  try {
+    const indexSnap = await getDocs(collection(db, COLL_INVENTORY_INDEX));
+    const compact = extractCompactItem(item);
+
+    if (indexSnap.empty) {
+      await rebuildInventoryIndex(db, [item]);
+      return;
+    }
+
+    let foundChunkId: string | null = null;
+    let targetChunkData: any = null;
+    let highestChunkIndex = 0;
+    let highestChunkId = 'chunk_0';
+    let lastChunkData: any = null;
+
+    for (const d of indexSnap.docs) {
+      const data = d.data();
+      const cIdx = typeof data.chunkIndex === 'number' ? data.chunkIndex : 0;
+      if (cIdx >= highestChunkIndex) {
+        highestChunkIndex = cIdx;
+        highestChunkId = d.id;
+        lastChunkData = data;
+      }
+      if (Array.isArray(data.items) && data.items.some((i: any) => i.id === item.id)) {
+        foundChunkId = d.id;
+        targetChunkData = data;
+        break;
+      }
+    }
+
+    if (foundChunkId && targetChunkData) {
+      const updatedList = targetChunkData.items.map((i: any) => i.id === item.id ? compact : i);
+      await setDoc(doc(db, COLL_INVENTORY_INDEX, foundChunkId), {
+        ...targetChunkData,
+        items: updatedList,
+        updatedAt: new Date().toISOString()
+      });
+    } else {
+      // Append to the highest chunk or create new one if full
+      const lastRef = doc(db, COLL_INVENTORY_INDEX, highestChunkId);
+      const lastData = lastChunkData || { chunkIndex: highestChunkIndex, items: [] };
+      if (Array.isArray(lastData.items) && lastData.items.length < INDEX_CHUNK_SIZE) {
+        lastData.items.push(compact);
+        await setDoc(lastRef, {
+          ...lastData,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        const newChunkId = `chunk_${highestChunkIndex + 1}`;
+        await setDoc(doc(db, COLL_INVENTORY_INDEX, newChunkId), {
+          chunkIndex: highestChunkIndex + 1,
+          items: [compact],
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("Notice updating catalog index chunk:", err);
+  }
+}
+
+/**
+ * Removes an item from the compact index chunks.
+ */
+export async function deleteItemFromIndex(db: Firestore, itemId: string): Promise<void> {
+  try {
+    const indexSnap = await getDocs(collection(db, COLL_INVENTORY_INDEX));
+    for (const d of indexSnap.docs) {
+      const data = d.data();
+      if (Array.isArray(data.items) && data.items.some((i: any) => i.id === itemId)) {
+        const filtered = data.items.filter((i: any) => i.id !== itemId);
+        await setDoc(doc(db, COLL_INVENTORY_INDEX, d.id), {
+          ...data,
+          items: filtered,
+          updatedAt: new Date().toISOString()
+        });
+        break;
+      }
+    }
+  } catch (err) {
+    console.warn("Notice deleting from catalog index chunk:", err);
+  }
+}

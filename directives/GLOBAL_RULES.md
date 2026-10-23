@@ -36,7 +36,15 @@
 - **Rentman Sync & User Protection**: Mai sovrascrivere campi modificati manualmente dall'utente (`userModifiedFields`). Scrittura batch su Firestore a blocchi di max 150 elementi con journal di rollback.
 - **Warehouse Real-Time**: Usare sempre `mergeWarehouseStates` e target touch minimi di 48x48px per dispositivi mobili.
 
-## 7. DEFINITION OF "DONE"
+## 7. CODING STANDARDS & REACT TDZ PREVENTION
+- **Hook Ordering & Temporal Dead Zone (TDZ)**: MAI inserire hook (`useEffect`, `useMemo`, `useCallback`, funzioni helper) prima della dichiarazione dello stato (`useState`, `useRef`) delle variabili o setter che essi consumano o referenziano nella dependency array o nel corpo. Ogni hook deve risiedere tassativamente AL DI SOTTO di tutti i relativi `useState`/`useRef` per prevenire il `ReferenceError: Cannot access 'X' before initialization` a runtime.
+
+## 8. FIRESTORE SPARK QUOTA SHIELD & LOCAL EMULATOR WORKFLOW
+- **Zero Cloud Reads During Local Dev**: Durante lo sviluppo locale con Vite (`npm run dev`), l'HMR e i salvataggi frequenti non devono erodere le quote cloud Spark (50K letture/giorno). Utilizzare l'emulatore locale Firebase o la cache IndexedDB attiva.
+- **Central Store Only**: I componenti e modali secondari devono attingere ESCLUSIVAMENTE dallo stato centrale (`AuthenticatedApp`). MAI istanziare listener `onSnapshot` autonomi su intere collezioni (`inventory`, `packing_lists`, `kits`) all'interno di modali figli.
+- **Clean Dev Sessions**: Non lasciare aperte schede con HMR attivo connesso a Firestore di produzione durante sessioni prolungate di refactoring.
+
+## 9. DEFINITION OF "DONE"
 - ✅ Codice conforme alla specifica e all'architettura CuePack.
 - ✅ Zero errori di linting o type-checking (`npx tsc --noEmit` / `npm run build`).
 - ✅ `PROJECT_CONTEXT.md` aggiornato in modo sintetico e denso.

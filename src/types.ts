@@ -133,6 +133,14 @@ export interface Kit {
   reminders?: string[];
 }
 
+export interface WarehouseVersionHistoryItem {
+  version: string;
+  name: string;
+  quantity: number;
+  wasChecked?: boolean;
+  updatedAt?: string; // ISO date of when this version was saved/updated
+}
+
 export interface WarehouseState {
   inDistinta: boolean;
   loaded: boolean;
@@ -143,7 +151,40 @@ export interface WarehouseState {
   changeLog?: {
     previousQuantity: number;
     changedAt: string; // ISO date
+    previousName?: string;
+    previousVersion?: string;
+    wasChecked?: boolean;
+    history?: WarehouseVersionHistoryItem[];
   };
+}
+
+export interface ItemReplacementSubItem {
+  itemId?: string;
+  name: string;
+  quantity: number;
+  category: string;
+  type?: 'item' | 'kit';
+  referenceId?: string;
+}
+
+export interface ItemReplacementInfo {
+  originalName: string;
+  originalQuantity: number;
+  originalUnitQuantity?: number; // Quanti pezzi per singola unità di kit o padre (se sub-componente)
+  originalType: 'item' | 'kit' | 'template';
+  originalReferenceId?: string;
+  originalCategory?: string;
+  originalDatabaseId?: string;
+  originalContents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState }[];
+  originalWarehouseState?: WarehouseState;
+  originalUniqueId?: string;
+  replacementGroupId?: string;
+  replacedQuantity?: number;
+  originalRemainingQuantity?: number; // Quanti pezzi dell'originale sono rimasti (0 se azzerato/sostituito)
+  replacements?: any[]; // Lista dei materiali aggiunti/sostitutivi
+  replacedAt: string; // ISO date
+  replacedBy?: string; // Optional user name or tag
+  reason?: string;
 }
 
 // For the Packing List Builder
@@ -156,7 +197,7 @@ export interface ListComponent {
   category: string; // Cached for sorting/display
   // contents stores accessories for items, kit components for kits.
   // For 'template', it might store an unpacked array of these structures (kits and items).
-  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string; subContents?: any[] }[]; 
+  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string; subContents?: any[]; replacementInfo?: ItemReplacementInfo }[]; 
   templateContents?: ListComponent[]; // Dedicated field for Templates to hold fully-formed kits/items
   notes?: string;
   warehouseState?: WarehouseState;
@@ -165,6 +206,7 @@ export interface ListComponent {
   externalRentalVendor?: string;
   isTemporary?: boolean;
   databaseId?: string;
+  replacementInfo?: ItemReplacementInfo; // Tracciamento materiale sostituito
 }
 
 // --- TEMPLATES ---
@@ -195,6 +237,15 @@ export interface ListZone {
   name: string;
   sections: ListSection[];
   notes?: string;
+  location?: string;        // Posizione / Location della zona
+  setupCompany?: string;    // Azienda allestitore
+  setupDate?: string;       // Data allestimento (YYYY-MM-DD)
+  teardownDate?: string;    // Data smontaggio (YYYY-MM-DD)
+  showDate?: string;        // Data show (YYYY-MM-DD)
+  showTimeStart?: string;   // Orario show da (HH:mm)
+  showTimeEnd?: string;     // Orario show a (HH:mm)
+  returnDate?: string;      // Data fine smontaggio / rientro (YYYY-MM-DD)
+  personnel?: string;       // Personale assegnato alla zona
 }
 
 export interface PackingList {

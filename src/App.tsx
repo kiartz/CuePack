@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, isEmulatorActive } from './firebase';
 import AuthenticatedApp from './components/AuthenticatedApp';
 import LoginView from './components/LoginView';
 import { Loader2 } from 'lucide-react';
 import { NetworkProvider } from './context/NetworkContext';
 import { NetworkStatusBanner } from './components/NetworkStatusBanner';
+import { EmulatorBanner } from './components/EmulatorBanner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -31,7 +32,16 @@ export default function App() {
   return (
     <NetworkProvider>
       <NetworkStatusBanner />
-      {!user ? <LoginView /> : <AuthenticatedApp />}
+      {!user ? (
+        <div className="flex flex-col h-screen h-[100dvh] w-screen overflow-hidden">
+          {isEmulatorActive && <EmulatorBanner />}
+          <div className="flex-1 overflow-auto">
+            <LoginView />
+          </div>
+        </div>
+      ) : (
+        <AuthenticatedApp />
+      )}
     </NetworkProvider>
   );
 }

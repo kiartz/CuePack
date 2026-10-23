@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackingList, InventoryDatabase } from '../types';
 import { DEFAULT_DATABASE_ID } from '../firebase';
 import { Modal } from './Modal';
-import { MapPin, Calendar, Database } from 'lucide-react';
+import { MapPin, Calendar } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 
@@ -24,12 +24,6 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
   activeDatabaseId = DEFAULT_DATABASE_ID
 }) => {
   const [formData, setFormData] = useState<Partial<PackingList>>(initialData);
-
-  const effectiveDatabases = useMemo(() => {
-    return (databases && databases.length > 0)
-      ? databases
-      : [{ id: DEFAULT_DATABASE_ID, name: 'Database Principale', code: 'PRI', color: 'emerald', isDefault: true }];
-  }, [databases]);
 
   useEffect(() => {
     if (isOpen) {
@@ -62,22 +56,6 @@ export const EventFormModal: React.FC<EventFormModalProps> = ({
                             onChange={e => setFormData(prev => ({ ...prev, eventName: e.target.value }))}
                             autoFocus
                         />
-                    </div>
-                    <div className="col-span-full">
-                        <label className="block text-sm font-medium text-slate-400 mb-1 flex items-center gap-1.5">
-                            <Database size={15} className="text-blue-400" /> Database Materiali Predefinito
-                        </label>
-                        <select 
-                            className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-emerald-500 outline-none"
-                            value={formData.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID}
-                            onChange={e => setFormData(prev => ({ ...prev, databaseId: e.target.value }))}
-                        >
-                            {effectiveDatabases.map(d => (
-                                <option key={d.id} value={d.id}>
-                                    [{d.code || d.name.slice(0, 3).toUpperCase()}] {d.name} {d.isDefault ? '(Default)' : ''}
-                                </option>
-                            ))}
-                        </select>
                     </div>
                     <div className="col-span-full">
                         <label className="block text-sm font-medium text-slate-400 mb-1">Location / Luogo</label>

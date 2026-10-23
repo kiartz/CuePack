@@ -13,10 +13,13 @@ import { CalendarView } from './CalendarView';
 import { INITIAL_INVENTORY, INITIAL_KITS, MASTER_CHECKLIST as INITIAL_MASTER_CHECKLIST } from '../constants';
 import { InventoryItem, Kit, Template, PackingList, ChecklistCategory, InventoryDatabase } from '../types';
 import { 
-  db, auth, COLL_INVENTORY, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, COLL_CATEGORIES_CONFIG,
+  db, auth, isEmulatorActive, COLL_INVENTORY, COLL_INVENTORY_INDEX, rebuildInventoryIndex, COLL_KITS, COLL_TEMPLATES, COLL_LISTS, COLL_CHECKLIST_CONFIG, COLL_CATEGORIES_CONFIG,
   COLL_CONNECTORS_CONFIG, COLL_DATABASES, DEFAULT_DATABASE_ID, getInventoryCollection, getKitsCollection, getTemplatesCollection, 
   batchWriteItems, addOrUpdateItem, cleanData 
 } from '../firebase';
+import { parseIndexSnapshot } from '../services/catalogIndexService';
+import { EmulatorBanner } from './EmulatorBanner';
+import { trackCollectionSnapshot, trackDocSnapshot } from '../services/firestoreTelemetry';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { getShareUrlParams } from '../utils/share';
@@ -81,7 +84,18 @@ export default function AuthenticatedApp() {
   const [listToOpenInBuilderId, setListToOpenInBuilderId] = useState<string | null>(null);
   const [listToAutoEditId, setListToAutoEditId] = useState<string | null>(null);
   const [prepMaterialListToOpenId, setPrepMaterialListToOpenId] = useState<string | null>(null);
+  const [isPrepEventOpen, setIsPrepEventOpen] = useState(false);
+  const [isBuilderEventOpen, setIsBuilderEventOpen] = useState(false);
   const hasProcessedDeepLink = useRef(false);
+
+  useEffect(() => {
+    if (currentView !== 'prep-material') {
+      setIsPrepEventOpen(false);
+    }
+    if (currentView !== 'lists') {
+      setIsBuilderEventOpen(false);
+    }
+  }, [currentView]);
 
   // --- DEEP LINKING EFFECT ---
   useEffect(() => {
@@ -116,10 +130,16 @@ export default function AuthenticatedApp() {
 
   // --- FIRESTORE SUBSCRIPTIONS --- 
   const hasAttemptedSeeding = useRef<{ [key: string]: boolean }>({});
+  const isInitialDbsRef = useRef(false);
+  const isInitialInvRef = useRef(false);
+  const isInitialKitsRef = useRef(false);
+  const isInitialTplRef = useRef(false);
+  const isInitialListsRef = useRef(false);
 
   // 1. Databases Metadata Listener
   useEffect(() => {
     const unsubDatabases = onSnapshot(collection(db, COLL_DATABASES), (snapshot) => {
+      trackCollectionSnapshot(COLL_DATABASES, snapshot, isInitialDbsRef);
       const dbs: InventoryDatabase[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data() as InventoryDatabase;
@@ -185,32 +205,37 @@ export default function AuthenticatedApp() {
 
   // 2. Unified Inventory, Kits, Templates Listeners
   useEffect(() => {
-    // 2.1 Inventory Listener (Always listens to unified COLL_INVENTORY)
-    const unsubInventory = onSnapshot(collection(db, COLL_INVENTORY), (snapshot) => {
-        const items: InventoryItem[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data() as InventoryItem;
-          items.push({
-            ...data,
-            id: docSnap.id,
-            databaseId: data.databaseId || DEFAULT_DATABASE_ID
-          });
-        });
-        setInventory(items);
+    // 2.1 Compact Catalog Index Listener (Fast startup: ~4 document reads instead of 3,140+!)
+    const unsubInventory = onSnapshot(collection(db, COLL_INVENTORY_INDEX), async (snapshot) => {
+        trackCollectionSnapshot(COLL_INVENTORY_INDEX, snapshot, isInitialInvRef);
         
-        // SEEDING: only if completely empty
-        if (snapshot.empty && !snapshot.metadata.fromCache && !hasAttemptedSeeding.current[COLL_INVENTORY]) {
-             console.log("Seeding Database with Initial Inventory...");
-             hasAttemptedSeeding.current[COLL_INVENTORY] = true;
-             batchWriteItems(COLL_INVENTORY, INITIAL_INVENTORY.map(i => ({ ...i, databaseId: DEFAULT_DATABASE_ID })));
+        if (snapshot.empty && !snapshot.metadata.fromCache) {
+          if (!hasAttemptedSeeding.current[COLL_INVENTORY_INDEX]) {
+            hasAttemptedSeeding.current[COLL_INVENTORY_INDEX] = true;
+            console.log("⚡ [INDEX] Indice inventario vuoto. Ricostruzione automatica...");
+            const rebuilt = await rebuildInventoryIndex(db);
+            if (rebuilt.length === 0) {
+              console.log("Seeding Database with Initial Inventory...");
+              await batchWriteItems(COLL_INVENTORY, INITIAL_INVENTORY.map(i => ({ ...i, databaseId: DEFAULT_DATABASE_ID })));
+              await rebuildInventoryIndex(db);
+            }
+          }
+          return;
         }
+
+        const items = parseIndexSnapshot(snapshot).map(data => ({
+          ...data,
+          databaseId: data.databaseId || DEFAULT_DATABASE_ID
+        }));
+        setInventory(items);
     }, (error) => {
-        console.error(`Inventory Sync Error:`, error);
-        setDbError("Errore di connessione al Database.");
+        console.error(`Inventory Index Sync Error:`, error);
+        setDbError("Errore di sincronizzazione indice magazzino.");
     });
 
     // 2.2 Kits Listener
     const unsubKits = onSnapshot(collection(db, COLL_KITS), (snapshot) => {
+        trackCollectionSnapshot(COLL_KITS, snapshot, isInitialKitsRef);
         const items: Kit[] = [];
         snapshot.forEach(docSnap => items.push(docSnap.data() as Kit));
         setKits(items);
@@ -224,6 +249,7 @@ export default function AuthenticatedApp() {
 
     // 2.3 Templates Listener
     const unsubTemplates = onSnapshot(collection(db, COLL_TEMPLATES), (snapshot) => {
+        trackCollectionSnapshot(COLL_TEMPLATES, snapshot, isInitialTplRef);
         const items: Template[] = [];
         snapshot.forEach(docSnap => items.push(docSnap.data() as Template));
         setTemplates(items);
@@ -242,8 +268,9 @@ export default function AuthenticatedApp() {
 
     // Lists Listener
     const unsubLists = onSnapshot(collection(db, COLL_LISTS), (snapshot) => {
+        trackCollectionSnapshot(COLL_LISTS, snapshot, isInitialListsRef);
         const items: PackingList[] = [];
-        snapshot.forEach(doc => items.push(doc.data() as PackingList));
+        snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() } as PackingList));
         setPackingLists(items);
     }, (error) => {
         console.error("Lists Sync Error:", error);
@@ -251,9 +278,11 @@ export default function AuthenticatedApp() {
 
     // Master Checklist Listener
     const unsubChecklist = onSnapshot(doc(db, COLL_CHECKLIST_CONFIG, 'master'), (docSnap) => {
+        trackDocSnapshot(COLL_CHECKLIST_CONFIG, docSnap);
+        const metadata = (docSnap as any).metadata;
         if (docSnap.exists()) {
             setMasterChecklist(docSnap.data().categories as ChecklistCategory[]);
-        } else if (!docSnap.metadata.fromCache && !hasAttemptedSeeding.current[COLL_CHECKLIST_CONFIG]) {
+        } else if (!metadata?.fromCache && !hasAttemptedSeeding.current[COLL_CHECKLIST_CONFIG]) {
             hasAttemptedSeeding.current[COLL_CHECKLIST_CONFIG] = true;
             console.log("Seeding Master Checklist...");
             setDoc(doc(db, COLL_CHECKLIST_CONFIG, 'master'), { categories: INITIAL_MASTER_CHECKLIST });
@@ -267,6 +296,7 @@ export default function AuthenticatedApp() {
 
     // Global Categories Sync Listener
     const unsubCategories = onSnapshot(doc(db, COLL_CATEGORIES_CONFIG, 'master'), (docSnap) => {
+        trackDocSnapshot(COLL_CATEGORIES_CONFIG, docSnap);
         if (docSnap.exists()) {
             const data = docSnap.data();
             if (data?.definitions && Array.isArray(data.definitions)) {
@@ -302,6 +332,7 @@ export default function AuthenticatedApp() {
 
     // Global Connectors Sync Listener
     const unsubConnectors = onSnapshot(doc(db, COLL_CONNECTORS_CONFIG, 'master'), (docSnap) => {
+        trackDocSnapshot(COLL_CONNECTORS_CONFIG, docSnap);
         if (docSnap.exists()) {
             const data = docSnap.data();
             if (data?.definitions && Array.isArray(data.definitions)) {
@@ -371,7 +402,7 @@ export default function AuthenticatedApp() {
                     });
                 }
             }
-        } else if (!docSnap.metadata.fromCache && !hasAttemptedSeeding.current[COLL_CONNECTORS_CONFIG]) {
+        } else if (!(docSnap as any).metadata?.fromCache && !hasAttemptedSeeding.current[COLL_CONNECTORS_CONFIG]) {
             hasAttemptedSeeding.current[COLL_CONNECTORS_CONFIG] = true;
             // Seed Master Connectors document if it doesn't exist in Firestore yet
             console.log("Seeding Master Connectors to Firestore...");
@@ -610,15 +641,18 @@ export default function AuthenticatedApp() {
           databases={databases}
           activeDatabaseId={activeDatabaseId}
           setActiveDatabaseId={setActiveDatabaseId}
+          onEventActiveChange={setIsBuilderEventOpen}
         />;
       case 'prep-material':
         return <PrepMaterialView 
             lists={packingLists} 
             inventory={inventory}
+            kits={kits}
             databases={databases}
             onOpenTemplateModal={handleOpenNewProjectModal}
             initialListId={prepMaterialListToOpenId}
             onListOpened={() => setPrepMaterialListToOpenId(null)}
+            onEventActiveChange={setIsPrepEventOpen}
         />;
       case 'checklist-manager':
         return <ChecklistManager 
@@ -646,11 +680,14 @@ export default function AuthenticatedApp() {
   };
 
   return (
-    <div className={`flex h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans transition-all duration-300 ${
+    <div className={`flex flex-col h-screen h-[100dvh] bg-slate-950 text-slate-100 overflow-hidden font-sans transition-all duration-300 ${
       isBannerActive ? (isCollapsed ? 'pt-9' : 'pt-28 md:pt-16') : ''
     }`}>
-      
-       {/* Sidebar (Desktop) */}
+      {/* Emulator Active Top Bar Banner */}
+      {isEmulatorActive && <EmulatorBanner />}
+
+      <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+        {/* Sidebar (Desktop) */}
       <aside className={`hidden md:flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 transition-all duration-300 ${isSidebarCollapsed ? 'w-16' : 'w-72'}`}>
         {/* Header - NANO Compact */}
         <div className="p-2 px-3 border-b border-slate-800 shrink-0 bg-slate-950/50 flex items-center justify-between">
@@ -764,7 +801,7 @@ export default function AuthenticatedApp() {
               {!isSidebarCollapsed && (
                   <div className="flex flex-col gap-0.5 overflow-hidden min-w-0">
                      <span className="truncate">© R. Chiartano</span>
-                     <span className="opacity-50 text-[10px] truncate">v0.5.8.2</span>
+                     <span className="opacity-50 text-[10px] truncate">v0.5.8.5</span>
                   </div>
               )}
               <button onClick={handleLogout} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors shrink-0" title="Esci">
@@ -852,7 +889,7 @@ export default function AuthenticatedApp() {
                 </button>
             </div>
             <div className="pt-6 text-center text-xs text-slate-600 uppercase tracking-[2px]">
-                 CuePack Manager ✨ v0.5.8.2
+                 CuePack Manager ✨ v0.5.8.5
             </div>
          </nav>
       </div>
@@ -860,22 +897,24 @@ export default function AuthenticatedApp() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         
-        {/* Mobile Header - COMPACT & SAFE */}
-        <header className="md:hidden flex items-center justify-between px-4 bg-slate-900 border-b border-slate-800 shrink-0 z-50 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]">
-           <div className="flex items-center gap-2">
-             <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-xs shadow-lg ring-1 ring-white/20">C</div>
-             <div className="flex flex-col leading-none">
-                <h1 className="text-sm font-black tracking-tighter text-white uppercase">CuePack</h1>
-                <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">Manager</span>
+        {/* Mobile Header - ULTRA COMPACT & SAFE */}
+        {!((currentView === 'prep-material' && isPrepEventOpen) || (currentView === 'lists' && isBuilderEventOpen)) && (
+          <header className="md:hidden flex items-center justify-between px-3 bg-slate-900 border-b border-slate-800 shrink-0 z-50 h-[calc(2.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]">
+             <div className="flex items-center gap-1.5">
+               <div className="w-5 h-5 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center font-bold text-white text-[10px] shadow-sm ring-1 ring-white/20">C</div>
+               <div className="flex items-baseline gap-1 leading-none">
+                  <h1 className="text-xs font-black tracking-tighter text-white uppercase">CuePack</h1>
+                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Manager</span>
+               </div>
              </div>
-           </div>
-           <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg border border-slate-700 shadow-sm transition-all active:scale-95">
-              <Menu size={20} />
-           </button>
-        </header>
+             <button onClick={() => setIsMobileMenuOpen(true)} className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-lg border border-slate-700 shadow-sm transition-all active:scale-95" aria-label="Menu">
+                <Menu size={16} />
+             </button>
+          </header>
+        )}
 
         {/* View Content - Padded for Bottom Safe Area on mobile */}
-        <div className="flex-1 overflow-hidden bg-slate-950 relative z-0 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex-1 overflow-hidden bg-slate-950 relative pb-[env(safe-area-inset-bottom)]">
           {renderContent()}
         </div>
 
@@ -917,6 +956,7 @@ export default function AuthenticatedApp() {
             </div>
         )}
       </main>
+      </div>
     </div>
   );
 }
