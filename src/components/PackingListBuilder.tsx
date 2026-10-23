@@ -20,6 +20,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { reconcileZones } from '../services/syncReconciler';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF, exportSelectivePDF, exportZonePDF } from '../utils/export';
 import { getDbBadgeStyle } from '../utils/databaseColors';
@@ -258,6 +259,22 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const [localList, setLocalList] = useState<PackingList | null>(null);
   const activeList = (localList && localList.id === activeListId) ? localList : rawActiveList;
   const pendingWritesRef = useRef(0);
+  const rawActiveListRef = useRef<PackingList | null>(null);
+
+  // Multi-user concurrency delta trackers (avoids accidental rollbacks / zombie overwrites)
+  const createdZoneIdsRef = useRef<Set<string>>(new Set());
+  const deletedZoneIdsRef = useRef<Set<string>>(new Set());
+  const createdSectionIdsRef = useRef<Set<string>>(new Set());
+  const deletedSectionIdsRef = useRef<Set<string>>(new Set());
+  const createdComponentIdsRef = useRef<Set<string>>(new Set());
+  const deletedComponentIdsRef = useRef<Set<string>>(new Set());
+  const modifiedComponentIdsRef = useRef<Set<string>>(new Set());
+  const modifiedZoneIdsRef = useRef<Set<string>>(new Set());
+
+  // Keep fresh reference of raw active list from Firestore subscription
+  useEffect(() => {
+    rawActiveListRef.current = rawActiveList || null;
+  }, [rawActiveList]);
 
   // History Stack for Undo/Redo (max 15 entries)
   const [historyPast, setHistoryPast] = useState<ListZone[][]>([]);
@@ -268,15 +285,41 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   useEffect(() => {
     setLocalList(prev => (prev && prev.id === activeListId ? prev : null));
     activeListRef.current = null;
+    createdZoneIdsRef.current.clear();
+    deletedZoneIdsRef.current.clear();
+    createdSectionIdsRef.current.clear();
+    deletedSectionIdsRef.current.clear();
+    createdComponentIdsRef.current.clear();
+    deletedComponentIdsRef.current.clear();
+    modifiedComponentIdsRef.current.clear();
+    modifiedZoneIdsRef.current.clear();
     setHistoryPast([]);
     setHistoryFuture([]);
   }, [activeListId]);
 
-  // Synchronize localList when remote rawActiveList arrives and no local writes are in-flight
+  // Synchronize localList when remote rawActiveList arrives, RECONCILING with any local uncommitted/optimistic state
   useEffect(() => {
-    if (rawActiveList && pendingWritesRef.current === 0) {
-      setLocalList(rawActiveList);
-      activeListRef.current = rawActiveList;
+    if (rawActiveList) {
+      if (activeListRef.current?.zones) {
+        const currentBase = activeListRef.current;
+        const reconciledZones = reconcileZones(currentBase.zones, rawActiveList.zones || [], {
+          deletedZoneIds: deletedZoneIdsRef.current,
+          deletedSectionIds: deletedSectionIdsRef.current,
+          deletedComponentIds: deletedComponentIdsRef.current,
+          createdZoneIds: createdZoneIdsRef.current,
+          createdSectionIds: createdSectionIdsRef.current,
+          createdComponentIds: createdComponentIdsRef.current,
+          modifiedComponentIds: modifiedComponentIdsRef.current,
+          modifiedZoneIds: modifiedZoneIdsRef.current,
+          sourceContext: 'builder'
+        });
+        const updatedList: PackingList = { ...rawActiveList, zones: reconciledZones };
+        setLocalList(updatedList);
+        activeListRef.current = updatedList;
+      } else {
+        setLocalList(rawActiveList);
+        activeListRef.current = rawActiveList;
+      }
     }
   }, [rawActiveList]);
 
@@ -1247,12 +1290,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
              }
         }
 
-        // Fallback to first if still invalid
-        if (!targetZoneId || !activeList.zones.find(z => z.id === targetZoneId)) {
+        const isPendingCreation = Boolean(targetZoneId && createdZoneIdsRef.current.has(targetZoneId));
+
+        // Fallback to first if still invalid (and not currently pending local creation)
+        if (!isPendingCreation && (!targetZoneId || !activeList.zones.find(z => z.id === targetZoneId))) {
              targetZoneId = activeList.zones[0].id;
         }
 
-        if (targetZoneId !== activeZoneId) {
+        if (targetZoneId && targetZoneId !== activeZoneId) {
             setActiveZoneId(targetZoneId);
         }
     }
@@ -1469,7 +1514,33 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     isCommittingRef.current = true;
 
     try {
-      await updateItemFields(COLL_LISTS, task.listId, task.updates);
+      const currentRemoteZones = rawActiveListRef.current?.zones || [];
+      const reconciledZones = task.updates.zones
+        ? reconcileZones(task.updates.zones, currentRemoteZones, {
+            deletedZoneIds: deletedZoneIdsRef.current,
+            deletedSectionIds: deletedSectionIdsRef.current,
+            deletedComponentIds: deletedComponentIdsRef.current,
+            createdZoneIds: createdZoneIdsRef.current,
+            createdSectionIds: createdSectionIdsRef.current,
+            createdComponentIds: createdComponentIdsRef.current,
+            modifiedComponentIds: modifiedComponentIdsRef.current,
+            modifiedZoneIds: modifiedZoneIdsRef.current,
+            sourceContext: 'builder'
+          })
+        : undefined;
+
+      const finalUpdates = reconciledZones ? { ...task.updates, zones: reconciledZones } : task.updates;
+      await updateItemFields(COLL_LISTS, task.listId, finalUpdates);
+
+      // Successfully saved to Firestore: clear session trackers that were committed
+      createdZoneIdsRef.current.clear();
+      deletedZoneIdsRef.current.clear();
+      createdSectionIdsRef.current.clear();
+      deletedSectionIdsRef.current.clear();
+      createdComponentIdsRef.current.clear();
+      deletedComponentIdsRef.current.clear();
+      modifiedComponentIdsRef.current.clear();
+      modifiedZoneIdsRef.current.clear();
     } catch (e) {
       console.error("Error in batched list update:", e);
     } finally {
@@ -1493,7 +1564,17 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       if (!baseList) return;
       
       const mergedZones = updates.zones
-        ? mergeDesignerZonesWithWarehouseReplacements(updates.zones, rawActiveList?.zones)
+        ? reconcileZones(updates.zones, rawActiveListRef.current?.zones || rawActiveList?.zones || [], {
+            deletedZoneIds: deletedZoneIdsRef.current,
+            deletedSectionIds: deletedSectionIdsRef.current,
+            deletedComponentIds: deletedComponentIdsRef.current,
+            createdZoneIds: createdZoneIdsRef.current,
+            createdSectionIds: createdSectionIdsRef.current,
+            createdComponentIds: createdComponentIdsRef.current,
+            modifiedComponentIds: modifiedComponentIdsRef.current,
+            modifiedZoneIds: modifiedZoneIdsRef.current,
+            sourceContext: 'builder'
+          })
         : undefined;
       const effectiveUpdates = mergedZones ? { ...updates, zones: mergedZones } : updates;
 
@@ -2000,6 +2081,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           variant: "danger",
           onConfirm: () => {
               if (activeSection) {
+                  selectedIds.forEach(id => {
+                      deletedComponentIdsRef.current.add(id);
+                      createdComponentIdsRef.current.delete(id);
+                      modifiedComponentIdsRef.current.delete(id);
+                  });
                   const newComps = activeSection.components.filter(c => !selectedIds.has(c.uniqueId));
                   updateActiveSection({ components: newComps });
                   setSelectedIds(new Set());
@@ -2022,16 +2108,23 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           // ZONE Operations
           if (mgmtModal.type === 'create') {
               const newId = generateId();
+              const defaultSecs = createDefaultSections();
               const newZone: ListZone = { 
                   id: newId, 
                   name: mgmtModal.name.trim(), 
-                  sections: createDefaultSections() 
+                  sections: defaultSecs 
               };
+              createdZoneIdsRef.current.add(newId);
+              deletedZoneIdsRef.current.delete(newId);
               const newZones = [...(activeList.zones || []), newZone];
               updateActiveList({ zones: newZones });
               setActiveZoneId(newId);
+              if (defaultSecs.length > 0) {
+                  setActiveSectionId(defaultSecs[0].id);
+              }
           } else {
               // Rename Zone
+              if (mgmtModal.targetId) modifiedZoneIdsRef.current.add(mgmtModal.targetId);
               const newZones = activeList.zones!.map(z => z.id === mgmtModal.targetId ? { ...z, name: mgmtModal.name.trim() } : z);
               updateActiveList({ zones: newZones });
           }
@@ -2041,11 +2134,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           if (mgmtModal.type === 'create') {
               const newId = generateId();
               const newSection: ListSection = { id: newId, name: mgmtModal.name.trim(), components: [] };
+              createdSectionIdsRef.current.add(newId);
+              deletedSectionIdsRef.current.delete(newId);
               const newSections = [...activeZone.sections, newSection];
               updateActiveZone({ sections: newSections });
               setActiveSectionId(newId);
           } else {
               // Rename Section
+              if (activeZone?.id) modifiedZoneIdsRef.current.add(activeZone.id);
               const newSections = activeZone.sections.map(s => s.id === mgmtModal.targetId ? { ...s, name: mgmtModal.name.trim() } : s);
               updateActiveZone({ sections: newSections });
           }
@@ -2056,6 +2152,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const confirmRemoveSection = () => {
       if (!activeZone || !sectionToDelete) return;
       if (activeZone.sections.length <= 1) { setSectionToDelete(null); return; }
+      deletedSectionIdsRef.current.add(sectionToDelete);
+      createdSectionIdsRef.current.delete(sectionToDelete);
       const newSections = activeZone.sections.filter(s => s.id !== sectionToDelete);
       updateActiveZone({ sections: newSections });
       setSectionToDelete(null);
@@ -2064,6 +2162,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const confirmRemoveZone = () => {
       if (!activeList || !zoneToDelete) return;
       if ((activeList.zones || []).length <= 1) { setZoneToDelete(null); return; }
+      deletedZoneIdsRef.current.add(zoneToDelete);
+      createdZoneIdsRef.current.delete(zoneToDelete);
       const newZones = activeList.zones!.filter(z => z.id !== zoneToDelete);
       updateActiveList({ zones: newZones });
       // Reset active zone if deleted
@@ -2257,6 +2357,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
           const existing = currentSection.components.find(c => c.type === type && c.referenceId === item.id);
           if (existing) {
+              modifiedComponentIdsRef.current.add(existing.uniqueId);
               const newComps = currentSection.components.map(c => c.uniqueId === existing.uniqueId ? { 
                   ...c, 
                   quantity: c.quantity + 1, 
@@ -2268,6 +2369,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               return { components: newComps };
           } else {
               const newId = generateId();
+              createdComponentIdsRef.current.add(newId);
+              deletedComponentIdsRef.current.delete(newId);
               const newComp: ListComponent = { 
                   uniqueId: newId, 
                   quantity: 1, 
@@ -2344,6 +2447,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
 
   const updateComponentQty = (uniqueId: string, qtyOrUpdater: number | ((prev: number) => number)) => {
+      modifiedComponentIdsRef.current.add(uniqueId);
       updateActiveSection(currentSection => ({
           components: currentSection.components.map(c => {
               if (c.uniqueId === uniqueId) {
@@ -2357,6 +2461,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
   
   const updateComponentNote = (uniqueId: string, note: string) => {
+      modifiedComponentIdsRef.current.add(uniqueId);
       updateActiveSection(currentSection => ({
           components: currentSection.components.map(c => c.uniqueId === uniqueId ? { ...c, notes: note } : c)
       }));
@@ -2372,6 +2477,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           confirmText: "Elimina",
           variant: "danger",
           onConfirm: () => {
+              deletedComponentIdsRef.current.add(uniqueId);
+              createdComponentIdsRef.current.delete(uniqueId);
+              modifiedComponentIdsRef.current.delete(uniqueId);
               updateActiveSection(currentSection => ({
                   components: currentSection.components.filter(c => c.uniqueId !== uniqueId)
               }));

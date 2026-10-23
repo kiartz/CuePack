@@ -1,7 +1,7 @@
 {
   "name": "cuepack-manager",
   "private": true,
-  "version": "0.5.8.5",
+  "version": "0.5.8.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:benchmark": "node scripts/benchmark_concurrency.mjs",
-    "test:index": "node scripts/test_index_search.mjs"
+    "test:index": "node scripts/test_index_search.mjs",
+    "test:sync": "node --experimental-strip-types scripts/test_sync_reconciler.mjs"
   },
   "dependencies": {
     "@types/react-datepicker": "^6.2.0",

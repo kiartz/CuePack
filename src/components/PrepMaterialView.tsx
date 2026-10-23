@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, MapPin, CornerDownRight, Calendar, ArrowLeft, Truck, CheckSquare, Square, Check, MessageSquare, AlertTriangle, ChevronRight, ChevronDown, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database, Filter, WifiOff, Eye, ArrowLeftRight, History, RotateCcw, Info, Edit2, Minus, Calculator } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection, InventoryItem, InventoryDatabase, Kit, ItemReplacementInfo } from '../types';
+import { reconcileZones } from '../services/syncReconciler';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db, DEFAULT_DATABASE_ID } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
@@ -159,11 +160,20 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const rawActiveList = useMemo(() => lists.find(l => l.id === activeListId), [lists, activeListId]);
   const [localList, setLocalList] = useState<PackingList | null>(null);
   const localListRef = useRef<PackingList | null>(null);
+  const rawActiveListRef = useRef<PackingList | null>(null);
   const isWritingRef = useRef<boolean>(false);
   const pendingCommitRef = useRef<{ listId: string; zones: ListZone[] } | null>(null);
   const debounceTimerRef = useRef<any>(null);
   const [activeWarningTooltipId, setActiveWarningTooltipId] = useState<string | null>(null);
   const [warningTooltipAnchor, setWarningTooltipAnchor] = useState<DOMRect | null>(null);
+
+  // Multi-user concurrency delta trackers for warehouse preparation
+  const warehouseDeltasRef = useRef<Map<string, Partial<WarehouseState>>>(new Map());
+  const contentWarehouseDeltasRef = useRef<Map<string, Map<number, Partial<WarehouseState>>>>(new Map());
+
+  useEffect(() => {
+    rawActiveListRef.current = rawActiveList || null;
+  }, [rawActiveList]);
 
   // Close floating warning tooltip on scroll or resize
   useEffect(() => {
@@ -214,19 +224,20 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       if (!snapshot.exists()) return;
       const incomingData = { id: snapshot.id, ...snapshot.data() } as PackingList;
 
-      // If local writes are pending or currently writing, merge to prevent rollbacks
-      if (snapshot.metadata.hasPendingWrites || isWritingRef.current || pendingCommitRef.current) {
-        if (localListRef.current) {
-          const merged = mergeWarehouseStates(localListRef.current, incomingData);
-          localListRef.current = merged;
-          setLocalList(merged);
-        }
-        return;
+      // Reconcile incoming server data with local state using the Reconciler
+      if (localListRef.current) {
+        const mergedZones = reconcileZones(localListRef.current.zones || [], incomingData.zones || [], {
+          warehouseDeltas: warehouseDeltasRef.current,
+          contentWarehouseDeltas: contentWarehouseDeltasRef.current,
+          sourceContext: 'warehouse'
+        });
+        const merged: PackingList = { ...incomingData, zones: mergedZones };
+        localListRef.current = merged;
+        setLocalList(merged);
+      } else {
+        localListRef.current = incomingData;
+        setLocalList(incomingData);
       }
-
-      // Server-confirmed remote update from another device/tab
-      localListRef.current = incomingData;
-      setLocalList(incomingData);
     }, (error) => {
       console.error("PrepMaterial doc onSnapshot error:", error);
     });
@@ -870,7 +881,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   }, [highlightedItemName, activeZoneId, aggregatedData]);
 
 
-  // --- COMMIT ZONES UPDATE HELPER (Optimistic + Fast Queued Firestore sync) ---
+  // --- COMMIT ZONES UPDATE HELPER (Optimistic + Fast Queued Firestore sync with Reconciler) ---
   const processPendingCommit = async () => {
     if (!pendingCommitRef.current || isWritingRef.current) return;
     
@@ -879,7 +890,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     isWritingRef.current = true;
 
     try {
-      await updateItemFields(COLL_LISTS, task.listId, { zones: task.zones });
+      const currentRemoteZones = rawActiveListRef.current?.zones || [];
+      const reconciled = reconcileZones(task.zones, currentRemoteZones, {
+        warehouseDeltas: warehouseDeltasRef.current,
+        contentWarehouseDeltas: contentWarehouseDeltasRef.current,
+        sourceContext: 'warehouse'
+      });
+      await updateItemFields(COLL_LISTS, task.listId, { zones: reconciled });
+      warehouseDeltasRef.current.clear();
+      contentWarehouseDeltasRef.current.clear();
     } catch (err) {
       console.error("Failed to commit zones update to Firestore:", err);
       // Re-queue task if write failed so changes are not lost
@@ -920,6 +939,11 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   const updateComponentState = async (componentId: string, updates: Partial<WarehouseState>) => {
       const current = localListRef.current || activeList;
       if (isReadOnly || !current?.zones) return;
+
+      warehouseDeltasRef.current.set(componentId, {
+          ...(warehouseDeltasRef.current.get(componentId) || {}),
+          ...updates
+      });
 
       const newZones = current.zones.map(z => ({
           ...z,
@@ -1481,6 +1505,15 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
       const current = localListRef.current || activeList;
       if (isReadOnly || !current?.zones) return;
 
+      if (!contentWarehouseDeltasRef.current.has(componentId)) {
+          contentWarehouseDeltasRef.current.set(componentId, new Map());
+      }
+      const childMap = contentWarehouseDeltasRef.current.get(componentId)!;
+      childMap.set(contentIdx, {
+          ...(childMap.get(contentIdx) || {}),
+          ...updates
+      });
+
       const newZones = current.zones.map(z => ({
           ...z,
           sections: z.sections.map(s => ({
@@ -1535,6 +1568,23 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
   ) => {
       const current = localListRef.current || activeList;
       if (isReadOnly || !current?.zones) return;
+
+      targets.forEach(t => {
+          if (t.uniqueId) {
+              warehouseDeltasRef.current.set(t.uniqueId, {
+                  ...(warehouseDeltasRef.current.get(t.uniqueId) || {}),
+                  ...updates
+              });
+          } else if (t.parentId && t.childIdx !== undefined) {
+              if (!contentWarehouseDeltasRef.current.has(t.parentId)) {
+                  contentWarehouseDeltasRef.current.set(t.parentId, new Map());
+              }
+              contentWarehouseDeltasRef.current.get(t.parentId)!.set(t.childIdx, {
+                  ...(contentWarehouseDeltasRef.current.get(t.parentId)!.get(t.childIdx) || {}),
+                  ...updates
+              });
+          }
+      });
 
       const newZones = current.zones.map(z => ({
           ...z,
