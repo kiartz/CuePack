@@ -423,15 +423,18 @@ export function reconcileZones(
           : undefined;
 
         if (sourceContext === 'builder') {
-          if (isLocallyModified) {
-            // Local designer edits (quantity, notes, vendor) win, but warehouse progress is preserved
+          const isItemReplaced = (lc.referenceId && rc.referenceId ? lc.referenceId !== rc.referenceId : false) || lc.name !== rc.name;
+          const hasLocalDesignerChanges = isLocallyModified || isItemReplaced || lc.quantity !== rc.quantity || lc.notes !== rc.notes;
+
+          if (hasLocalDesignerChanges) {
+            // Local designer edits (replacement, quantity, notes, vendor) win, but warehouse progress is preserved
             return {
               ...rc,
               ...lc,
-              warehouseState: mergedWarehouseState,
-              contents: mergedContents,
-              templateContents: mergedTemplateContents,
-              replacementInfo: rc.replacementInfo || lc.replacementInfo
+              warehouseState: isItemReplaced ? (lc.warehouseState || createDefaultWarehouseState()) : mergedWarehouseState,
+              contents: isItemReplaced ? lc.contents : mergedContents,
+              templateContents: isItemReplaced ? lc.templateContents : mergedTemplateContents,
+              replacementInfo: isItemReplaced ? undefined : (rc.replacementInfo || lc.replacementInfo)
             };
           } else {
             // Unmodified local component inherits any updates from remote

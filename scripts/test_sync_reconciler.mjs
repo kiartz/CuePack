@@ -155,6 +155,148 @@ function runTests() {
     console.log("  ✅ TEST 4 SUPERATO: Oggetto eliminato esplicitamente NON resuscita!");
   }
 
+  // TEST 5: Copy-Paste Quantity Summing & Builder Priority
+  {
+    console.log("\n▶ TEST 5: Somma Quantità su Copia-Incolla Materiale Esistente");
+    const localZones = [
+      {
+        id: 'zone-1',
+        name: 'Zona 1',
+        sections: [{
+          id: 'sec-1',
+          name: 'Audio',
+          components: [
+            // Item originally had qty 2, user copied 3 from another section -> now qty 5
+            { uniqueId: 'comp-shure', referenceId: 'ref-shure', name: 'Microfono Shure', quantity: 5, type: 'item' }
+          ]
+        }]
+      }
+    ];
+
+    const remoteZones = [
+      {
+        id: 'zone-1',
+        name: 'Zona 1',
+        sections: [{
+          id: 'sec-1',
+          name: 'Audio',
+          components: [
+            { uniqueId: 'comp-shure', referenceId: 'ref-shure', name: 'Microfono Shure', quantity: 2, type: 'item' }
+          ]
+        }]
+      }
+    ];
+
+    const merged = reconcileZones(localZones, remoteZones, {
+      modifiedComponentIds: new Set(['comp-shure']),
+      sourceContext: 'builder'
+    });
+
+    const shure = merged[0].sections[0].components.find(c => c.uniqueId === 'comp-shure');
+    if (shure?.quantity !== 5) {
+      throw new Error(`Test 5 fallito: Quantità attesa 5, trovata ${shure?.quantity}`);
+    }
+
+    console.log("  ✅ TEST 5 SUPERATO: Quantità sommata a 5 preservata correttamente!");
+  }
+
+  // TEST 6: Item Replacement (e.g. Monitor 65" -> Monitor 75")
+  {
+    console.log("\n▶ TEST 6: Sostituzione Materiale (es. Monitor 65\" -> Monitor 75\")");
+    const localZones = [
+      {
+        id: 'zone-video',
+        name: 'Zona Video',
+        sections: [{
+          id: 'sec-video',
+          name: 'Video',
+          components: [
+            // User replaced 65" with 75" on comp-row-6930
+            { 
+              uniqueId: 'comp-row-6930', 
+              referenceId: 'ref-mon-75', 
+              name: 'Monitor 75"', 
+              quantity: 1, 
+              type: 'item',
+              contents: [{ itemId: 'acc-stand-75', name: 'Stand 75"' }]
+            }
+          ]
+        }]
+      }
+    ];
+
+    const remoteZones = [
+      {
+        id: 'zone-video',
+        name: 'Zona Video',
+        sections: [{
+          id: 'sec-video',
+          name: 'Video',
+          components: [
+            // Remote still had old 65" item
+            { 
+              uniqueId: 'comp-row-6930', 
+              referenceId: 'ref-mon-65', 
+              name: 'Monitor 65"', 
+              quantity: 1, 
+              type: 'item',
+              contents: [{ itemId: 'acc-stand-65', name: 'Stand 65"' }]
+            }
+          ]
+        }]
+      }
+    ];
+
+    const merged = reconcileZones(localZones, remoteZones, {
+      modifiedComponentIds: new Set(['comp-row-6930']),
+      sourceContext: 'builder'
+    });
+
+    const replaced = merged[0].sections[0].components.find(c => c.uniqueId === 'comp-row-6930');
+    if (replaced?.name !== 'Monitor 75"' || replaced?.referenceId !== 'ref-mon-75') {
+      throw new Error(`Test 6 fallito: Monitor non sostituito! Trovato: ${replaced?.name} (${replaced?.referenceId})`);
+    }
+    if (replaced?.contents?.[0]?.itemId !== 'acc-stand-75') {
+      throw new Error(`Test 6 fallito: Accessori non sostituiti! Trovato: ${JSON.stringify(replaced?.contents)}`);
+    }
+
+    console.log("  ✅ TEST 6 SUPERATO: Sostituzione Monitor 75\" e accessori preservata su snapshot remoto!");
+  }
+
+  // TEST 7: Zone Notes Modification & Persistence (ZoneEditModal)
+  {
+    console.log("\n▶ TEST 7: Salvataggio e Persistenza Note Zona");
+    const localZones = [
+      {
+        id: 'zone-palco',
+        name: 'Palco Centrale',
+        notes: 'Passaggio cavi sotterraneo obbligatorio e altezza truss 7m.',
+        sections: [{ id: 'sec-1', name: 'Audio', components: [] }]
+      }
+    ];
+
+    const remoteZones = [
+      {
+        id: 'zone-palco',
+        name: 'Palco Centrale',
+        notes: '', // Remote had empty notes before save
+        sections: [{ id: 'sec-1', name: 'Audio', components: [] }]
+      }
+    ];
+
+    const merged = reconcileZones(localZones, remoteZones, {
+      modifiedZoneIds: new Set(['zone-palco']),
+      sourceContext: 'builder'
+    });
+
+    const palco = merged.find(z => z.id === 'zone-palco');
+    if (palco?.notes !== 'Passaggio cavi sotterraneo obbligatorio e altezza truss 7m.') {
+      throw new Error(`Test 7 fallito: Note zona non conservate! Trovato: "${palco?.notes}"`);
+    }
+
+    console.log("  ✅ TEST 7 SUPERATO: Note zona salvate e preservate contro snapshot remoti!");
+  }
+
   console.log("\n🎉 TUTTI I TEST DI CONCORRENZA MULTI-UTENTE HANNO AVUTO SUCCESSO!\n");
 }
 

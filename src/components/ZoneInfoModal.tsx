@@ -1,7 +1,7 @@
 import React from 'react';
 import { ListZone, PackingList } from '../types';
 import { Modal } from './Modal';
-import { X, Edit2, MapPin, Calendar, Clock, Wrench, Anchor, Users, StickyNote, Layers, Box, Factory } from 'lucide-react';
+import { X, Edit2, MapPin, Calendar, Clock, Wrench, Anchor, Users, StickyNote, Layers, Box, Factory, Printer } from 'lucide-react';
 import { formatItalianDate } from '../utils';
 
 interface ZoneInfoModalProps {
@@ -27,6 +27,183 @@ export const ZoneInfoModal: React.FC<ZoneInfoModalProps> = ({
     (acc, s) => acc + (s.components?.length || 0),
     0
   );
+
+  const handlePrintZoneLabel = () => {
+    const printWindow = window.open('', '_blank', 'width=850,height=1100');
+    if (!printWindow) return;
+
+    const eventName = event?.eventName || 'EVENTO';
+    const zoneName = zone.name || 'ZONA';
+    const location = zone.location?.trim() || event?.location?.trim() || '';
+    const setupCompany = zone.setupCompany?.trim() || '';
+    const setupDate = formatDate(zone.setupDate || event?.setupDate || event?.truckLoadDate || event?.eventDate);
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="it">
+        <head>
+          <meta charset="utf-8">
+          <title>Cartello Baule - ${zoneName}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 15mm;
+            }
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              color: #000;
+              background: #fff;
+              width: 100%;
+              height: 100%;
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              align-items: center;
+            }
+            .page-container {
+              width: 100%;
+              height: 100%;
+              min-height: 250mm;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              align-items: center;
+              text-align: center;
+              padding: 20mm 15mm;
+            }
+            /* Intestazione Evento Principale */
+            .event-header {
+              width: 100%;
+              padding-bottom: 12mm;
+            }
+            .event-label {
+              font-size: 13pt;
+              font-weight: 700;
+              letter-spacing: 2px;
+              text-transform: uppercase;
+              color: #333;
+              margin-bottom: 4mm;
+            }
+            .event-name {
+              font-size: 30pt;
+              font-weight: 800;
+              text-transform: uppercase;
+              line-height: 1.15;
+              word-break: break-word;
+            }
+            /* Centro Grande: Nome Zona */
+            .zone-hero {
+              width: 100%;
+              padding: 20mm 0;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              flex: 1;
+            }
+            .zone-label {
+              font-size: 15pt;
+              font-weight: 700;
+              letter-spacing: 3px;
+              text-transform: uppercase;
+              color: #444;
+              margin-bottom: 6mm;
+            }
+            .zone-title {
+              font-size: 58pt;
+              font-weight: 900;
+              text-transform: uppercase;
+              line-height: 1.05;
+              word-break: break-word;
+              letter-spacing: 1px;
+            }
+            /* Piè di pagina: Dettagli Allestimento, Posizione, Allestitore */
+            .meta-footer {
+              width: 100%;
+              padding-top: 10mm;
+              display: flex;
+              flex-direction: column;
+              gap: 8mm;
+            }
+            .meta-row {
+              display: flex;
+              justify-content: center;
+              gap: 15mm;
+              flex-wrap: wrap;
+            }
+            .meta-item {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+            }
+            .meta-title {
+              font-size: 10pt;
+              font-weight: 700;
+              letter-spacing: 1.5px;
+              text-transform: uppercase;
+              color: #555;
+              margin-bottom: 2mm;
+            }
+            .meta-val {
+              font-size: 17pt;
+              font-weight: 800;
+              text-transform: uppercase;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="page-container">
+            <div class="event-header">
+              <div class="event-label">Evento</div>
+              <div class="event-name">${eventName}</div>
+            </div>
+
+            <div class="zone-hero">
+              <div class="zone-label">Zona di Destinazione</div>
+              <div class="zone-title">${zoneName}</div>
+            </div>
+
+            <div class="meta-footer">
+              <div class="meta-row">
+                ${location ? `
+                  <div class="meta-item">
+                    <div class="meta-title">Posizione / Area</div>
+                    <div class="meta-val">${location}</div>
+                  </div>
+                ` : ''}
+
+                ${setupCompany ? `
+                  <div class="meta-item">
+                    <div class="meta-title">Allestitore</div>
+                    <div class="meta-val">${setupCompany}</div>
+                  </div>
+                ` : ''}
+
+                ${setupDate && setupDate !== '-- / -- / ----' ? `
+                  <div class="meta-item">
+                    <div class="meta-title">Data Allestimento</div>
+                    <div class="meta-val">${setupDate}</div>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 750);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Dettagli Zona: ${zone.name}`} size="lg">
@@ -173,6 +350,15 @@ export const ZoneInfoModal: React.FC<ZoneInfoModalProps> = ({
 
         {/* FOOTER ACTIONS - STRICTLY ICON ONLY BUTTONS */}
         <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={handlePrintZoneLabel}
+            className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-cyan-300 border border-slate-700 transition-colors shadow-sm active:scale-95 flex items-center justify-center min-w-[48px] min-h-[48px]"
+            title="Stampa Cartello Baule A4"
+            aria-label="Stampa Cartello Baule"
+          >
+            <Printer size={20} />
+          </button>
           {onEdit && (
             <button
               type="button"

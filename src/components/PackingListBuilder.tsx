@@ -717,8 +717,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
   const handleZoneNoteSave = () => {
       if (!activeList || !zoneNoteModal.zoneId) return;
+      modifiedZoneIdsRef.current.add(zoneNoteModal.zoneId);
       const newZones = activeList.zones!.map(z => z.id === zoneNoteModal.zoneId ? { ...z, notes: zoneNoteModal.note } : z);
-      updateActiveList({ zones: newZones });
+      updateActiveList({ zones: newZones }, true);
       setZoneNoteModal(prev => ({ ...prev, isOpen: false }));
   };
 
@@ -2055,11 +2056,54 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       }
 
       clipboard.forEach((clipItem, offset) => {
-          const existing = updatedComponents.find(c => c.type === clipItem.type && c.referenceId === clipItem.referenceId);
-          if (existing) {
-              updatedComponents = updatedComponents.map(c => c.uniqueId === existing.uniqueId ? { ...c, quantity: c.quantity + clipItem.quantity } : c);
+          const isMatch = (c: ListComponent) => {
+              if (c.type !== clipItem.type) return false;
+              if (c.referenceId && clipItem.referenceId) {
+                  return c.referenceId === clipItem.referenceId;
+              }
+              return (c.name || '').trim().toLowerCase() === (clipItem.name || '').trim().toLowerCase();
+          };
+
+          const existingIndex = updatedComponents.findIndex(isMatch);
+          if (existingIndex !== -1) {
+              const existing = updatedComponents[existingIndex];
+              modifiedComponentIdsRef.current.add(existing.uniqueId);
+
+              // Sum component quantity
+              const newQuantity = existing.quantity + clipItem.quantity;
+
+              // Sum contents / accessories quantities proportionally if present
+              let newContents = existing.contents;
+              if (existing.contents && clipItem.contents) {
+                  newContents = existing.contents.map(sub => {
+                      const matchingClipSub = clipItem.contents?.find(cs => 
+                          (cs.itemId && sub.itemId ? cs.itemId === sub.itemId : (cs.name || '').trim().toLowerCase() === (sub.name || '').trim().toLowerCase())
+                      );
+                      if (matchingClipSub) {
+                          return { ...sub, quantity: sub.quantity + matchingClipSub.quantity };
+                      }
+                      return sub;
+                  });
+              }
+
+              updatedComponents[existingIndex] = {
+                  ...existing,
+                  quantity: newQuantity,
+                  contents: newContents
+              };
           } else {
-              const newComp = { ...clipItem, uniqueId: generateId() };
+              const newId = generateId();
+              createdComponentIdsRef.current.add(newId);
+              deletedComponentIdsRef.current.delete(newId);
+              const newComp: ListComponent = {
+                  ...clipItem,
+                  uniqueId: newId,
+                  warehouseState: undefined,
+                  contents: clipItem.contents?.map(sub => ({
+                      ...sub,
+                      warehouseState: undefined
+                  }))
+              };
               if (insertionIndex !== -1) {
                   updatedComponents.splice(insertionIndex + 1 + offset, 0, newComp);
               } else {
@@ -2332,19 +2376,14 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       updateActiveSection(currentSection => {
           // Check for replacement
           if (replacingComponentId) {
+              modifiedComponentIdsRef.current.add(replacingComponentId);
               const newBase = generateComponentFromItem(item, type, customAccessories);
               const newComponents = currentSection.components.map(c => 
                   c.uniqueId === replacingComponentId ? { 
                       ...c, 
                       ...newBase, 
-                      warehouseState: c.warehouseState,
-                      contents: newBase.contents?.map((acc, accIdx) => {
-                          const oldSub = c.contents?.find(os => os.itemId === acc.itemId) || c.contents?.[accIdx];
-                          return {
-                              ...acc,
-                              warehouseState: oldSub?.warehouseState
-                          };
-                      }),
+                      warehouseState: undefined,
+                      contents: newBase.contents || [],
                       replacementInfo: undefined,
                       isExternalRental,
                       rentalType,
@@ -2352,6 +2391,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                   } : c
               );
               setReplacingComponentId(null);
+              setPickerSearch('');
+              setIsPickerHovered(false);
               return { components: newComponents };
           }
 
@@ -5189,6 +5230,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             if (!activeList || !zoneForEdit) return;
             const targetId = zoneForEdit.id;
             const targetName = zoneForEdit.name;
+            if (targetId) {
+              modifiedZoneIdsRef.current.add(targetId);
+            }
             const newZones = (activeList.zones || []).map(z => 
               (z.id && targetId ? z.id === targetId : z.name === targetName) ? { ...z, ...updatedFields } : z
             );
@@ -5232,6 +5276,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           }}
           onUpdateZone={async (zoneId, updatedFields) => {
             if (activeList && activeList.id === summaryEvent.id) {
+              if (zoneId) {
+                modifiedZoneIdsRef.current.add(zoneId);
+              }
               const newZones = (activeList.zones || []).map(z => 
                 (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
               );
