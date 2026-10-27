@@ -61,19 +61,31 @@ html.light #root {
 }
 
 /* Structural & Card Backgrounds */
-html.light .bg-slate-950 {
+html.light .bg-slate-950,
+html.light .sm\:bg-slate-950,
+html.light .md\:bg-slate-950,
+html.light .lg\:bg-slate-950 {
   background-color: #f8fafc !important;
 }
 
-html.light .bg-slate-900 {
+html.light .bg-slate-900,
+html.light .sm\:bg-slate-900,
+html.light .md\:bg-slate-900,
+html.light .lg\:bg-slate-900 {
   background-color: #ffffff !important;
 }
 
-html.light .bg-slate-850 {
+html.light .bg-slate-850,
+html.light .sm\:bg-slate-850,
+html.light .md\:bg-slate-850,
+html.light .lg\:bg-slate-850 {
   background-color: #f8fafc !important;
 }
 
-html.light .bg-slate-800 {
+html.light .bg-slate-800,
+html.light .sm\:bg-slate-800,
+html.light .md\:bg-slate-800,
+html.light .lg\:bg-slate-800 {
   background-color: #f1f5f9 !important;
 }
 
@@ -135,11 +147,15 @@ html.light .bg-slate-700\/80 {
 html.light .border-slate-950,
 html.light .border-slate-900,
 html.light .border-slate-850,
-html.light .border-slate-800 {
+html.light .border-slate-800,
+html.light .sm\:border-slate-800,
+html.light .md\:border-slate-800 {
   border-color: #e2e8f0 !important;
 }
 
-html.light .border-slate-700 {
+html.light .border-slate-700,
+html.light .sm\:border-slate-700,
+html.light .md\:border-slate-700 {
   border-color: #cbd5e1 !important;
 }
 
@@ -149,8 +165,10 @@ html.light .border-slate-600 {
 
 html.light .border-slate-800\/50,
 html.light .border-slate-800\/60,
-html.light .border-slate-700\/50 {
-  border-color: rgba(226, 232, 240, 0.85) !important;
+html.light .border-slate-800\/80,
+html.light .border-slate-700\/50,
+html.light .border-slate-700\/80 {
+  border-color: rgba(203, 213, 225, 0.9) !important;
 }
 
 html.light .divide-slate-800 > :not([hidden]) ~ :not([hidden]),
@@ -237,6 +255,7 @@ html.light .bg-red-600 svg {
 }
 
 /* Saturated Colored Background Tints in Light Mode */
+html.light .bg-blue-900\/10,
 html.light .bg-blue-900\/20,
 html.light .bg-blue-900\/30,
 html.light .bg-blue-950,
@@ -250,6 +269,7 @@ html.light .bg-blue-950\/80 {
   border-color: #bfdbfe !important;
 }
 
+html.light .bg-emerald-900\/10,
 html.light .bg-emerald-900\/20,
 html.light .bg-emerald-900\/30,
 html.light .bg-emerald-950,
@@ -263,6 +283,7 @@ html.light .bg-emerald-950\/80 {
   border-color: #bbf7d0 !important;
 }
 
+html.light .bg-purple-900\/10,
 html.light .bg-purple-900\/20,
 html.light .bg-purple-900\/30,
 html.light .bg-purple-950,
@@ -276,8 +297,10 @@ html.light .bg-purple-950\/80 {
   border-color: #e9d5ff !important;
 }
 
+html.light .bg-amber-900\/10,
 html.light .bg-amber-900\/20,
 html.light .bg-amber-900\/30,
+html.light .bg-amber-900\/95,
 html.light .bg-amber-950,
 html.light .bg-amber-950\/20,
 html.light .bg-amber-950\/30,
@@ -304,6 +327,7 @@ html.light .bg-rose-950\/80 {
   border-color: #fecdd3 !important;
 }
 
+html.light .bg-cyan-900\/10,
 html.light .bg-cyan-900\/20,
 html.light .bg-cyan-900\/30,
 html.light .bg-cyan-950,
@@ -315,6 +339,47 @@ html.light .bg-cyan-950\/70,
 html.light .bg-cyan-950\/80 {
   background-color: #ecfeff !important;
   border-color: #a5f3fc !important;
+}
+
+html.light .border-emerald-900\/30 {
+  border-color: #86efac !important;
+}
+html.light .border-purple-900\/30 {
+  border-color: #d8b4fe !important;
+}
+html.light .border-cyan-900\/30 {
+  border-color: #67e8f9 !important;
+}
+html.light .bg-emerald-900 {
+  background-color: #dcfce7 !important;
+  color: #15803d !important;
+}
+html.light .bg-purple-900 {
+  background-color: #f3e8ff !important;
+  color: #6b21a8 !important;
+}
+html.light .bg-cyan-900 {
+  background-color: #cffafe !important;
+  color: #0e7490 !important;
+}
+html.light .text-purple-200,
+html.light .text-purple-300,
+html.light .text-purple-400 {
+  color: #7e22ce !important;
+}
+html.light .text-cyan-200,
+html.light .text-cyan-300,
+html.light .text-cyan-400 {
+  color: #0e7490 !important;
+}
+html.light .text-blue-300,
+html.light .text-blue-400 {
+  color: #1d4ed8 !important;
+}
+html.light .text-amber-200,
+html.light .text-amber-300,
+html.light .text-amber-400 {
+  color: #b45309 !important;
 }
 
 /* Form Controls in Light Mode */

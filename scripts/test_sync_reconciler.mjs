@@ -297,6 +297,183 @@ function runTests() {
     console.log("  ✅ TEST 7 SUPERATO: Note zona salvate e preservate contro snapshot remoti!");
   }
 
+  // TEST 8: Isolation between "Crea Liste" (draftZones) and "Preparazione Eventi" (zones) until "Aggiorna" is pressed
+  {
+    console.log("\n▶ TEST 8: Isolamento modifiche in Crea Liste da Preparazione Eventi finché non si preme 'Aggiorna'");
+    const confirmedZonesV1 = [
+      {
+        id: 'zone-1',
+        name: 'Zona Principale',
+        sections: [{
+          id: 'sec-audio',
+          name: 'Audio',
+          components: [
+            { uniqueId: 'c-mic', name: 'Microfono Shure', quantity: 2, type: 'item' },
+            { uniqueId: 'c-rcf', name: 'Cassa RCF', quantity: 2, type: 'item' }
+          ]
+        }]
+      }
+    ];
+
+    // Firestore state for a completed list v1.0
+    let firestoreDoc = {
+      id: 'list-1',
+      version: '1.0',
+      isCompleted: true,
+      zones: JSON.parse(JSON.stringify(confirmedZonesV1)),
+      snapshot: JSON.parse(JSON.stringify(confirmedZonesV1)),
+      draftZones: []
+    };
+
+    // Helper simulating updateActiveList payload routing in PackingListBuilder
+    const buildFirestorePayload = (baseList, updates) => {
+      const isVersionPublish = updates.snapshot !== undefined;
+      const isPublished = Boolean(baseList.isCompleted || baseList.isDraftVisible);
+      const firestoreUpdates = { ...updates };
+      if (isVersionPublish) {
+        firestoreUpdates.draftZones = [];
+      } else if (isPublished && firestoreUpdates.zones) {
+        firestoreUpdates.draftZones = firestoreUpdates.zones;
+        delete firestoreUpdates.zones;
+        delete firestoreUpdates.snapshot;
+      }
+      return firestoreUpdates;
+    };
+
+    // 1. Designer edits list in Crea Liste WITHOUT pressing "Aggiorna":
+    //    - Changes Mic from 2 -> 8
+    //    - Deletes Cassa RCF
+    //    - Adds Mixer A&H
+    const designerDraftEdit = [
+      {
+        id: 'zone-1',
+        name: 'Zona Principale',
+        sections: [{
+          id: 'sec-audio',
+          name: 'Audio',
+          components: [
+            { uniqueId: 'c-mic', name: 'Microfono Shure', quantity: 8, type: 'item' },
+            { uniqueId: 'c-mixer', name: 'Mixer Allen&Heath', quantity: 1, type: 'item' }
+          ]
+        }]
+      }
+    ];
+
+    const payloadWithoutAggiorna = buildFirestorePayload(firestoreDoc, { zones: designerDraftEdit });
+    if (payloadWithoutAggiorna.zones !== undefined) {
+      throw new Error("Test 8 fallito: 'zones' non deve essere aggiornato prima di premere Aggiorna!");
+    }
+    firestoreDoc = { ...firestoreDoc, ...payloadWithoutAggiorna };
+
+    // Verify what Preparazione Eventi (PrepMaterialView) sees:
+    const prepViewComps = firestoreDoc.zones[0].sections[0].components;
+    if (prepViewComps.length !== 2 || prepViewComps[0].quantity !== 2 || prepViewComps[1].uniqueId !== 'c-rcf') {
+      throw new Error(`Test 8 fallito: Preparazione Eventi è cambiata prima di premere Aggiorna! Trovato: ${JSON.stringify(prepViewComps)}`);
+    }
+
+    // 2. Meanwhile, Warehouse operator in Preparazione Eventi checks 'Microfono Shure' as loaded
+    firestoreDoc.zones[0].sections[0].components[0].warehouseState = {
+      inDistinta: true,
+      loaded: true,
+      returned: false,
+      isBroken: false,
+      warehouseNote: 'Baule 1'
+    };
+
+    // 3. Now Designer presses "Aggiorna" (v1.1) -> explicit version publish
+    const publishedV1_1 = [
+      {
+        id: 'zone-1',
+        name: 'Zona Principale',
+        sections: [{
+          id: 'sec-audio',
+          name: 'Audio',
+          components: [
+            {
+              uniqueId: 'c-mic',
+              name: 'Microfono Shure',
+              quantity: 8,
+              type: 'item',
+              warehouseState: firestoreDoc.zones[0].sections[0].components[0].warehouseState
+            },
+            { uniqueId: 'c-mixer', name: 'Mixer Allen&Heath', quantity: 1, type: 'item' }
+          ]
+        }]
+      }
+    ];
+
+    const payloadWithAggiorna = buildFirestorePayload(firestoreDoc, {
+      version: '1.1',
+      snapshot: publishedV1_1,
+      zones: publishedV1_1,
+      isCompleted: true
+    });
+    firestoreDoc = { ...firestoreDoc, ...payloadWithAggiorna };
+
+    const prepAfterAggiorna = firestoreDoc.zones[0].sections[0].components;
+    if (prepAfterAggiorna[0].quantity !== 8 || !prepAfterAggiorna.find(c => c.uniqueId === 'c-mixer')) {
+      throw new Error("Test 8 fallito: Dopo aver premuto Aggiorna, Preparazione Eventi non ha ricevuto le modifiche!");
+    }
+    if (firestoreDoc.draftZones.length !== 0) {
+      throw new Error("Test 8 fallito: draftZones dovrebbe essere svuotato dopo Aggiorna!");
+    }
+
+    console.log("  ✅ TEST 8 SUPERATO: Preparazione Eventi è rimasta 100% invariata durante le modifiche e si è aggiornata SOLO al click su Aggiorna!");
+  }
+
+  // TEST 9: Exclusive Zone Lock in Crea Liste (Single-User Per Zone)
+  {
+    console.log("\n▶ TEST 9: Blocco Esclusivo Zona in Crea Liste (Un solo utente per zona)");
+    const ZONE_LOCK_TTL_MS = 2 * 60 * 1000;
+
+    const getZoneLockWarning = (zoneId, zoneLocks, currentUserUid, now = Date.now()) => {
+      const lock = zoneLocks?.[zoneId];
+      if (!lock) return null;
+      if (now - (lock.lockedAt || 0) > ZONE_LOCK_TTL_MS) return null;
+      if (lock.uid === currentUserUid) return null;
+      const nome = lock.userEmail ? lock.userEmail.split('@')[0] : lock.userName;
+      return `L'utente ${nome} sta lavorando su questa lista. Un solo utente può modificare la zona.`;
+    };
+
+    const now = Date.now();
+    const zoneLocks = {
+      'zone-main': {
+        uid: 'user-roberto-uid',
+        userEmail: 'roberto.chiartano@service.it',
+        userName: 'roberto.chiartano',
+        sessionId: 'sess-1',
+        lockedAt: now
+      }
+    };
+
+    // 1. User A (owner) accesses zone-main -> allowed (null warning)
+    const ownerCheck = getZoneLockWarning('zone-main', zoneLocks, 'user-roberto-uid', now);
+    if (ownerCheck !== null) {
+      throw new Error(`Test 9 fallito: Il proprietario del lock non deve essere bloccato! Ricevuto: ${ownerCheck}`);
+    }
+
+    // 2. User B tries to access zone-main -> blocked with exact message
+    const secondUserCheck = getZoneLockWarning('zone-main', zoneLocks, 'user-marco-uid', now);
+    const expectedMsg = "L'utente roberto.chiartano sta lavorando su questa lista. Un solo utente può modificare la zona.";
+    if (secondUserCheck !== expectedMsg) {
+      throw new Error(`Test 9 fallito: Messaggio di blocco non conforme!\nAtteso: "${expectedMsg}"\nRicevuto: "${secondUserCheck}"`);
+    }
+
+    // 3. User B accesses another unlocked zone ('zone-sala-b') -> allowed
+    const otherZoneCheck = getZoneLockWarning('zone-sala-b', zoneLocks, 'user-marco-uid', now);
+    if (otherZoneCheck !== null) {
+      throw new Error(`Test 9 fallito: Una zona libera non deve essere bloccata!`);
+    }
+
+    // 4. Stale lock (> 2 min) expires automatically
+    const expiredCheck = getZoneLockWarning('zone-main', zoneLocks, 'user-marco-uid', now + ZONE_LOCK_TTL_MS + 1000);
+    if (expiredCheck !== null) {
+      throw new Error(`Test 9 fallito: Un lock scaduto deve permettere l'accesso!`);
+    }
+
+    console.log("  ✅ TEST 9 SUPERATO: Blocco esclusivo zona e messaggio 'L'utente NOME sta lavorando su questa lista. Un solo utente può modificare la zona.' verificati!");
+  }
+
   console.log("\n🎉 TUTTI I TEST DI CONCORRENZA MULTI-UTENTE HANNO AVUTO SUCCESSO!\n");
 }
 

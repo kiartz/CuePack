@@ -8,7 +8,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ShareEventModal } from './ShareEventModal';
-import { ItemReplacementModal } from './ItemReplacementModal';
+import { ItemReplacementModal, ReplacementItemDraft, AccessoryDraft } from './ItemReplacementModal';
 import { ZoneEditModal } from './ZoneEditModal';
 import { ZoneInfoModal } from './ZoneInfoModal';
 import { EventSummaryModal } from './EventSummaryModal';
@@ -4462,6 +4462,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                   const isMainMatch = checkMatch(data.name);
                                   const hasSubMatch = Array.from(data.children.keys()).some(k => checkMatch(k as string));
                                   const hasChanged = Boolean(data.hasChanged || data.totalQty !== data.originalTotalQty);
+                                  const isActuallyKit = key.startsWith('KIT-');
 
                                   // Filter Logic: Search + Changes Filter
                                   if (isFilterActive && !isMainMatch && !hasSubMatch) return null;
@@ -4492,7 +4493,6 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                                   const isContainerOfMatch = isFilterActive && hasSubMatch;
                                   
                                   // Warning logic: if changed and not resolved for current warehouse mode
-                                  const isActuallyKit = key.startsWith('KIT-');
                                   const isResolved = isActuallyKit 
                                     ? Array.from(data.children.values()).every((c: any) => isTotalItemResolved(c))
                                     : isTotalItemResolved(data);

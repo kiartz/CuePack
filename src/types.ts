@@ -89,6 +89,7 @@ export interface InventoryItem {
   // Proprietà Economiche
   purchasePrice?: number; // Prezzo di Acquisto (€)
   rentalPrice?: number; // Prezzo di listino noleggio (€)
+  subhirePrice?: number; // Prezzo di subnoleggio (€)
   subrentalCost?: number; // Costo stimato subnoleggio (€)
 
   // Tipologia & Caratteristiche
@@ -197,7 +198,7 @@ export interface ListComponent {
   category: string; // Cached for sorting/display
   // contents stores accessories for items, kit components for kits.
   // For 'template', it might store an unpacked array of these structures (kits and items).
-  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string; subContents?: any[]; replacementInfo?: ItemReplacementInfo }[]; 
+  contents?: { itemId?: string; name: string; quantity: number; category: string; warehouseState?: WarehouseState; prepNote?: string; notes?: string; subContents?: any[]; replacementInfo?: ItemReplacementInfo }[]; 
   templateContents?: ListComponent[]; // Dedicated field for Templates to hold fully-formed kits/items
   notes?: string;
   warehouseState?: WarehouseState;
@@ -230,6 +231,7 @@ export interface ListSection {
   id: string;
   name: string;
   components: ListComponent[];
+  notes?: string;
 }
 
 export interface ListZone {
@@ -246,6 +248,14 @@ export interface ListZone {
   showTimeEnd?: string;     // Orario show a (HH:mm)
   returnDate?: string;      // Data fine smontaggio / rientro (YYYY-MM-DD)
   personnel?: string;       // Personale assegnato alla zona
+}
+
+export interface ZoneLockInfo {
+  uid: string;
+  userEmail: string;
+  userName: string;
+  sessionId: string;
+  lockedAt: number;
 }
 
 export interface PackingList {
@@ -273,7 +283,9 @@ export interface PackingList {
 
   description?: string;
   creationDate: string;
-  zones?: ListZone[]; // New structure
+  zones?: ListZone[]; // Published/confirmed zones when list is completed, or working zones before completion
+  draftZones?: ListZone[]; // Unconfirmed working draft zones in Crea Liste before pressing Aggiorna
+  zoneLocks?: Record<string, ZoneLockInfo | null>; // Exclusive per-zone editing lock in Crea Liste
   sections?: ListSection[]; // Legacy structure (kept for backward compatibility during migration)
   notes: string;
   // Checklist State Persistence

@@ -52,11 +52,29 @@ export const ZoneEditModal: React.FC<ZoneEditModalProps> = ({
       const defaultShow = event?.eventDate || '';
       const defaultTeardown = event?.teardownDate || event?.returnDate || event?.endDate || '';
 
-      setSetupDate(zone.setupDate || defaultSetup);
-      setShowDate(zone.showDate || defaultShow);
+      // Helper to format ISO date strings (e.g. 2026-10-28T23:00:00.000Z) into 'yyyy-MM-dd' for HTML5 date inputs
+      const toDateInputVal = (d?: string) => {
+        if (!d) return '';
+        const trimmed = d.trim();
+        if (trimmed.includes('T')) return trimmed.split('T')[0];
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+        // If DD/MM/YYYY
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+          const [day, month, year] = trimmed.split('/');
+          return `${year}-${month}-${day}`;
+        }
+        const parsed = new Date(trimmed);
+        if (!isNaN(parsed.getTime())) {
+          return parsed.toISOString().split('T')[0];
+        }
+        return '';
+      };
+
+      setSetupDate(toDateInputVal(zone.setupDate || defaultSetup));
+      setShowDate(toDateInputVal(zone.showDate || defaultShow));
       setShowTimeStart(zone.showTimeStart || '');
       setShowTimeEnd(zone.showTimeEnd || '');
-      setTeardownDate(zone.teardownDate || defaultTeardown);
+      setTeardownDate(toDateInputVal(zone.teardownDate || defaultTeardown));
       setNotes(zone.notes || '');
       setPersonnel(zone.personnel || '');
     }

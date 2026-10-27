@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { generateId } from '../utils';
 import { Plus, Minus, Search, Trash2, FileDown, Settings2, Box, Package as PackageIcon, Calendar, MapPin, ClipboardList, StickyNote, Edit2, CheckSquare, Square, Scissors, Clipboard, ClipboardCopy, X, ArrowLeftRight, GripVertical, AlertTriangle, Lightbulb, List, CheckCircle, Undo2, Redo2, Share, Share2, Save, User, FileText, AlignLeft, Blocks, Layers, Factory, Truck, AlertCircle, ChevronLeft, ChevronRight, Database, Link, Eye, ExternalLink, Filter, WifiOff, Info } from 'lucide-react';
-import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase, WarehouseState, ItemReplacementInfo } from '../types';
+import { InventoryItem, Kit, PackingList, ListSection, ListComponent, Category, ListZone, Reminder, ChecklistCategory, Template, InventoryDatabase, WarehouseState, ItemReplacementInfo, ZoneLockInfo } from '../types';
 import { useNetworkStatus } from '../context/NetworkContext';
 import { ItemFormModal } from './ItemFormModal';
 import { KitFormModal } from './KitFormModal';
@@ -21,7 +21,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { reconcileZones } from '../services/syncReconciler';
-import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
+import { auth, addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF, exportSelectivePDF, exportZonePDF } from '../utils/export';
 import { getDbBadgeStyle } from '../utils/databaseColors';
 import { calculateAvailableQuantity } from '../utils/availability';
@@ -226,10 +226,88 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     localStorage.setItem('closedRemindersIds', JSON.stringify(Array.from(closedRemindersIds)));
   }, [closedRemindersIds]);
 
+  const isListPublishedToWarehouse = useCallback((list?: Partial<PackingList> | null): boolean => {
+    if (!list) return false;
+    return Boolean(
+      list.isCompleted ||
+      list.isDraftVisible ||
+      (list.version && list.isCompleted !== false && list.isDraftVisible !== false)
+    );
+  }, []);
+
+  const mergeLiveWarehouseStateIntoZones = useCallback((workingZones: ListZone[], publishedZones?: ListZone[]): ListZone[] => {
+    if (!publishedZones || publishedZones.length === 0) return workingZones;
+    const pubCompMap = new Map<string, ListComponent>();
+    publishedZones.forEach(pz => {
+      (pz.sections || []).forEach(ps => {
+        (ps.components || []).forEach(pc => {
+          const key = pc.replacementInfo?.originalUniqueId || pc.uniqueId;
+          if (key && !pubCompMap.has(key)) {
+            pubCompMap.set(key, pc);
+          }
+        });
+      });
+    });
+
+    return workingZones.map(wz => ({
+      ...wz,
+      sections: (wz.sections || []).map(ws => ({
+        ...ws,
+        components: (ws.components || []).map(wc => {
+          const pubComp = pubCompMap.get(wc.uniqueId);
+          if (!pubComp) return wc;
+          const mergedWs: WarehouseState = {
+            ...wc.warehouseState,
+            inDistinta: Boolean(pubComp.warehouseState?.inDistinta || wc.warehouseState?.inDistinta),
+            loaded: Boolean(pubComp.warehouseState?.loaded || wc.warehouseState?.loaded),
+            returned: Boolean(pubComp.warehouseState?.returned || wc.warehouseState?.returned),
+            isBroken: pubComp.warehouseState?.isBroken !== undefined ? pubComp.warehouseState.isBroken : wc.warehouseState?.isBroken,
+            warehouseNote: pubComp.warehouseState?.warehouseNote || wc.warehouseState?.warehouseNote || '',
+            brokenNote: pubComp.warehouseState?.brokenNote || wc.warehouseState?.brokenNote,
+            changeLog: pubComp.warehouseState?.changeLog || wc.warehouseState?.changeLog,
+          };
+          const mergedContents = wc.contents?.map((sub, idx) => {
+            const pubSub = pubComp.contents?.find(ps => (sub.itemId && ps.itemId ? ps.itemId === sub.itemId : ps.name === sub.name)) || pubComp.contents?.[idx];
+            if (!pubSub?.warehouseState) return sub;
+            return {
+              ...sub,
+              warehouseState: {
+                ...sub.warehouseState,
+                inDistinta: Boolean(pubSub.warehouseState.inDistinta || sub.warehouseState?.inDistinta),
+                loaded: Boolean(pubSub.warehouseState.loaded || sub.warehouseState?.loaded),
+                returned: Boolean(pubSub.warehouseState.returned || sub.warehouseState?.returned),
+                isBroken: pubSub.warehouseState.isBroken !== undefined ? pubSub.warehouseState.isBroken : sub.warehouseState?.isBroken,
+                warehouseNote: pubSub.warehouseState.warehouseNote || sub.warehouseState?.warehouseNote || '',
+                brokenNote: pubSub.warehouseState.brokenNote || sub.warehouseState?.brokenNote,
+                changeLog: pubSub.warehouseState.changeLog || sub.warehouseState?.changeLog,
+              }
+            };
+          });
+          return {
+            ...wc,
+            warehouseState: mergedWs,
+            contents: mergedContents,
+            replacementInfo: wc.replacementInfo || pubComp.replacementInfo
+          };
+        })
+      }))
+    }));
+  }, []);
+
   // --- DERIVED STATE & MIGRATION ON THE FLY ---
+  const rawPublishedZonesRef = useRef<ListZone[] | null>(null);
   const rawActiveList = useMemo(() => {
     const rawList = lists.find(l => l.id === activeListId);
-    if (rawList && (!rawList.zones || rawList.zones.length === 0)) {
+    rawPublishedZonesRef.current = rawList?.zones || null;
+    if (!rawList) return undefined;
+
+    const isPublished = isListPublishedToWarehouse(rawList);
+    const hasDraft = isPublished && Array.isArray(rawList.draftZones) && rawList.draftZones.length > 0;
+    const effectiveRawZones = hasDraft
+      ? mergeLiveWarehouseStateIntoZones(rawList.draftZones!, rawList.zones)
+      : rawList.zones;
+
+    if (!effectiveRawZones || effectiveRawZones.length === 0) {
         // Backward compatibility: create a default zone if old format or empty
         const defaultSections: ListSection[] = [];
         if (rawList.sections && rawList.sections.length > 0) {
@@ -249,8 +327,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             }]
         } as PackingList;
     }
-    return rawList;
-  }, [lists, activeListId]);
+    return {
+      ...rawList,
+      zones: effectiveRawZones
+    };
+  }, [lists, activeListId, isListPublishedToWarehouse, mergeLiveWarehouseStateIntoZones]);
 
   // Refs for tracking changes
   const { isOnline } = useNetworkStatus();
@@ -543,10 +624,23 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return JSON.stringify(
       sortedZones.map(z => ({
         id: z.id,
+        name: z.name || '',
+        location: z.location || '',
+        setupCompany: z.setupCompany || '',
+        setupDate: z.setupDate || '',
+        showDate: z.showDate || '',
+        showTimeStart: z.showTimeStart || '',
+        showTimeEnd: z.showTimeEnd || '',
+        teardownDate: z.teardownDate || '',
+        returnDate: z.returnDate || '',
+        personnel: z.personnel || '',
+        notes: z.notes || '',
         sections: [...(z.sections || [])]
           .sort((a, b) => (a.id || a.name || '').localeCompare(b.id || b.name || ''))
           .map(s => ({
             id: s.id,
+            name: s.name || '',
+            notes: s.notes || '',
             components: (s.components || []).map(normComp)
           }))
       }))
@@ -569,10 +663,44 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   const snapshotZonesNormalized = useMemo(() => normalizeZonesForVersionDiff(activeList?.snapshot), [activeList?.snapshot, normalizeZonesForVersionDiff]);
 
   const hasUnsavedVersionChanges = useMemo(() => {
-    if (!activeList || !activeList.isCompleted) return false;
+    if (!activeList || (!activeList.isCompleted && !activeList.isDraftVisible)) return false;
     if (!activeList.snapshot || activeList.snapshot.length === 0) return false;
     return currentZonesNormalized !== snapshotZonesNormalized;
   }, [activeList, currentZonesNormalized, snapshotZonesNormalized]);
+
+  // Auto-isolate any legacy unconfirmed edits that were previously written directly into `zones` before `draftZones` separation
+  const healedLegacyListsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!activeListId) return;
+    const rawList = lists.find(l => l.id === activeListId);
+    if (!rawList || healedLegacyListsRef.current.has(rawList.id)) return;
+    if (!isListPublishedToWarehouse(rawList)) return;
+    if (Array.isArray(rawList.draftZones) && rawList.draftZones.length > 0) return;
+    if (!rawList.snapshot || rawList.snapshot.length === 0 || !rawList.zones || rawList.zones.length === 0) return;
+
+    const rawDesignerNorm = normalizeZonesForVersionDiff(getDesignerZones(rawList.zones));
+    const snapNorm = normalizeZonesForVersionDiff(rawList.snapshot);
+    if (rawDesignerNorm !== snapNorm) {
+      healedLegacyListsRef.current.add(rawList.id);
+      const restoredPublishedZones = mergeDesignerZonesWithWarehouseReplacements(
+        mergeLiveWarehouseStateIntoZones(rawList.snapshot, rawList.zones),
+        rawList.zones
+      );
+      rawPublishedZonesRef.current = restoredPublishedZones;
+      updateItemFields(COLL_LISTS, rawList.id, {
+        draftZones: rawList.zones,
+        zones: restoredPublishedZones
+      }).catch(err => console.error("Error isolating legacy draftZones:", err));
+    }
+  }, [
+    activeListId,
+    lists,
+    isListPublishedToWarehouse,
+    normalizeZonesForVersionDiff,
+    getDesignerZones,
+    mergeDesignerZonesWithWarehouseReplacements,
+    mergeLiveWarehouseStateIntoZones
+  ]);
 
   useEffect(() => {
     if (!activeList || !activeList.isCompleted) {
@@ -1260,6 +1388,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
 
   const handleListSelect = (listId: string) => {
+    releaseCurrentZoneLock();
     setLocalList(null);
     activeListRef.current = null;
     setActiveZoneId('');
@@ -1269,6 +1398,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
   };
 
   const handleBackToList = () => {
+    releaseCurrentZoneLock();
     setLocalList(null);
     activeListRef.current = null;
     setActiveZoneId('');
@@ -1276,6 +1406,127 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setViewMode('list');
     setActiveListId('');
   };
+
+  // --- ZONE EXCLUSIVE LOCK LOGIC (Single-User Per Zone in Crea Liste) ---
+  const ZONE_LOCK_TTL_MS = 2 * 60 * 1000; // 2 minutes TTL
+  const ZONE_LOCK_HEARTBEAT_MS = 45 * 1000; // 45 seconds heartbeat
+  const currentLockSessionIdRef = useRef<string>(generateId());
+  const heldZoneLockRef = useRef<{ listId: string; zoneId: string } | null>(null);
+
+  const getCurrentUserInfo = useCallback(() => {
+    const user = auth.currentUser;
+    const email = user?.email || '';
+    const userName = email ? email.split('@')[0] : (user?.displayName || 'Utente');
+    return {
+      uid: user?.uid || `anon-${currentLockSessionIdRef.current}`,
+      userEmail: email,
+      userName,
+      sessionId: currentLockSessionIdRef.current
+    };
+  }, []);
+
+  const getZoneLockByOtherUser = useCallback((zoneId: string, listObj?: PackingList | null): ZoneLockInfo | null => {
+    const targetList = listObj || rawActiveList || activeList;
+    if (!targetList || !zoneId) return null;
+    const lock = targetList.zoneLocks?.[zoneId];
+    if (!lock) return null;
+    const { uid } = getCurrentUserInfo();
+    const isExpired = (Date.now() - (lock.lockedAt || 0)) > ZONE_LOCK_TTL_MS;
+    if (isExpired) return null;
+    if (lock.uid === uid) return null;
+    return lock;
+  }, [rawActiveList, activeList, getCurrentUserInfo, ZONE_LOCK_TTL_MS]);
+
+  const releaseCurrentZoneLock = useCallback(() => {
+    const held = heldZoneLockRef.current;
+    if (!held) return;
+    heldZoneLockRef.current = null;
+    const { uid } = getCurrentUserInfo();
+    const currentList = lists.find(l => l.id === held.listId) || rawActiveListRef.current;
+    const currentLock = currentList?.zoneLocks?.[held.zoneId];
+    if (!currentLock || currentLock.uid === uid) {
+      updateItemFields(COLL_LISTS, held.listId, {
+        [`zoneLocks.${held.zoneId}`]: null
+      } as any).catch(() => {});
+    }
+  }, [getCurrentUserInfo, lists]);
+
+  const handleSelectZoneWithLockCheck = useCallback((targetZoneId: string) => {
+    if (!targetZoneId || targetZoneId === activeZoneId) return;
+    const otherLock = getZoneLockByOtherUser(targetZoneId);
+    if (otherLock) {
+      const lockOwnerName = (otherLock.userEmail ? otherLock.userEmail.split('@')[0] : otherLock.userName) || 'Utente';
+      setFeedbackModal({
+        isOpen: true,
+        title: 'Zona Occupata',
+        message: `L'utente ${lockOwnerName} sta lavorando su questa lista. Un solo utente può modificare la zona.`,
+        type: 'info'
+      });
+      return;
+    }
+    setActiveZoneId(targetZoneId);
+  }, [activeZoneId, getZoneLockByOtherUser]);
+
+  const activeZoneLockedByOther = useMemo(() => {
+    if (!activeZoneId) return null;
+    return getZoneLockByOtherUser(activeZoneId);
+  }, [activeZoneId, getZoneLockByOtherUser]);
+
+  // Acquire / refresh / release zone lock when activeZoneId or viewMode changes
+  useEffect(() => {
+    if (viewMode !== 'edit' || !activeListId || !activeZoneId) {
+      releaseCurrentZoneLock();
+      return;
+    }
+
+    const otherLock = getZoneLockByOtherUser(activeZoneId);
+    if (otherLock) {
+      // Another user holds the lock on this zone; do not overwrite their lock
+      if (heldZoneLockRef.current && (heldZoneLockRef.current.listId !== activeListId || heldZoneLockRef.current.zoneId !== activeZoneId)) {
+        releaseCurrentZoneLock();
+      }
+      return;
+    }
+
+    // Release previous zone lock if we switched zones or lists
+    if (heldZoneLockRef.current && (heldZoneLockRef.current.listId !== activeListId || heldZoneLockRef.current.zoneId !== activeZoneId)) {
+      releaseCurrentZoneLock();
+    }
+
+    const writeLock = () => {
+      const userInfo = getCurrentUserInfo();
+      const lockPayload: ZoneLockInfo = {
+        uid: userInfo.uid,
+        userEmail: userInfo.userEmail,
+        userName: userInfo.userName,
+        sessionId: userInfo.sessionId,
+        lockedAt: Date.now()
+      };
+      heldZoneLockRef.current = { listId: activeListId, zoneId: activeZoneId };
+      updateItemFields(COLL_LISTS, activeListId, {
+        [`zoneLocks.${activeZoneId}`]: lockPayload
+      } as any).catch(() => {});
+    };
+
+    writeLock();
+    const heartbeatTimer = setInterval(writeLock, ZONE_LOCK_HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(heartbeatTimer);
+    };
+  }, [viewMode, activeListId, activeZoneId, Boolean(activeZoneLockedByOther), getZoneLockByOtherUser, getCurrentUserInfo, releaseCurrentZoneLock, ZONE_LOCK_HEARTBEAT_MS]);
+
+  // Ensure lock is released on component unmount or browser tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      releaseCurrentZoneLock();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      releaseCurrentZoneLock();
+    };
+  }, [releaseCurrentZoneLock]);
   
   // Set initial active ZONE and SECTION
   useEffect(() => {
@@ -1286,23 +1537,24 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         // If no active zone (e.g. mount), try to restore from storage
         if (!targetZoneId) {
              const saved = localStorage.getItem(`cuepack_active_zone_${activeList.id}`);
-             if (saved && activeList.zones.find(z => z.id === saved)) {
+             if (saved && activeList.zones.find(z => z.id === saved) && !getZoneLockByOtherUser(saved, activeList)) {
                  targetZoneId = saved;
              }
         }
 
         const isPendingCreation = Boolean(targetZoneId && createdZoneIdsRef.current.has(targetZoneId));
 
-        // Fallback to first if still invalid (and not currently pending local creation)
+        // Fallback to first unlocked zone if still invalid, or first zone if all are locked
         if (!isPendingCreation && (!targetZoneId || !activeList.zones.find(z => z.id === targetZoneId))) {
-             targetZoneId = activeList.zones[0].id;
+             const firstUnlockedZone = activeList.zones.find(z => !getZoneLockByOtherUser(z.id, activeList));
+             targetZoneId = firstUnlockedZone ? firstUnlockedZone.id : activeList.zones[0].id;
         }
 
         if (targetZoneId && targetZoneId !== activeZoneId) {
             setActiveZoneId(targetZoneId);
         }
     }
-  }, [activeList]);
+  }, [activeList, getZoneLockByOtherUser]);
 
   useEffect(() => {
       if (activeZone && activeZone.sections.length > 0) {
@@ -1516,7 +1768,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
     try {
       const currentRemoteZones = rawActiveListRef.current?.zones || [];
-      const reconciledZones = task.updates.zones
+      const isVersionPublish = task.updates.snapshot !== undefined;
+
+      const reconciledZones = (task.updates.zones && !isVersionPublish)
         ? reconcileZones(task.updates.zones, currentRemoteZones, {
             deletedZoneIds: deletedZoneIdsRef.current,
             deletedSectionIds: deletedSectionIdsRef.current,
@@ -1528,9 +1782,30 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             modifiedZoneIds: modifiedZoneIdsRef.current,
             sourceContext: 'builder'
           })
-        : undefined;
+        : task.updates.zones;
 
-      const finalUpdates = reconciledZones ? { ...task.updates, zones: reconciledZones } : task.updates;
+      const reconciledDraftZones = (task.updates.draftZones && !isVersionPublish)
+        ? reconcileZones(task.updates.draftZones, currentRemoteZones, {
+            deletedZoneIds: deletedZoneIdsRef.current,
+            deletedSectionIds: deletedSectionIdsRef.current,
+            deletedComponentIds: deletedComponentIdsRef.current,
+            createdZoneIds: createdZoneIdsRef.current,
+            createdSectionIds: createdSectionIdsRef.current,
+            createdComponentIds: createdComponentIdsRef.current,
+            modifiedComponentIds: modifiedComponentIdsRef.current,
+            modifiedZoneIds: modifiedZoneIdsRef.current,
+            sourceContext: 'builder'
+          })
+        : task.updates.draftZones;
+
+      const finalUpdates: Partial<PackingList> = { ...task.updates };
+      if (reconciledZones !== undefined) {
+        finalUpdates.zones = reconciledZones;
+      }
+      if (reconciledDraftZones !== undefined) {
+        finalUpdates.draftZones = reconciledDraftZones;
+      }
+
       await updateItemFields(COLL_LISTS, task.listId, finalUpdates);
 
       // Successfully saved to Firestore: clear session trackers that were committed
@@ -1564,7 +1839,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       const baseList = activeListRef.current || activeList;
       if (!baseList) return;
       
-      const mergedZones = updates.zones
+      const isVersionPublish = updates.snapshot !== undefined;
+      const isPublished = isListPublishedToWarehouse(baseList) && updates.isCompleted !== false;
+
+      const mergedZones = (updates.zones && !isVersionPublish)
         ? reconcileZones(updates.zones, rawActiveListRef.current?.zones || rawActiveList?.zones || [], {
             deletedZoneIds: deletedZoneIdsRef.current,
             deletedSectionIds: deletedSectionIdsRef.current,
@@ -1576,43 +1854,39 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             modifiedZoneIds: modifiedZoneIdsRef.current,
             sourceContext: 'builder'
           })
-        : undefined;
-      const effectiveUpdates = mergedZones ? { ...updates, zones: mergedZones } : updates;
+        : updates.zones;
+      const effectiveLocalUpdates: Partial<PackingList> = mergedZones !== undefined
+        ? { ...updates, zones: mergedZones }
+        : { ...updates };
 
       // History tracking: if zones are modified and this is not an undo/redo execution, push previous zones to historyPast
-      if (effectiveUpdates.zones && !isUndoRedoActionRef.current && baseList.zones) {
+      if (effectiveLocalUpdates.zones && !isUndoRedoActionRef.current && baseList.zones) {
           const prevZones = baseList.zones;
           // Check if zones actually changed before pushing to history
-          if (JSON.stringify(prevZones) !== JSON.stringify(effectiveUpdates.zones)) {
+          if (JSON.stringify(prevZones) !== JSON.stringify(effectiveLocalUpdates.zones)) {
               setHistoryPast(past => [...past.slice(-14), prevZones]);
               setHistoryFuture([]); // clear redo stack on new user modification
           }
       }
 
-      // If list is completed and has a snapshot, mirror zone metadata in the snapshot so it stays in sync
-      if (baseList.snapshot && effectiveUpdates.zones) {
-        const updatedSnapshot = baseList.snapshot.map(sz => {
-          const matchingZone = effectiveUpdates.zones!.find(z => (z.id && sz.id ? z.id === sz.id : z.name === sz.name));
-          if (!matchingZone) return sz;
-          return {
-            ...sz,
-            name: matchingZone.name,
-            notes: matchingZone.notes,
-            location: matchingZone.location,
-            setupCompany: matchingZone.setupCompany,
-            setupDate: matchingZone.setupDate,
-            showDate: matchingZone.showDate,
-            showTimeStart: matchingZone.showTimeStart,
-            showTimeEnd: matchingZone.showTimeEnd,
-            teardownDate: matchingZone.teardownDate,
-            returnDate: matchingZone.returnDate,
-            personnel: matchingZone.personnel,
-          };
-        });
-        effectiveUpdates.snapshot = updatedSnapshot;
+      // CRITICAL ISOLATION RULE:
+      // When a list is ALREADY published to Preparazione Eventi (`isPublished === true`) and the user
+      // is editing in Crea Liste WITHOUT clicking "Aggiorna" (`!isVersionPublish`):
+      // - Do NOT modify `zones` or `snapshot` in Firestore!
+      // - Save working changes ONLY into `draftZones` in Firestore so Preparazione Eventi remains 100% untouched
+      //   until the user explicitly clicks "Aggiorna".
+      const firestoreUpdates: Partial<PackingList> = { ...effectiveLocalUpdates };
+      if (isVersionPublish) {
+          firestoreUpdates.draftZones = [];
+          effectiveLocalUpdates.draftZones = [];
+      } else if (isPublished && effectiveLocalUpdates.zones) {
+          firestoreUpdates.draftZones = effectiveLocalUpdates.zones;
+          delete firestoreUpdates.zones;
+          delete firestoreUpdates.snapshot;
+          effectiveLocalUpdates.draftZones = effectiveLocalUpdates.zones;
       }
 
-      const updatedList = { ...baseList, ...effectiveUpdates };
+      const updatedList = { ...baseList, ...effectiveLocalUpdates };
       activeListRef.current = updatedList as PackingList; // Optimistic sync
       setLocalList(updatedList as PackingList); // Update UI instantly
 
@@ -1620,13 +1894,18 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         if (pendingUpdatesRef.current) {
           await flushPendingListUpdates();
         }
-        pendingUpdatesRef.current = { listId: baseList.id, updates: { ...effectiveUpdates } };
+        pendingUpdatesRef.current = { listId: baseList.id, updates: { ...firestoreUpdates } };
         pendingWritesRef.current++;
       } else {
-        pendingUpdatesRef.current.updates = {
+        const nextQueued: Partial<PackingList> = {
           ...pendingUpdatesRef.current.updates,
-          ...effectiveUpdates
+          ...firestoreUpdates
         };
+        if (!isVersionPublish && isPublished && firestoreUpdates.draftZones) {
+          delete nextQueued.zones;
+          delete nextQueued.snapshot;
+        }
+        pendingUpdatesRef.current.updates = nextQueued;
       }
 
       if (debounceCommitTimerRef.current) {
@@ -1896,6 +2175,12 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           creationDate: dataToSave.creationDate || new Date().toISOString()
       } as PackingList;
 
+      const existingRaw = dataToSave.id ? lists.find(l => l.id === dataToSave.id) : undefined;
+      if (existingRaw && isListPublishedToWarehouse(existingRaw)) {
+          listToSave.zones = existingRaw.zones;
+          listToSave.draftZones = existingRaw.draftZones;
+      }
+
       await addOrUpdateItem(COLL_LISTS, listToSave);
       setIsEventModalOpen(false);
       
@@ -1907,7 +2192,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
            setActiveListId(listToSave.id);
            setViewMode('edit');
       } else if (listToSave.id === activeListId) {
-           setLocalList(listToSave);
+           setLocalList(prev => ({
+             ...listToSave,
+             zones: prev?.zones || listToSave.zones
+           }));
       }
   };
 
@@ -3010,9 +3298,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
     const nowIso = new Date().toISOString();
 
-    // Merge live warehouse states from remote rawActiveList into currentZones
+    // Merge live warehouse states from published remote zones into currentZones
     // so no technician checkmarks that arrived from Firestore are missed
-    const remoteZones = rawActiveList?.zones;
+    const remoteZones = rawPublishedZonesRef.current || rawActiveList?.zones;
     let baseZones = designerZones;
     if (remoteZones && remoteZones.length > 0) {
       const remoteMap = new Map<string, { ws?: WarehouseState; contents?: any[] }>();
@@ -3078,12 +3366,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
     setShowUpdateReminderBanner(false);
 
-    const mergedWithWarehouse = mergeDesignerZonesWithWarehouseReplacements(updatedZones, rawActiveList?.zones);
+    const mergedWithWarehouse = mergeDesignerZonesWithWarehouseReplacements(
+      updatedZones,
+      rawPublishedZonesRef.current || rawActiveList?.zones
+    );
 
     await updateActiveList({
         version: newVersion,
         snapshot: updatedZones,
         zones: mergedWithWarehouse,
+        draftZones: [],
         deletedItems: newDeletedItems,
         completedAt: nowIso,
         isCompleted: true,
@@ -3112,7 +3404,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         onConfirm: async () => {
             await updateItemFields(COLL_LISTS, activeList.id, {
                 isCompleted: false,
-                isDraftVisible: false
+                isDraftVisible: false,
+                zones: activeList.zones || [],
+                draftZones: []
             });
             setGenericConfirm(null);
             setFeedbackModal({ 
@@ -3154,8 +3448,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 version: newVersion,
                 snapshot: updatedZones,
                 zones: updatedZones,
+                draftZones: [],
                 deletedItems: newDeletedItems
-            });
+            }, true);
             
             setFeedbackModal({ 
                 isOpen: true, 
@@ -3491,8 +3786,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       
       await updateActiveList({
           version: draftVersionInput,
-          snapshot: activeList.zones
-      });
+          snapshot: activeList.zones,
+          zones: activeList.zones,
+          draftZones: []
+      }, true);
       
       setIsVersionModalOpen(false);
       setVersionError(null);
@@ -3514,7 +3811,11 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         confirmText: 'Ritira Bozza',
         variant: 'primary',
         onConfirm: async () => {
-            await updateActiveList({ isDraftVisible: false });
+            await updateItemFields(COLL_LISTS, activeList.id, {
+                isDraftVisible: false,
+                zones: activeList.zones || [],
+                draftZones: []
+            });
             setGenericConfirm(null);
             setFeedbackModal({ 
                 isOpen: true, 
@@ -4014,17 +4315,19 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                 </span>
                 <select 
                    value={activeZoneId} 
-                   onChange={(e) => setActiveZoneId(e.target.value)}
+                   onChange={(e) => handleSelectZoneWithLockCheck(e.target.value)}
                    className="flex-1 bg-slate-900 text-emerald-300 font-bold rounded-lg border border-slate-700/80 px-2.5 py-1.5 text-xs outline-none min-w-0 truncate focus:border-emerald-500 shadow-inner"
                 >
                    {zones.map(z => {
-                       const label = highlightedItemName 
+                       const otherLock = getZoneLockByOtherUser(z.id);
+                       const lockSuffix = otherLock ? ` 🔒 (${otherLock.userEmail ? otherLock.userEmail.split('@')[0] : otherLock.userName})` : '';
+                       const label = (highlightedItemName 
                            ? `${z.name} (${getZoneHighlightedQty(z)})` 
-                           : z.name;
+                           : z.name) + lockSuffix;
                        return <option key={z.id} value={z.id}>{label}</option>;
                    })}
                 </select>
-                {activeZone && (
+                {activeZone && !activeZoneLockedByOther && (
                    <>
                       <button 
                          type="button"
@@ -4061,6 +4364,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
              </div>
 
              {/* Row 2: Settore */}
+             {!activeZoneLockedByOther && (
              <div className="flex items-center gap-1.5 min-w-0">
                 <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-950/70 border border-blue-800/50 text-blue-400 font-bold uppercase text-[10px] tracking-wider shrink-0">
                    <AlignLeft size={13} /> Set.
@@ -4086,6 +4390,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                    <Plus size={15} />
                 </button>
              </div>
+             )}
           </div>
         </div>
 
@@ -4112,19 +4417,28 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         {/* --- ZONE TABS (Desktop Only) --- */}
         {activeList && zones.length > 0 && (
             <div className="hidden md:flex items-center gap-1 px-4 pt-1.5 border-b border-slate-800 bg-slate-950/50 overflow-x-auto">
-                {zones.map(z => (
+                {zones.map(z => {
+                    const otherLock = getZoneLockByOtherUser(z.id);
+                    const otherLockName = otherLock ? (otherLock.userEmail ? otherLock.userEmail.split('@')[0] : otherLock.userName) : null;
+                    return (
                     <div 
                         key={z.id}
-                        draggable={true}
+                        draggable={!otherLock}
                         onDragStart={(e) => handleZoneDragStart(e, z.id)}
                         onDragOver={(e) => handleZoneDragOver(e, z.id)}
                         onDragLeave={handleZoneDragLeave}
                         onDragEnd={handleZoneDragEnd}
                         onDrop={(e) => handleZoneDrop(e, z.id)}
-                        onClick={() => setActiveZoneId(z.id)}
-                        className={`px-4 py-2 rounded-t-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 border-t border-x ${draggedZoneId === z.id ? 'opacity-30 scale-95 border-dashed border-slate-700' : ''} ${activeZoneId === z.id ? 'bg-slate-900 text-white border-slate-800' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'} ${getZoneDragIndicatorClass(z.id)}`}
+                        onClick={() => handleSelectZoneWithLockCheck(z.id)}
+                        className={`px-4 py-2 rounded-t-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 border-t border-x ${draggedZoneId === z.id ? 'opacity-30 scale-95 border-dashed border-slate-700' : ''} ${activeZoneId === z.id ? 'bg-slate-900 text-white border-slate-800' : otherLock ? 'bg-amber-950/30 text-amber-400 border-amber-700/40 hover:bg-amber-900/30' : 'bg-slate-950 text-slate-500 border-transparent hover:text-slate-300'} ${getZoneDragIndicatorClass(z.id)}`}
+                        title={otherLockName ? `L'utente ${otherLockName} sta lavorando su questa lista. Un solo utente può modificare la zona.` : z.name}
                     >
                         {z.name}
+                        {otherLockName && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                                <User size={10} /> {otherLockName}
+                            </span>
+                        )}
                         {highlightedItemName && (
                             <span className={`px-1.5 py-0.5 rounded-full text-xs transition-all duration-300 ${
                                 getZoneHighlightedQty(z) > 0 
@@ -4150,7 +4464,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                         </button>
 
                         {/* Edit & Delete Buttons for active zone */}
-                        {activeZoneId === z.id && (
+                        {activeZoneId === z.id && !otherLock && (
                             <div className="flex items-center gap-1 ml-1 opacity-70 hover:opacity-100">
                                 <button
                                     type="button"
@@ -4175,7 +4489,8 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                             </div>
                         )}
                     </div>
-                ))}
+                    );
+                })}
                 <button onClick={() => openMgmtModal('zone', 'create')} className="ml-2 p-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-400"><Plus size={16} /></button>
             </div>
         )}
@@ -4183,7 +4498,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
 
         {/* --- SECTION TABS (Inside Active Zone) (Desktop Only) --- */}
-        {activeZone && (
+        {activeZone && !activeZoneLockedByOther && (
         <div className="hidden md:flex items-center gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 overflow-x-auto">
           {sections.map(s => (
             <button
@@ -4240,7 +4555,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         )}
 
         {/* --- TOOLBAR / SEARCH --- */}
-        {activeSection && (
+        {activeSection && !activeZoneLockedByOther && (
             <div className="px-2 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center gap-1.5 sm:gap-2">
                 {/* Search Input Row */}
                 <div 
@@ -4602,28 +4917,48 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         {/* --- MAIN LIST CONTENT --- */}
         <div className="flex-1 overflow-y-auto custom-scrollbar relative flex flex-col pb-24 md:pb-0">
           {highlightedItemName && (
-              <div className="sticky top-0 left-0 right-0 z-20 bg-blue-600 text-white px-4 py-2 shadow-lg flex justify-between items-center animate-in slide-in-from-top-2">
-                   <div className="font-bold text-sm flex items-center gap-2">
-                      <Search size={16} /> EVIDENZIATO: 
+              <div className="sticky top-0 left-0 right-0 z-20 bg-blue-600 text-white px-3 sm:px-4 py-2 shadow-lg flex justify-between items-center gap-2 animate-in slide-in-from-top-2">
+                   <div className="font-bold text-xs sm:text-sm flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                      <span className="inline-flex items-center gap-1.5 shrink-0">
+                        <Search size={16} className="shrink-0" /> EVIDENZIATO:
+                      </span>
                       <button 
                         onClick={() => handleOpenMasterEditor(highlightedItemName!)}
-                        className="underline hover:text-white/80 transition-colors cursor-pointer text-left"
+                        className="underline hover:text-white/80 transition-colors cursor-pointer text-left break-words"
                         title="Clicca per modificare l'oggetto e i suoi accessori"
                       >
                         {highlightedItemName}
                       </button>
-                      <span className="mx-2 opacity-50">|</span>
-                      <span className="bg-white/20 px-2 py-0.5 rounded text-xs">TOTALE IN LISTA: {highlightedTotal}</span>
+                      <span className="hidden sm:inline mx-1 opacity-50">|</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="bg-white/20 px-2 py-0.5 rounded text-xs whitespace-nowrap">TOTALE IN LISTA: {highlightedTotal}</span>
+                        <span className="bg-white/20 px-2 py-0.5 rounded text-xs whitespace-nowrap">TOTALE IN ZONA: {activeZone ? getZoneHighlightedQty(activeZone) : 0}</span>
+                      </div>
                   </div>
-                  <button onClick={() => setHighlightedItemName(null)} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-xs font-bold uppercase transition-colors">
+                  <button onClick={() => setHighlightedItemName(null)} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-xs font-bold uppercase transition-colors shrink-0">
                       ESCI
                   </button>
               </div>
           )}
 
-          {!activeZone ? <div className="text-center py-20 text-slate-500">Crea una Zona per iniziare</div> :
-           !activeSection ? <div className="text-center py-20 text-slate-500">Seleziona una Sezione</div> :
-           activeSection.components.length === 0 ? <div className="text-center py-20 text-slate-600">Sezione vuota</div> : (
+          {!activeZone ? (
+            <div className="text-center py-20 text-slate-500">Crea una Zona per iniziare</div>
+          ) : activeZoneLockedByOther ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+              <div className="max-w-md w-full bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-xl flex flex-col items-center gap-4">
+                <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <AlertTriangle size={28} />
+                </div>
+                <p className="text-sm sm:text-base font-bold text-white leading-relaxed">
+                  L'utente {(activeZoneLockedByOther.userEmail ? activeZoneLockedByOther.userEmail.split('@')[0] : activeZoneLockedByOther.userName) || 'Utente'} sta lavorando su questa lista. Un solo utente può modificare la zona.
+                </p>
+              </div>
+            </div>
+          ) : !activeSection ? (
+            <div className="text-center py-20 text-slate-500">Seleziona una Sezione</div>
+          ) : activeSection.components.length === 0 ? (
+            <div className="text-center py-20 text-slate-600">Sezione vuota</div>
+          ) : (
             <div className="space-y-2 p-4">
               {activeSection.components.map((comp, idx) => {
                   const isSelected = selectedIds.has(comp.uniqueId);
@@ -5270,7 +5605,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           }}
           onOpenList={() => {
             if (summaryEvent) {
-              handleOpenList(summaryEvent);
+              handleListSelect(summaryEvent.id);
             }
             setSummaryEvent(null);
           }}
