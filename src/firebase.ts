@@ -147,7 +147,7 @@ export const addOrUpdateItem = async <T extends { id: string }>(collectionName: 
 
     // Synchronize catalog index if updating inventory item
     if (collectionName === COLL_INVENTORY) {
-      updateItemInIndex(db, item as unknown as InventoryItem).catch(err => {
+      await updateItemInIndex(db, item as unknown as InventoryItem).catch(err => {
         console.warn("Notice updating catalog index on addOrUpdate:", err);
       });
     }
@@ -170,9 +170,9 @@ export const updateItemFields = async <T extends object>(collectionName: string,
 
     // Synchronize catalog index if updating inventory item fields
     if (collectionName === COLL_INVENTORY) {
-      getDoc(docRef).then(snap => {
+      await getDoc(docRef).then(snap => {
         if (snap.exists()) {
-          updateItemInIndex(db, { ...snap.data(), id: snap.id } as InventoryItem);
+          return updateItemInIndex(db, { ...snap.data(), id: snap.id } as InventoryItem);
         }
       }).catch(err => console.warn("Notice updating catalog index on field update:", err));
     }
@@ -192,7 +192,7 @@ export const deleteItem = async (collectionName: string, id: string) => {
 
     // Synchronize catalog index if deleting from inventory
     if (collectionName === COLL_INVENTORY) {
-      deleteItemFromIndex(db, id).catch(err => {
+      await deleteItemFromIndex(db, id).catch(err => {
         console.warn("Notice removing item from catalog index:", err);
       });
     }

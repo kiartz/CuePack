@@ -322,11 +322,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   const handleSave = async (itemData: Omit<InventoryItem, 'id'>) => {
     const normalizedName = itemData.name.trim().toLowerCase();
     
-    // Check local array for existing name collision to merge
-    const existingCollision = items.find(i => 
-      i.name.trim().toLowerCase() === normalizedName && 
-      (!editingItem || i.id !== editingItem.id)
-    );
+    // Check local array for existing name collision to merge ONLY when creating a new item (never hijack ID when editing/duplicating)
+    const existingCollision = !editingItem ? items.find(i => 
+      i.name.trim().toLowerCase() === normalizedName &&
+      (i.databaseId || DEFAULT_DATABASE_ID) === (itemData.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID)
+    ) : undefined;
 
     let newItem: InventoryItem;
 
@@ -404,10 +404,41 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
   };
 
   const handleDuplicate = async (item: InventoryItem) => {
-    const inventoryCol = getInventoryCollection(activeDatabaseId);
-    const newItem = { ...item, id: generateId(), name: `${item.name} (Copia)` };
-    await addOrUpdateItem(inventoryCol, newItem);
-    handleOpenModal(newItem);
+    try {
+      const inventoryCol = getInventoryCollection(activeDatabaseId);
+      let sourceItem = item;
+      try {
+        const snap = await getDoc(doc(db, COLL_INVENTORY, item.id));
+        if (snap.exists()) {
+          sourceItem = { ...item, ...(snap.data() as InventoryItem), id: item.id };
+        }
+      } catch {
+        // Fallback to compact index item
+      }
+
+      const newId = generateId();
+      const targetDbId = sourceItem.databaseId || activeDatabaseId || DEFAULT_DATABASE_ID;
+      const dbConfig = databasesMap.get(targetDbId);
+      const newProductCode = generateProductCode(items, newId, dbConfig);
+      const newQrCode = generateProductQrCode(items, newId, dbConfig);
+
+      const newItem: InventoryItem = {
+        ...sourceItem,
+        id: newId,
+        name: `${sourceItem.name} (Copia)`,
+        databaseId: targetDbId,
+        productCode: newProductCode,
+        qrCode: newQrCode,
+        instances: [],
+        lastModifiedByUserAt: new Date().toISOString(),
+        isCustomized: true
+      };
+
+      await addOrUpdateItem(inventoryCol, newItem);
+      handleOpenModal(newItem);
+    } catch (error) {
+      console.error("Errore durante la duplicazione del materiale:", error);
+    }
   };
 
   return (
@@ -561,7 +592,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                             <div className="font-medium text-white">{item.name}</div>
                             {item.accessories && item.accessories.length > 0 && (
                             <button 
-                              onClick={(e) => { e.stopPropagation(); setViewAccessoriesItem(item); }}
+                              onClick={(e) => { if (activeInventoryAction) return; e.stopPropagation(); setViewAccessoriesItem(item); }}
                               title={`${item.accessories.length} accessori collegati`}
                               className="text-slate-500 hover:text-blue-400 hover:bg-slate-800 p-1 rounded transition-colors"
                             >
@@ -570,13 +601,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                             )}
                             {item.documents && item.documents.length > 0 && (
                             <div 
-                              onClick={(e) => e.stopPropagation()}
+                              onClick={(e) => { if (!activeInventoryAction) e.stopPropagation(); }}
                               className="flex items-center gap-1"
                             >
                               {item.documents.length === 1 ? (
                                 <button
                                   type="button"
                                   onClick={(e) => {
+                                    if (activeInventoryAction) return;
                                     e.stopPropagation();
                                     openDocumentInBrowser(item.documents![0].url);
                                   }}
@@ -589,6 +621,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                                 <button
                                   type="button"
                                   onClick={(e) => {
+                                    if (activeInventoryAction) return;
                                     e.stopPropagation();
                                     setViewDocumentsItem(item);
                                   }}
@@ -621,22 +654,22 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                     </td>
 
                     {/* PRODUCT CODE COLUMN (NON-PRINTED IDENTIFIER) */}
-                    <td className="py-2 px-2 font-mono text-xs" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-2 px-2 font-mono text-xs" onClick={(e) => { if (!activeInventoryAction) e.stopPropagation(); }}>
                       <span 
                         className={`px-1.5 py-0.5 rounded cursor-pointer ${item.productCode ? 'text-blue-400 bg-blue-900/20 border border-blue-800/40 font-semibold' : 'text-slate-500 italic'}`}
                         title="Codice identificativo prodotto (No Stampa)"
-                        onClick={() => handleOpenModal(item)}
+                        onClick={() => { if (!activeInventoryAction) handleOpenModal(item); }}
                       >
                         {item.productCode ? `#${item.productCode}` : `#${effectiveProductCode}`}
                       </span>
                     </td>
 
                     {/* QR CODE / BARCODE COLUMN (PRINTABLE TAG - 3 BUTTONS ONLY) */}
-                    <td className="py-2 px-2" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-2 px-2" onClick={(e) => { if (!activeInventoryAction) e.stopPropagation(); }}>
                       <div className="flex items-center justify-center gap-1 font-mono text-xs">
                         <button 
                           type="button" 
-                          onClick={() => setPreviewCodeItem({ code: getItemQrCode(item), name: item.name })} 
+                          onClick={() => { if (!activeInventoryAction) setPreviewCodeItem({ code: getItemQrCode(item), name: item.name }); }} 
                           className="p-1.5 text-slate-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800 dark:hover:text-blue-400 rounded-lg transition-colors"
                           title="Visualizza QR Code e Barcode"
                         >
@@ -644,7 +677,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                         </button>
                         <button 
                           type="button" 
-                          onClick={() => printBarcode(getItemQrCode(item), item.name)} 
+                          onClick={() => { if (!activeInventoryAction) printBarcode(getItemQrCode(item), item.name); }} 
                           className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 dark:hover:text-emerald-400 rounded-lg transition-colors"
                           title="Stampa Codice a Barre"
                         >
@@ -652,7 +685,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ items, packingList
                         </button>
                         <button 
                           type="button" 
-                          onClick={() => printQRCode(getItemQrCode(item), item.name)} 
+                          onClick={() => { if (!activeInventoryAction) printQRCode(getItemQrCode(item), item.name); }} 
                           className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-slate-800 dark:hover:text-purple-400 rounded-lg transition-colors"
                           title="Stampa QR Code"
                         >
