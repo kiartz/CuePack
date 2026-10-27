@@ -1373,6 +1373,56 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setDbMismatchList(null);
   }, [activeListId]);
 
+  // --- ZONE EXCLUSIVE LOCK LOGIC (Single-User Per Zone in Crea Liste) ---
+  const ZONE_LOCK_TTL_MS = 2 * 60 * 1000; // 2 minutes TTL
+  const ZONE_LOCK_HEARTBEAT_MS = 45 * 1000; // 45 seconds heartbeat
+  const currentLockSessionIdRef = useRef<string>(generateId());
+  const heldZoneLockRef = useRef<{ listId: string; zoneId: string } | null>(null);
+  const listsRef = useRef<PackingList[]>(lists);
+  listsRef.current = lists;
+
+  const getCurrentUserInfo = useCallback(() => {
+    const user = auth.currentUser;
+    const email = user?.email || '';
+    const userName = email ? email.split('@')[0] : (user?.displayName || 'Utente');
+    return {
+      uid: user?.uid || `anon-${currentLockSessionIdRef.current}`,
+      userEmail: email,
+      userName,
+      sessionId: currentLockSessionIdRef.current
+    };
+  }, []);
+
+  const checkZoneLockFromData = useCallback((zoneId: string, targetList?: PackingList | null): ZoneLockInfo | null => {
+    if (!targetList || !zoneId) return null;
+    const lock = targetList.zoneLocks?.[zoneId];
+    if (!lock) return null;
+    const { uid } = getCurrentUserInfo();
+    const isExpired = (Date.now() - (lock.lockedAt || 0)) > ZONE_LOCK_TTL_MS;
+    if (isExpired) return null;
+    if (lock.uid === uid) return null;
+    return lock;
+  }, [getCurrentUserInfo, ZONE_LOCK_TTL_MS]);
+
+  const getZoneLockByOtherUser = useCallback((zoneId: string, listObj?: PackingList | null): ZoneLockInfo | null => {
+    const targetList = listObj || rawActiveList || activeList;
+    return checkZoneLockFromData(zoneId, targetList);
+  }, [rawActiveList, activeList, checkZoneLockFromData]);
+
+  const releaseCurrentZoneLock = useCallback(() => {
+    const held = heldZoneLockRef.current;
+    if (!held) return;
+    heldZoneLockRef.current = null;
+    const { uid } = getCurrentUserInfo();
+    const currentList = listsRef.current.find(l => l.id === held.listId) || rawActiveListRef.current;
+    const currentLock = currentList?.zoneLocks?.[held.zoneId];
+    if (!currentLock || currentLock.uid === uid) {
+      updateItemFields(COLL_LISTS, held.listId, {
+        [`zoneLocks.${held.zoneId}`]: null
+      } as any).catch(() => {});
+    }
+  }, [getCurrentUserInfo]);
+
   const handleConfirmDbSwitch = () => {
     if (dbMismatchList && setActiveDatabaseId) {
       setLocalList(null);
@@ -1380,6 +1430,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       setActiveDatabaseId(dbMismatchList.targetDbId);
       setDbMismatchList(null);
     }
+  };
+
+  const handleBackToList = () => {
+    releaseCurrentZoneLock();
+    setLocalList(null);
+    activeListRef.current = null;
+    setActiveZoneId('');
+    setActiveSectionId('');
+    setViewMode('list');
+    setActiveListId('');
   };
 
   const handleCancelDbSwitch = () => {
@@ -1396,60 +1456,6 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     setActiveListId(listId);
     setViewMode('edit');
   };
-
-  const handleBackToList = () => {
-    releaseCurrentZoneLock();
-    setLocalList(null);
-    activeListRef.current = null;
-    setActiveZoneId('');
-    setActiveSectionId('');
-    setViewMode('list');
-    setActiveListId('');
-  };
-
-  // --- ZONE EXCLUSIVE LOCK LOGIC (Single-User Per Zone in Crea Liste) ---
-  const ZONE_LOCK_TTL_MS = 2 * 60 * 1000; // 2 minutes TTL
-  const ZONE_LOCK_HEARTBEAT_MS = 45 * 1000; // 45 seconds heartbeat
-  const currentLockSessionIdRef = useRef<string>(generateId());
-  const heldZoneLockRef = useRef<{ listId: string; zoneId: string } | null>(null);
-
-  const getCurrentUserInfo = useCallback(() => {
-    const user = auth.currentUser;
-    const email = user?.email || '';
-    const userName = email ? email.split('@')[0] : (user?.displayName || 'Utente');
-    return {
-      uid: user?.uid || `anon-${currentLockSessionIdRef.current}`,
-      userEmail: email,
-      userName,
-      sessionId: currentLockSessionIdRef.current
-    };
-  }, []);
-
-  const getZoneLockByOtherUser = useCallback((zoneId: string, listObj?: PackingList | null): ZoneLockInfo | null => {
-    const targetList = listObj || rawActiveList || activeList;
-    if (!targetList || !zoneId) return null;
-    const lock = targetList.zoneLocks?.[zoneId];
-    if (!lock) return null;
-    const { uid } = getCurrentUserInfo();
-    const isExpired = (Date.now() - (lock.lockedAt || 0)) > ZONE_LOCK_TTL_MS;
-    if (isExpired) return null;
-    if (lock.uid === uid) return null;
-    return lock;
-  }, [rawActiveList, activeList, getCurrentUserInfo, ZONE_LOCK_TTL_MS]);
-
-  const releaseCurrentZoneLock = useCallback(() => {
-    const held = heldZoneLockRef.current;
-    if (!held) return;
-    heldZoneLockRef.current = null;
-    const { uid } = getCurrentUserInfo();
-    const currentList = lists.find(l => l.id === held.listId) || rawActiveListRef.current;
-    const currentLock = currentList?.zoneLocks?.[held.zoneId];
-    if (!currentLock || currentLock.uid === uid) {
-      updateItemFields(COLL_LISTS, held.listId, {
-        [`zoneLocks.${held.zoneId}`]: null
-      } as any).catch(() => {});
-    }
-  }, [getCurrentUserInfo, lists]);
 
   const handleSelectZoneWithLockCheck = useCallback((targetZoneId: string) => {
     if (!targetZoneId || targetZoneId === activeZoneId) return;
@@ -1472,14 +1478,15 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return getZoneLockByOtherUser(activeZoneId);
   }, [activeZoneId, getZoneLockByOtherUser]);
 
-  // Acquire / refresh / release zone lock when activeZoneId or viewMode changes
+  // Acquire / refresh / release zone lock ONLY when viewMode, activeListId, or activeZoneId changes
   useEffect(() => {
     if (viewMode !== 'edit' || !activeListId || !activeZoneId) {
       releaseCurrentZoneLock();
       return;
     }
 
-    const otherLock = getZoneLockByOtherUser(activeZoneId);
+    const currentTargetList = listsRef.current.find(l => l.id === activeListId) || rawActiveListRef.current || activeListRef.current;
+    const otherLock = checkZoneLockFromData(activeZoneId, currentTargetList);
     if (otherLock) {
       // Another user holds the lock on this zone; do not overwrite their lock
       if (heldZoneLockRef.current && (heldZoneLockRef.current.listId !== activeListId || heldZoneLockRef.current.zoneId !== activeZoneId)) {
@@ -1494,6 +1501,10 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     }
 
     const writeLock = () => {
+      const latestList = listsRef.current.find(l => l.id === activeListId) || rawActiveListRef.current;
+      if (checkZoneLockFromData(activeZoneId, latestList)) {
+        return;
+      }
       const userInfo = getCurrentUserInfo();
       const lockPayload: ZoneLockInfo = {
         uid: userInfo.uid,
@@ -1514,7 +1525,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
     return () => {
       clearInterval(heartbeatTimer);
     };
-  }, [viewMode, activeListId, activeZoneId, Boolean(activeZoneLockedByOther), getZoneLockByOtherUser, getCurrentUserInfo, releaseCurrentZoneLock, ZONE_LOCK_HEARTBEAT_MS]);
+  }, [viewMode, activeListId, activeZoneId, checkZoneLockFromData, getCurrentUserInfo, releaseCurrentZoneLock, ZONE_LOCK_HEARTBEAT_MS]);
 
   // Ensure lock is released on component unmount or browser tab close
   useEffect(() => {
@@ -1537,7 +1548,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
         // If no active zone (e.g. mount), try to restore from storage
         if (!targetZoneId) {
              const saved = localStorage.getItem(`cuepack_active_zone_${activeList.id}`);
-             if (saved && activeList.zones.find(z => z.id === saved) && !getZoneLockByOtherUser(saved, activeList)) {
+             if (saved && activeList.zones.find(z => z.id === saved) && !checkZoneLockFromData(saved, activeList)) {
                  targetZoneId = saved;
              }
         }
@@ -1546,7 +1557,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         // Fallback to first unlocked zone if still invalid, or first zone if all are locked
         if (!isPendingCreation && (!targetZoneId || !activeList.zones.find(z => z.id === targetZoneId))) {
-             const firstUnlockedZone = activeList.zones.find(z => !getZoneLockByOtherUser(z.id, activeList));
+             const firstUnlockedZone = activeList.zones.find(z => !checkZoneLockFromData(z.id, activeList));
              targetZoneId = firstUnlockedZone ? firstUnlockedZone.id : activeList.zones[0].id;
         }
 
@@ -1554,7 +1565,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
             setActiveZoneId(targetZoneId);
         }
     }
-  }, [activeList, getZoneLockByOtherUser]);
+  }, [activeList, activeZoneId, checkZoneLockFromData]);
 
   useEffect(() => {
       if (activeZone && activeZone.sections.length > 0) {

@@ -19,38 +19,15 @@
       })();
     </script>
     
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              slate: {
-                850: '#151f32',
-                900: '#0f172a',
-                950: '#020617',
-              }
-            },
-            animation: {
-              'in': 'fadeIn 0.2s ease-out forwards',
-            },
-            keyframes: {
-              fadeIn: {
-                '0%': { opacity: '0' },
-                '100%': { opacity: '1' },
-              },
-              zoomIn: {
-                '0%': { transform: 'scale(0.95)', opacity: '0' },
-                '100%': { transform: 'scale(1)', opacity: '1' },
-              }
-            }
-          }
-        }
-      }
-    </script>
     <style>
+      @keyframes fadeIn {
+        0% { opacity: 0; }
+        100% { opacity: 1; }
+      }
+      @keyframes zoomIn {
+        0% { transform: scale(0.95); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
+      }
       /* Custom utility classes mapping to Tailwind config */
       .animate-in { animation: fadeIn 0.2s ease-out forwards; }
       .zoom-in-95 { animation: zoomIn 0.2s ease-out forwards; }

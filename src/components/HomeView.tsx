@@ -432,6 +432,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
               {/* Dropdown Select */}
               <div className="relative">
                 <select
+                  id="active-database-select"
+                  name="activeDatabaseId"
                   value={activeDatabaseId || DEFAULT_DATABASE_ID}
                   onChange={(e) => setActiveDatabaseId && setActiveDatabaseId(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg py-2.5 pl-3 pr-10 text-sm font-semibold appearance-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all cursor-pointer"
@@ -705,7 +707,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <p className="text-sm text-slate-500 mb-6 flex-1">
                         Carica materiali e kit nel database attualmente attivo ({currentDb.name}).
                     </p>
-                    <input type="file" ref={catalogFileInputRef} onChange={handleCatalogFileChange} className="hidden" accept=".json" />
+                    <input id="catalog-import-file" name="catalogImportFile" type="file" ref={catalogFileInputRef} onChange={handleCatalogFileChange} className="hidden" accept=".json" />
                     <button onClick={handleImportCatalogClick} className="w-full py-3 md:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20 transition-colors">
                         Carica nel DB Attivo
                     </button>

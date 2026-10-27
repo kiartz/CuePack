@@ -295,6 +295,8 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
         {isAddingCategory && (
           <div className="flex items-center gap-1.5 mb-2 p-1.5 bg-slate-900 rounded-lg border border-slate-700 animate-fadeIn">
             <input
+              id="new-category-name"
+              name="newCategoryName"
               type="text"
               placeholder="Nome nuova categoria..."
               value={newCategoryName}
@@ -434,6 +436,8 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
         {/* Add Subcategory Input */}
         <div className="flex items-center gap-2 mb-2.5">
           <input
+            id="new-subcategory-name"
+            name="newSubcategoryName"
             type="text"
             placeholder={`Aggiungi sottocategoria a ${activeCategory?.name || ''}...`}
             value={newSubcategoryName}
