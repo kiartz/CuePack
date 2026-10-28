@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, MapPin, CornerDownRight, Calendar, ArrowLeft, Truck, CheckSquare, Square, Check, MessageSquare, AlertTriangle, ChevronRight, ChevronDown, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database, Filter, WifiOff, Eye, ArrowLeftRight, History, RotateCcw, Info, Edit2, Minus, Calculator } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection, InventoryItem, InventoryDatabase, Kit, ItemReplacementInfo } from '../types';
-import { reconcileZones } from '../services/syncReconciler';
+import { reconcileZones, compactZonesForStorage } from '../services/syncReconciler';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db, DEFAULT_DATABASE_ID } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
@@ -896,7 +896,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
         contentWarehouseDeltas: contentWarehouseDeltasRef.current,
         sourceContext: 'warehouse'
       });
-      await updateItemFields(COLL_LISTS, task.listId, { zones: reconciled });
+      await updateItemFields(COLL_LISTS, task.listId, { zones: compactZonesForStorage(reconciled, 'zones') });
       warehouseDeltasRef.current.clear();
       contentWarehouseDeltasRef.current.clear();
     } catch (err) {

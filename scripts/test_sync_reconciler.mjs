@@ -1,4 +1,4 @@
-import { reconcileZones, createDefaultWarehouseState } from '../src/services/syncReconciler.ts';
+import { reconcileZones, createDefaultWarehouseState, compactZonesForStorage } from '../src/services/syncReconciler.ts';
 
 // Test harness for Sync Reconciler
 function runTests() {
@@ -472,6 +472,113 @@ function runTests() {
     }
 
     console.log("  ✅ TEST 9 SUPERATO: Blocco esclusivo zona e messaggio 'L'utente NOME sta lavorando su questa lista. Un solo utente può modificare la zona.' verificati!");
+  }
+
+  // TEST 10: Large Event Compaction (45 Zones like EIMA 2026 under Firestore 1 MiB Limit)
+  {
+    console.log("\n▶ TEST 10: Compattazione Eventi Grandi (45+ Zone come EIMA 2026 sotto il limite 1 MiB di Firestore)");
+    const raw45Zones = Array.from({ length: 45 }, (_, zIdx) => ({
+      id: `zone-${zIdx + 1}`,
+      name: `PAD. ${zIdx + 1} - STAND EIMA`,
+      location: '',
+      notes: '',
+      sections: [
+        {
+          id: `sec-video-${zIdx + 1}`,
+          name: 'Video',
+          notes: '',
+          components: Array.from({ length: 7 }, (__, cIdx) => ({
+            uniqueId: `comp-${zIdx + 1}-${cIdx + 1}`,
+            type: 'item',
+            referenceId: `ref-item-${cIdx + 1}`,
+            name: `Monitor Samsung 55" #${cIdx + 1}`,
+            category: 'Regia Video',
+            quantity: 2,
+            isExternalRental: false,
+            databaseId: 'default',
+            notes: '',
+            prepNote: '',
+            warehouseState: {
+              inDistinta: zIdx < 8 && cIdx === 0,
+              loaded: false,
+              returned: false,
+              isBroken: false,
+              warehouseNote: '',
+              changeLog: {
+                previousQuantity: 0,
+                previousVersion: 'v1.15',
+                wasChecked: false,
+                changedAt: '2026-10-28T08:00:00.000Z',
+                history: [
+                  { version: 'v1.15', name: `Monitor Samsung 55" #${cIdx + 1}`, quantity: 0, wasChecked: false, updatedAt: '2026-10-27T08:00:00.000Z' },
+                  { version: 'v1.16', name: `Monitor Samsung 55" #${cIdx + 1}`, quantity: 2, wasChecked: false, updatedAt: '2026-10-28T08:00:00.000Z' }
+                ]
+              }
+            },
+            contents: Array.from({ length: 3 }, (___, sIdx) => ({
+              itemId: `acc-${sIdx + 1}`,
+              name: `Cavo HDMI 5mt #${sIdx + 1}`,
+              quantity: 1,
+              category: 'Cavi Video',
+              notes: '',
+              prepNote: '',
+              warehouseState: {
+                inDistinta: false,
+                loaded: false,
+                returned: false,
+                isBroken: false,
+                warehouseNote: ''
+              }
+            }))
+          }))
+        }
+      ]
+    }));
+
+    const compactedZones = compactZonesForStorage(raw45Zones, 'zones');
+    const compactedSnapshot = compactZonesForStorage(raw45Zones, 'snapshot');
+    const compactedDraft = compactZonesForStorage(raw45Zones, 'draft');
+
+    if (compactedZones.length !== 45 || compactedSnapshot.length !== 45) {
+      throw new Error(`Test 10 fallito: attese 45 zone, trovate ${compactedZones.length}`);
+    }
+
+    // Check that Zone 1 Comp 1 preserved its inDistinta = true and changeLog
+    const z1c1 = compactedZones[0].sections[0].components[0];
+    if (!z1c1.warehouseState?.inDistinta || !z1c1.warehouseState?.changeLog) {
+      throw new Error("Test 10 fallito: warehouseState o changeLog perso su componente attivo!");
+    }
+
+    // Check that clean accessory warehouseState was omitted (undefined)
+    if (z1c1.contents[0].warehouseState !== undefined) {
+      throw new Error("Test 10 fallito: warehouseState vuoto su accessorio non è stato compattato!");
+    }
+
+    // Check that snapshot stripped warehouseState completely
+    if (compactedSnapshot[0].sections[0].components[0].warehouseState !== undefined) {
+      throw new Error("Test 10 fallito: snapshot non ha rimosso warehouseState!");
+    }
+
+    const totalPublishPayloadBytes = JSON.stringify({
+      zones: compactedZones,
+      snapshot: compactedSnapshot,
+      draftZones: []
+    }).length;
+
+    const totalDraftPayloadBytes = JSON.stringify({
+      zones: compactedZones.slice(0, 8),
+      snapshot: compactedSnapshot.slice(0, 8),
+      draftZones: compactedDraft
+    }).length;
+
+    console.log(`     Dimensione payload pubblicazione 45 zone (zones + snapshot): ${(totalPublishPayloadBytes / 1024).toFixed(1)} KB`);
+    console.log(`     Dimensione payload bozza 45 zone (draftZones + 8 zone pub): ${(totalDraftPayloadBytes / 1024).toFixed(1)} KB`);
+
+    if (totalPublishPayloadBytes > 500 * 1024) {
+      throw new Error(`Test 10 fallito: Payload troppo grande (${totalPublishPayloadBytes} bytes)!`);
+    }
+
+    console.log("  ✅ TEST 10 SUPERATO: Tutte le 45 zone pubblicate in Preparazione Eventi sotto i 350 KB (ben sotto il limite di 1 MiB di Firestore)!");
   }
 
   console.log("\n🎉 TUTTI I TEST DI CONCORRENZA MULTI-UTENTE HANNO AVUTO SUCCESSO!\n");

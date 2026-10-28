@@ -20,7 +20,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { reconcileZones } from '../services/syncReconciler';
+import { reconcileZones, compactZonesForStorage, compactDeletedItemsForStorage } from '../services/syncReconciler';
 import { auth, addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF, exportSelectivePDF, exportZonePDF } from '../utils/export';
 import { getDbBadgeStyle } from '../utils/databaseColors';
@@ -1811,10 +1811,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
       const finalUpdates: Partial<PackingList> = { ...task.updates };
       if (reconciledZones !== undefined) {
-        finalUpdates.zones = reconciledZones;
+        finalUpdates.zones = compactZonesForStorage(reconciledZones, 'zones');
       }
       if (reconciledDraftZones !== undefined) {
-        finalUpdates.draftZones = reconciledDraftZones;
+        finalUpdates.draftZones = compactZonesForStorage(reconciledDraftZones, 'draft');
+      }
+      if (finalUpdates.snapshot !== undefined) {
+        finalUpdates.snapshot = compactZonesForStorage(finalUpdates.snapshot, 'snapshot');
+      }
+      if (finalUpdates.deletedItems !== undefined) {
+        finalUpdates.deletedItems = compactDeletedItemsForStorage(finalUpdates.deletedItems);
       }
 
       await updateItemFields(COLL_LISTS, task.listId, finalUpdates);
@@ -1830,6 +1836,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       modifiedZoneIdsRef.current.clear();
     } catch (e) {
       console.error("Error in batched list update:", e);
+      if (task.updates.snapshot !== undefined) {
+        throw e;
+      }
     } finally {
       isCommittingRef.current = false;
       pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
@@ -3037,36 +3046,16 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
 
         // Case 3: Brand new item added in this updated version (prevComp not found)
         if (!prevComp) {
+          // Sub-accessories inherit their effective changeLog dynamically from the parent component's changeLog
+          // in both PackingListBuilder and PrepMaterialView, avoiding massive payload duplication in Firestore.
           const resetContents = comp.contents?.map(content => {
-            const subTotalQty = content.quantity * comp.quantity;
+            const { changeLog: _oldSubCl, ...restSubWs } = content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
             return {
               ...content,
               warehouseState: {
-                ...content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' },
+                ...restSubWs,
                 inDistinta: false,
-                loaded: false,
-                changeLog: {
-                  previousQuantity: 0,
-                  previousVersion: prevVerLabel,
-                  wasChecked: false,
-                  history: [
-                    {
-                      version: prevVerLabel,
-                      name: content.name,
-                      quantity: 0,
-                      wasChecked: false,
-                      updatedAt: listPrevTimestamp
-                    },
-                    {
-                      version: newVerLabel,
-                      name: content.name,
-                      quantity: subTotalQty,
-                      wasChecked: false,
-                      updatedAt: nowIso
-                    }
-                  ],
-                  changedAt: nowIso
-                }
+                loaded: false
               }
             };
           });
@@ -3136,12 +3125,31 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
           );
 
           const isSubReplaced = !prevSub || prevSub.itemId !== content.itemId || prevSub.name !== content.name;
+          const isSubRatioChanged = prevSub ? prevSub.quantity !== content.quantity : true;
           const isSubQtyChanged = prevSub ? prevSubTotalQty !== currentSubTotalQty : true;
           const subHasChanged = isReplaced || isQuantityModified || isSubReplaced || isSubQtyChanged;
 
           if (subHasChanged) {
             anySubChanged = true;
             const oldSubHistory = prevSub?.warehouseState?.changeLog?.history || content.warehouseState?.changeLog?.history;
+            const needsExplicitSubChangeLog = Boolean(
+              isSubReplaced || isSubRatioChanged || isReplaced || wasSubChecked || oldSubHistory
+            );
+
+            if (!needsExplicitSubChangeLog) {
+              // Proportional quantity change with no independent sub history or checkmarks:
+              // PrepMaterialView and PackingListBuilder derive effectiveSubChangeLog directly from parent comp.warehouseState.changeLog
+              const { changeLog: _oldSubCl, ...restSubWs } = content.warehouseState || { inDistinta: false, loaded: false, returned: false, isBroken: false, warehouseNote: '' };
+              return {
+                ...content,
+                warehouseState: {
+                  ...restSubWs,
+                  inDistinta: false,
+                  loaded: false
+                }
+              };
+            }
+
             const prevSubTimestamp = prevSub?.warehouseState?.changeLog?.changedAt || prevCompTimestamp;
             const newSubHistory = buildVersionHistory(
               oldSubHistory,
@@ -3335,7 +3343,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               inDistinta: remWs?.inDistinta || currentWs?.inDistinta || false,
               returned: remWs?.returned || currentWs?.returned || false,
               isBroken: remWs?.isBroken !== undefined ? remWs.isBroken : currentWs?.isBroken,
-              warehouseNote: remWs?.warehouseNote || currentWs?.warehouseNote || ''
+              warehouseNote: remWs?.warehouseNote || currentWs?.warehouseNote || '',
+              brokenNote: remWs?.brokenNote || currentWs?.brokenNote,
+              changeLog: remWs?.changeLog || currentWs?.changeLog
             };
 
             let mergedContents = c.contents;
@@ -3351,7 +3361,9 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
                     inDistinta: remSub.warehouseState.inDistinta || sub.warehouseState?.inDistinta || false,
                     returned: remSub.warehouseState.returned || sub.warehouseState?.returned || false,
                     isBroken: remSub.warehouseState.isBroken !== undefined ? remSub.warehouseState.isBroken : sub.warehouseState?.isBroken,
-                    warehouseNote: remSub.warehouseState.warehouseNote || sub.warehouseState?.warehouseNote || ''
+                    warehouseNote: remSub.warehouseState.warehouseNote || sub.warehouseState?.warehouseNote || '',
+                    brokenNote: remSub.warehouseState.brokenNote || sub.warehouseState?.brokenNote,
+                    changeLog: remSub.warehouseState.changeLog || sub.warehouseState?.changeLog
                   }
                 };
               });
@@ -3382,25 +3394,35 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
       rawPublishedZonesRef.current || rawActiveList?.zones
     );
 
-    await updateActiveList({
-        version: newVersion,
-        snapshot: updatedZones,
-        zones: mergedWithWarehouse,
-        draftZones: [],
-        deletedItems: newDeletedItems,
-        completedAt: nowIso,
-        isCompleted: true,
-        isDraftVisible: false
-    }, true);
-    
-    setFeedbackModal({ 
-        isOpen: true, 
-        title: isUpdate ? 'Versione Aggiornata' : 'Operazione Completata', 
-        message: isUpdate 
-            ? `Lista aggiornata alla versione v${newVersion}!`
-            : `Lista completata con successo! Versione: ${newVersion}`,
-        type: 'success'
-    });
+    try {
+      await updateActiveList({
+          version: newVersion,
+          snapshot: updatedZones,
+          zones: mergedWithWarehouse,
+          draftZones: [],
+          deletedItems: newDeletedItems,
+          completedAt: nowIso,
+          isCompleted: true,
+          isDraftVisible: false
+      }, true);
+      
+      setFeedbackModal({ 
+          isOpen: true, 
+          title: isUpdate ? 'Versione Aggiornata' : 'Operazione Completata', 
+          message: isUpdate 
+              ? `Lista aggiornata alla versione v${newVersion}!`
+              : `Lista completata con successo! Versione: ${newVersion}`,
+          type: 'success'
+      });
+    } catch (error: any) {
+      console.error("Failed to publish packing list version:", error);
+      setFeedbackModal({
+          isOpen: true,
+          title: 'Errore Aggiornamento Lista',
+          message: `Impossibile salvare la versione v${newVersion} sul server: ${error?.message || 'Errore di rete o limite dati superato'}. Riprova.`,
+          type: 'error'
+      });
+    }
   };
 
   const handleUndoCompletion = async () => {

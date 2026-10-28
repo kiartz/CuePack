@@ -424,13 +424,14 @@ export function reconcileZones(
 
         if (sourceContext === 'builder') {
           const isItemReplaced = (lc.referenceId && rc.referenceId ? lc.referenceId !== rc.referenceId : false) || lc.name !== rc.name;
-          const hasLocalDesignerChanges = isLocallyModified || isItemReplaced || lc.quantity !== rc.quantity || lc.notes !== rc.notes;
+          const hasLocalDesignerChanges = isLocallyModified || isItemReplaced || lc.quantity !== rc.quantity || (lc.notes || '') !== (rc.notes || '');
 
           if (hasLocalDesignerChanges) {
             // Local designer edits (replacement, quantity, notes, vendor) win, but warehouse progress is preserved
             return {
               ...rc,
               ...lc,
+              notes: lc.notes || '',
               warehouseState: isItemReplaced ? (lc.warehouseState || createDefaultWarehouseState()) : mergedWarehouseState,
               contents: isItemReplaced ? lc.contents : mergedContents,
               templateContents: isItemReplaced ? lc.templateContents : mergedTemplateContents,
@@ -441,6 +442,7 @@ export function reconcileZones(
             return {
               ...lc,
               ...rc,
+              notes: rc.notes || '',
               warehouseState: mergedWarehouseState,
               contents: mergedContents,
               templateContents: mergedTemplateContents,
@@ -496,3 +498,157 @@ export function reconcilePackingList(
     zones: reconcileZones(localList.zones || [], remoteList.zones || [], options)
   };
 }
+
+/**
+ * Compacts a WarehouseState object for Firestore storage to keep large documents
+ * (40+ zones, 750+ components/accessories) well below Firestore's 1 MiB limit.
+ * Returns undefined if all flags are false, notes are empty, and no changeLog is present.
+ */
+export function compactWarehouseState(ws?: WarehouseState): WarehouseState | undefined {
+  if (!ws) return undefined;
+
+  const inDistinta = Boolean(ws.inDistinta);
+  const loaded = Boolean(ws.loaded);
+  const returned = Boolean(ws.returned);
+  const isBroken = Boolean(ws.isBroken);
+  const warehouseNote = ws.warehouseNote?.trim() || '';
+  const brokenNote = ws.brokenNote?.trim() || '';
+  const cl = ws.changeLog;
+
+  if (!inDistinta && !loaded && !returned && !isBroken && !warehouseNote && !brokenNote && !cl) {
+    return undefined;
+  }
+
+  let compactedChangeLog: WarehouseState['changeLog'] | undefined;
+  if (cl) {
+    // Cap history to the most recent 4 entries to prevent unbounded growth across many versions
+    const cappedHistory = Array.isArray(cl.history) && cl.history.length > 0
+      ? cl.history.slice(-4).map(h => ({
+          version: h.version,
+          name: h.name,
+          quantity: h.quantity,
+          wasChecked: Boolean(h.wasChecked),
+          updatedAt: h.updatedAt
+        }))
+      : undefined;
+
+    compactedChangeLog = {
+      previousQuantity: cl.previousQuantity,
+      ...(cl.previousName ? { previousName: cl.previousName } : {}),
+      ...(cl.previousVersion ? { previousVersion: cl.previousVersion } : {}),
+      ...(cl.wasChecked ? { wasChecked: true } : {}),
+      ...(cappedHistory ? { history: cappedHistory } : {}),
+      changedAt: cl.changedAt
+    };
+  }
+
+  return {
+    inDistinta,
+    loaded,
+    returned,
+    isBroken,
+    warehouseNote,
+    ...(brokenNote ? { brokenNote } : {}),
+    ...(compactedChangeLog ? { changeLog: compactedChangeLog } : {})
+  };
+}
+
+function compactComponentForStorage(
+  comp: ListComponent,
+  mode: 'zones' | 'draft' | 'snapshot'
+): ListComponent {
+  const compactedContents = comp.contents?.map(sub => {
+    const subWs = mode === 'zones' ? compactWarehouseState(sub.warehouseState) : undefined;
+    const subNotes = sub.notes?.trim() || '';
+    const subPrepNote = mode !== 'snapshot' ? (sub.prepNote?.trim() || '') : '';
+    return {
+      ...(sub.itemId ? { itemId: sub.itemId } : {}),
+      name: sub.name,
+      quantity: sub.quantity,
+      category: sub.category,
+      ...(subNotes ? { notes: subNotes } : {}),
+      ...(subPrepNote ? { prepNote: subPrepNote } : {}),
+      ...(subWs ? { warehouseState: subWs } : {}),
+      ...(mode !== 'snapshot' && sub.replacementInfo ? { replacementInfo: sub.replacementInfo } : {})
+    };
+  });
+
+  const compactedTemplateContents = comp.templateContents?.map(tc =>
+    compactComponentForStorage(tc, mode)
+  );
+
+  const compWs = mode === 'zones' ? compactWarehouseState(comp.warehouseState) : undefined;
+  const compNotes = comp.notes?.trim() || '';
+  const compPrepNote = mode !== 'snapshot' ? ((comp as any).prepNote?.trim() || '') : '';
+  const isExtRental = Boolean(comp.isExternalRental);
+  const extVendor = comp.externalRentalVendor?.trim() || '';
+  const dbId = comp.databaseId && comp.databaseId !== 'default' ? comp.databaseId : undefined;
+
+  return {
+    uniqueId: comp.uniqueId,
+    type: comp.type,
+    referenceId: comp.referenceId,
+    name: comp.name,
+    category: comp.category,
+    quantity: comp.quantity,
+    ...(comp.isTemporary ? { isTemporary: true } : {}),
+    ...(isExtRental ? { isExternalRental: true } : {}),
+    ...(isExtRental && comp.rentalType ? { rentalType: comp.rentalType } : {}),
+    ...(isExtRental && extVendor ? { externalRentalVendor: extVendor } : {}),
+    ...(dbId ? { databaseId: dbId } : {}),
+    ...(compNotes ? { notes: compNotes } : {}),
+    ...(compPrepNote ? { prepNote: compPrepNote } : {}),
+    ...(compactedContents ? { contents: compactedContents } : {}),
+    ...(compactedTemplateContents ? { templateContents: compactedTemplateContents } : {}),
+    ...(compWs ? { warehouseState: compWs } : {}),
+    ...(mode !== 'snapshot' && comp.replacementInfo ? { replacementInfo: comp.replacementInfo } : {})
+  };
+}
+
+/**
+ * Compacts an array of ListZone objects for Firestore persistence:
+ * - 'zones': compacts warehouseState (omitting default/empty objects & capping history) and strips empty optional strings.
+ * - 'draft': strips warehouseState (merged live from published `zones` on read) and empty optional strings.
+ * - 'snapshot': strips warehouseState, replacementInfo, prepNote, and empty optional strings.
+ */
+export function compactZonesForStorage(
+  zones?: ListZone[],
+  mode: 'zones' | 'draft' | 'snapshot' = 'zones'
+): ListZone[] | undefined {
+  if (!zones) return undefined;
+
+  return zones.map(z => ({
+    id: z.id,
+    name: z.name,
+    ...(z.location ? { location: z.location } : {}),
+    ...(z.notes ? { notes: z.notes } : {}),
+    ...(z.setupCompany ? { setupCompany: z.setupCompany } : {}),
+    ...(z.setupDate ? { setupDate: z.setupDate } : {}),
+    ...(z.showDate ? { showDate: z.showDate } : {}),
+    ...(z.showTimeStart ? { showTimeStart: z.showTimeStart } : {}),
+    ...(z.showTimeEnd ? { showTimeEnd: z.showTimeEnd } : {}),
+    ...(z.teardownDate ? { teardownDate: z.teardownDate } : {}),
+    ...(z.returnDate ? { returnDate: z.returnDate } : {}),
+    ...(z.personnel ? { personnel: z.personnel } : {}),
+    sections: (z.sections || []).map(s => ({
+      id: s.id,
+      name: s.name,
+      ...(s.notes ? { notes: s.notes } : {}),
+      components: (s.components || []).map(c => compactComponentForStorage(c, mode))
+    }))
+  }));
+}
+
+/**
+ * Compacts deletedItems array so deleted components do not retain bulky warehouseState histories.
+ */
+export function compactDeletedItemsForStorage(deletedItems?: PackingList['deletedItems']): PackingList['deletedItems'] {
+  if (!deletedItems) return undefined;
+  return deletedItems.slice(-100).map(d => ({
+    zoneName: d.zoneName,
+    sectionName: d.sectionName,
+    deletedAt: d.deletedAt,
+    originalComponent: compactComponentForStorage(d.originalComponent, 'snapshot')
+  }));
+}
+
