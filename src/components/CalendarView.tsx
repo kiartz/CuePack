@@ -10,6 +10,7 @@ import { ZoneInfoModal } from './ZoneInfoModal';
 import { ZoneEditModal } from './ZoneEditModal';
 import { addOrUpdateItem, updateItemFields, COLL_LISTS } from '../firebase';
 import { formatItalianDate } from '../utils';
+import { compactZonesForStorage } from '../services/syncReconciler';
 
 interface CalendarViewProps {
   lists: PackingList[];
@@ -17,6 +18,14 @@ interface CalendarViewProps {
   databases?: InventoryDatabase[];
   activeDatabaseId?: string;
 }
+
+// Resolve active zones of an event (prioritizing draftZones if in drafting state)
+const getCalendarEventZones = (ev: PackingList): ListZone[] => {
+  if (Array.isArray(ev.draftZones) && ev.draftZones.length > 0) {
+    return ev.draftZones;
+  }
+  return ev.zones || [];
+};
 
 const DEFAULT_COLUMN_WIDTH = 120;
 const MIN_COLUMN_WIDTH = 48;
@@ -314,8 +323,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
       let end = eEnd.getTime();
 
       // Only check custom explicit zone dates if zones > 1 AND the string is not empty
-      if (e.zones && e.zones.length > 1) {
-        e.zones.forEach(z => {
+      const ezones = getCalendarEventZones(e);
+      if (ezones && ezones.length > 1) {
+        ezones.forEach(z => {
           if (z.setupDate && z.setupDate.trim()) {
             const zs = parseLocalDate(z.setupDate, eStart).getTime();
             if (zs < start) start = zs;
@@ -410,7 +420,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
     if (isInclusiveEnd) {
       return (dayDiff + 1) * columnWidthRef.current;
     }
-    if (handle === 'start' || handle === 'zone-setup') {
+    if (handle === 'start' || handle === 'setup-start' || handle === 'zone-setup') {
       return dayDiff * columnWidthRef.current;
     }
 
@@ -480,9 +490,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
         if (override.returnDate && current.returnDate !== override.returnDate) matches = false;
         if (override.endDate && current.endDate !== override.endDate) matches = false;
         if (override.teardownDate && current.teardownDate !== override.teardownDate) matches = false;
-        if (override.zones && current.zones) {
-          for (const oz of override.zones) {
-            const cz = current.zones.find(z => z.id === oz.id);
+        const currentZones = getCalendarEventZones(current);
+        const overrideZones = override.draftZones || override.zones;
+        if (overrideZones && currentZones) {
+          for (const oz of overrideZones) {
+            const cz = currentZones.find(z => z.id === oz.id);
             if (!cz || cz.setupDate !== oz.setupDate || cz.showDate !== oz.showDate || cz.teardownDate !== oz.teardownDate || cz.returnDate !== oz.returnDate) {
               matches = false;
               break;
@@ -701,11 +713,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               if (targetEvent?.truckLoadDate && targetEvent.truckLoadDate > newYmd) {
                 eventUpdates.truckLoadDate = newYmd;
               }
+            } else if (resize.handleType === 'setup-start') {
+              eventUpdates.setupDate = newYmd;
+              if (targetEvent?.truckLoadDate && targetEvent.truckLoadDate > newYmd) {
+                eventUpdates.truckLoadDate = newYmd;
+              }
+              if (targetEvent?.eventDate && targetEvent.eventDate < newYmd) {
+                eventUpdates.eventDate = newYmd;
+              }
             } else if (resize.handleType === 'start') {
               eventUpdates[resize.fieldToUpdate] = newYmd;
               if (resize.fieldToUpdate === 'setupDate') {
                 if (targetEvent?.truckLoadDate && targetEvent.truckLoadDate > newYmd) {
                   eventUpdates.truckLoadDate = newYmd;
+                }
+                if (targetEvent?.eventDate && targetEvent.eventDate < newYmd) {
+                  eventUpdates.eventDate = newYmd;
+                }
+              } else if (resize.fieldToUpdate === 'truckLoadDate') {
+                if (targetEvent?.setupDate && targetEvent.setupDate < newYmd) {
+                  eventUpdates.setupDate = newYmd;
                 }
                 if (targetEvent?.eventDate && targetEvent.eventDate < newYmd) {
                   eventUpdates.eventDate = newYmd;
@@ -721,8 +748,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                 [resize.fieldToUpdate]: newYmd
               };
             }
-          } else if (resize.targetType === 'zone' && resize.zoneId && targetEvent && targetEvent.zones) {
-            const updatedZones = targetEvent.zones.map(z => {
+          } else if (resize.targetType === 'zone' && resize.zoneId && targetEvent) {
+            const currentZonesList = targetEvent.zones || [];
+            const updatedZones = currentZonesList.map(z => {
               if (z.id !== resize.zoneId) return z;
               const updated: any = { ...z };
               if (resize.handleType === 'zone-teardown-start') {
@@ -745,15 +773,77 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               }
               return updated;
             });
-            // Update ONLY the zones array so other zones keep their own dates without jumping!
-            eventUpdates = { zones: updatedZones };
+
+            const hasDraft = Array.isArray(targetEvent.draftZones) && targetEvent.draftZones.length > 0;
+            const updatedDraftZones = hasDraft
+              ? targetEvent.draftZones!.map(z => {
+                  if (z.id !== resize.zoneId) return z;
+                  const updated: any = { ...z };
+                  if (resize.handleType === 'zone-teardown-start') {
+                    if (isHalfDay) {
+                      updated.endDate = newYmd;
+                      updated.teardownDate = newYmd;
+                    } else {
+                      const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
+                      updated.endDate = toDateInputString(prevDate);
+                      updated.teardownDate = newYmd;
+                    }
+                    if (z.returnDate && z.returnDate < newYmd) {
+                      updated.returnDate = newYmd;
+                    }
+                  } else if (resize.handleType === 'zone-show') {
+                    updated.showDate = newYmd;
+                  } else {
+                    updated[resize.fieldToUpdate] = newYmd;
+                  }
+                  return updated;
+                })
+              : undefined;
+
+            let updatedSnapshot = targetEvent.snapshot;
+            if (updatedSnapshot && updatedSnapshot.length > 0) {
+              updatedSnapshot = updatedSnapshot.map(sz => {
+                if (sz.id !== resize.zoneId) return sz;
+                const updated: any = { ...sz };
+                if (resize.handleType === 'zone-teardown-start') {
+                  if (isHalfDay) {
+                    updated.endDate = newYmd;
+                    updated.teardownDate = newYmd;
+                  } else {
+                    const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
+                    updated.endDate = toDateInputString(prevDate);
+                    updated.teardownDate = newYmd;
+                  }
+                } else if (resize.handleType === 'zone-show') {
+                  updated.showDate = newYmd;
+                } else {
+                  updated[resize.fieldToUpdate] = newYmd;
+                }
+                return updated;
+              });
+            }
+
+            eventUpdates = {
+              zones: compactZonesForStorage(updatedZones, 'zones')
+            };
+            if (updatedDraftZones) {
+              eventUpdates.draftZones = compactZonesForStorage(updatedDraftZones, 'draft');
+            }
+            if (updatedSnapshot) {
+              eventUpdates.snapshot = compactZonesForStorage(updatedSnapshot, 'snapshot');
+            }
           }
 
           // Apply optimistic override synchronously to eliminate any release flicker
           setOptimisticOverrides(prev => {
             const next = new Map(prev);
             const existing = next.get(resize.eventId) || {};
-            next.set(resize.eventId, { ...existing, ...eventUpdates });
+            next.set(resize.eventId, { 
+              ...existing, 
+              ...eventUpdates,
+              ...(eventUpdates.zones ? { zones: eventUpdates.zones } : {}),
+              ...(eventUpdates.draftZones ? { draftZones: eventUpdates.draftZones } : {})
+            });
             return next;
           });
 
@@ -952,7 +1042,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
   // Start drag-resizing an event edge (Desktop only)
   const startDragEvent = (
     event: PackingList,
-    handle: 'start' | 'show-start' | 'show-end' | 'end',
+    handle: 'start' | 'setup-start' | 'show-start' | 'show-end' | 'end',
     e: React.MouseEvent
   ) => {
     if (!isDesktop) return;
@@ -983,16 +1073,27 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
         fieldToUpdate = 'truckLoadDate';
         label = 'Inizio Carico';
         initialDateStr = event.truckLoadDate;
+        minDate = new Date(timelineStart);
+        maxDate = parseLocalDate(event.setupDate || event.eventDate || event.endDate);
       } else if (event.setupDate) {
         fieldToUpdate = 'setupDate';
         label = 'Inizio Montaggio';
         initialDateStr = event.setupDate;
+        minDate = new Date(timelineStart);
+        maxDate = parseLocalDate(event.eventDate || event.endDate);
       } else {
         fieldToUpdate = 'eventDate';
         label = 'Inizio Evento';
         initialDateStr = event.eventDate || '';
+        minDate = new Date(timelineStart);
+        maxDate = parseLocalDate(event.endDate || event.creationDate);
       }
-      maxDate = parseLocalDate(event.eventDate || event.setupDate);
+    } else if (handle === 'setup-start') {
+      fieldToUpdate = 'setupDate';
+      label = 'Inizio Montaggio';
+      initialDateStr = event.setupDate || event.truckLoadDate || '';
+      minDate = event.truckLoadDate ? parseLocalDate(event.truckLoadDate) : new Date(timelineStart);
+      maxDate = parseLocalDate(event.eventDate || event.endDate || event.creationDate);
     } else if (handle === 'show-start') {
       fieldToUpdate = 'eventDate';
       label = 'Inizio Show';
@@ -1387,9 +1488,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                       if (ev.truckLoadDate && ev.truckLoadDate > activeResizeState.previewDateStr) {
                         updated.truckLoadDate = activeResizeState.previewDateStr;
                       }
-                    } else if (activeResizeState.handleType === 'start') {
-                      if (activeResizeState.fieldToUpdate === 'setupDate' && ev.eventDate && ev.eventDate < activeResizeState.previewDateStr) {
+                    } else if (activeResizeState.handleType === 'setup-start') {
+                      updated.setupDate = activeResizeState.previewDateStr;
+                      if (ev.truckLoadDate && ev.truckLoadDate > activeResizeState.previewDateStr) {
+                        updated.truckLoadDate = activeResizeState.previewDateStr;
+                      }
+                      if (ev.eventDate && ev.eventDate < activeResizeState.previewDateStr) {
                         updated.eventDate = activeResizeState.previewDateStr;
+                      }
+                    } else if (activeResizeState.handleType === 'start') {
+                      if (activeResizeState.fieldToUpdate === 'setupDate') {
+                        if (ev.truckLoadDate && ev.truckLoadDate > activeResizeState.previewDateStr) {
+                          updated.truckLoadDate = activeResizeState.previewDateStr;
+                        }
+                        if (ev.eventDate && ev.eventDate < activeResizeState.previewDateStr) {
+                          updated.eventDate = activeResizeState.previewDateStr;
+                        }
+                      } else if (activeResizeState.fieldToUpdate === 'truckLoadDate') {
+                        if (ev.setupDate && ev.setupDate < activeResizeState.previewDateStr) {
+                          updated.setupDate = activeResizeState.previewDateStr;
+                        }
+                        if (ev.eventDate && ev.eventDate < activeResizeState.previewDateStr) {
+                          updated.eventDate = activeResizeState.previewDateStr;
+                        }
                       }
                     } else if (activeResizeState.handleType === 'end') {
                       if (ev.teardownDate && ev.teardownDate > activeResizeState.previewDateStr) {
@@ -1399,41 +1520,47 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                     return updated;
                   }
 
-                  if (activeResizeState.targetType === 'zone' && ev.zones) {
-                    const updatedZones = ev.zones.map(z => {
-                      if (z.id !== activeResizeState.zoneId) return z;
-                      const updated: any = {
-                        ...z,
-                        [activeResizeState.fieldToUpdate]: activeResizeState.previewDateStr
-                      };
-                      if (activeResizeState.handleType === 'zone-teardown-start') {
-                        if (activeResizeState.isHalfDay) {
-                          updated.endDate = activeResizeState.previewDateStr;
-                          updated.teardownDate = activeResizeState.previewDateStr;
-                        } else {
-                          const prevDate = addCalendarDays(parseLocalDate(activeResizeState.previewDateStr), -1);
-                          updated.endDate = toDateInputString(prevDate);
-                          updated.teardownDate = activeResizeState.previewDateStr;
+                  if (activeResizeState.targetType === 'zone') {
+                    const zonesSource = getCalendarEventZones(ev);
+                    if (zonesSource.length > 0) {
+                      const updatedZones = zonesSource.map(z => {
+                        if (z.id !== activeResizeState.zoneId) return z;
+                        const updated: any = {
+                          ...z,
+                          [activeResizeState.fieldToUpdate]: activeResizeState.previewDateStr
+                        };
+                        if (activeResizeState.handleType === 'zone-teardown-start') {
+                          if (activeResizeState.isHalfDay) {
+                            updated.endDate = activeResizeState.previewDateStr;
+                            updated.teardownDate = activeResizeState.previewDateStr;
+                          } else {
+                            const prevDate = addCalendarDays(parseLocalDate(activeResizeState.previewDateStr), -1);
+                            updated.endDate = toDateInputString(prevDate);
+                            updated.teardownDate = activeResizeState.previewDateStr;
+                          }
+                          if (z.returnDate && z.returnDate < activeResizeState.previewDateStr) {
+                            updated.returnDate = activeResizeState.previewDateStr;
+                          }
+                        } else if (activeResizeState.handleType === 'zone-show') {
+                          updated.showDate = activeResizeState.previewDateStr;
                         }
-                        if (z.returnDate && z.returnDate < activeResizeState.previewDateStr) {
-                          updated.returnDate = activeResizeState.previewDateStr;
-                        }
-                      } else if (activeResizeState.handleType === 'zone-show') {
-                        updated.showDate = activeResizeState.previewDateStr;
-                      }
-                      return updated;
-                    });
+                        return updated;
+                      });
 
-                    // Only update zones array: do not mutate event.setupDate or event.returnDate
-                    // so other zones don't shift!
-                    return {
-                      ...ev,
-                      zones: updatedZones
-                    };
+                      // Only update zones array: do not mutate event.setupDate or event.returnDate
+                      // so other zones don't shift!
+                      return {
+                        ...ev,
+                        zones: updatedZones,
+                        ...(ev.draftZones ? { draftZones: updatedZones } : {})
+                      };
+                    }
                   }
 
                   return ev;
                 })();
+
+                const resolvedEventZones = getCalendarEventZones(event);
 
                 const validStartTimes = [event.truckLoadDate, event.setupDate, event.eventDate]
                   .filter((s): s is string => !!(s && s.trim()))
@@ -1449,34 +1576,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                 rawEventEnd.setHours(0, 0, 0, 0);
 
                 // Multiple zones check: ONLY IF zones.length > 1
-                const hasMultipleZones = !!(event.zones && event.zones.length > 1);
+                const hasMultipleZones = resolvedEventZones.length > 1;
                 const isShowingEventZones = showZones && hasMultipleZones && !collapsedEventZoneIds.has(event.id);
-                const zoneRowsCount = isShowingEventZones ? (event.zones?.length || 0) : 0;
+                const zoneRowsCount = isShowingEventZones ? resolvedEventZones.length : 0;
 
                 // Precompute zone segments if zones exist
-                const zoneSegmentsList = (event.zones && event.zones.length > 0) 
-                  ? event.zones.map(z => computeZoneSegments(z, event, rawEventStart, rawEventEnd))
+                const zoneSegmentsList = (resolvedEventZones.length > 0) 
+                  ? resolvedEventZones.map(z => computeZoneSegments(z, event, rawEventStart, rawEventEnd))
                   : [];
 
                 // Unified Window Bounding Box (Encompasses event and its zone dates)
                 let groupStartTime = rawEventStart.getTime();
                 let groupEndTime = rawEventEnd.getTime();
 
-                // When an event has zones, the event bar spans from the earliest zone start to the latest zone end!
-                // "In pratica se non ci sono zone all'inizio o alla fine non ci deve essere neanche la riga principale dell'evento."
+                // When an event has zones, the group container spans from the earliest date (main event or zone) to the latest date!
                 if (zoneSegmentsList.length > 0) {
                   const zoneStartTimes = zoneSegmentsList.map(zs => zs.zoneStartDate.getTime());
                   const zoneEndTimes = zoneSegmentsList.map(zs => zs.zoneEndDate.getTime());
-                  groupStartTime = Math.min(...zoneStartTimes);
-                  groupEndTime = Math.max(...zoneEndTimes);
+                  groupStartTime = Math.min(rawEventStart.getTime(), ...zoneStartTimes);
+                  groupEndTime = Math.max(rawEventEnd.getTime(), ...zoneEndTimes);
                 }
 
                 const groupStart = new Date(groupStartTime);
                 const groupEnd = new Date(groupEndTime);
-
-                // Event bar visually spans the full envelope of its zones
-                const eventStart = groupStart;
-                const eventEnd = groupEnd;
 
                 const diffGroupStart = getCalendarDayDiff(timelineStart, groupStart);
                 const groupDuration = Math.max(1, getCalendarDayDiff(groupStart, groupEnd) + 1);
@@ -1484,9 +1606,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                 const groupLeft = Math.max(0, diffGroupStart * columnWidth);
                 const groupWidth = Math.max(columnWidth, groupDuration * columnWidth);
 
-                // The event bar at the top spans the full width of the unified window (no gaps!)
-                const eventRelLeft = 0;
-                const eventRelWidth = groupWidth;
+                // The main event bar at the top spans its own dates rawEventStart -> rawEventEnd within the group container
+                const eventRelLeft = Math.max(0, getCalendarDayDiff(groupStart, rawEventStart) * columnWidth);
+                const eventRelWidth = Math.max(columnWidth, (getCalendarDayDiff(rawEventStart, rawEventEnd) + 1) * columnWidth);
                 
                 // Heights: Main row 44px; Zone rows 28px each
                 const mainBarHeight = 44;
@@ -1538,13 +1660,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                           <div className="relative h-full flex overflow-hidden rounded-lg">
                             {(() => {
                               const segments = [];
-                              const rawTruck = event.truckLoadDate?.trim() ? parseLocalDate(event.truckLoadDate, eventStart) : null;
+                              const rawTruck = event.truckLoadDate?.trim() ? parseLocalDate(event.truckLoadDate, rawEventStart) : null;
                               if (rawTruck) rawTruck.setHours(0, 0, 0, 0);
 
-                              const rawSetup = parseLocalDate(event.setupDate || event.eventDate || event.creationDate, eventStart);
+                              const rawSetup = parseLocalDate(event.setupDate || event.eventDate || event.creationDate, rawEventStart);
                               rawSetup.setHours(0, 0, 0, 0);
 
-                              const rawShow = parseLocalDate(event.eventDate || event.creationDate, eventStart);
+                              const rawShow = parseLocalDate(event.eventDate || event.creationDate, rawEventStart);
                               rawShow.setHours(0, 0, 0, 0);
 
                               const rawShowEnd = parseLocalDate(event.endDate || event.eventDate || event.creationDate, rawShow);
@@ -1580,18 +1702,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                                 effectiveReturn = new Date(effectiveTeardown);
                               }
 
-                              // Bounding box alignment:
-                              // If truck exists: truck starts at groupStartTime (if zone starts earlier), setup starts at effectiveSetup
-                              // If no truck: setup starts at groupStartTime (if zone starts earlier)
-                              const truckStart = effectiveTruck ? new Date(Math.min(effectiveTruck.getTime(), groupStartTime)) : null;
-                              const setupStart = effectiveTruck 
-                                ? new Date(Math.max(effectiveSetup.getTime(), truckStart!.getTime())) 
-                                : new Date(Math.min(effectiveSetup.getTime(), groupStartTime));
-
+                              const truckStart = effectiveTruck;
+                              const setupStart = effectiveSetup;
                               const showStart = effectiveShowStart;
                               const showEnd = effectiveShowEnd;
                               const teardownStart = effectiveTeardown;
-                              const returnEnd = new Date(Math.max(effectiveReturn.getTime(), teardownStart.getTime(), groupEndTime));
+                              const returnEnd = effectiveReturn;
 
                               const getDays = (d1: Date, d2: Date) => {
                                 return Math.max(0, getCalendarDayDiff(d1, d2));
@@ -1616,17 +1732,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                               const diffSetupShow = getDays(setupStart, showStart);
                               const showEndStr = toDateInputString(showEnd);
                               const teardownStartStr = toDateInputString(teardownStart);
-                              const extraReturnDays = getDays(teardownStart, groupEnd);
+                              const extraReturnDays = getDays(teardownStart, returnEnd);
                               const isSameDayTeardown = teardownStartStr === showEndStr;
                               const isTeardownOnLastDay = extraReturnDays === 0;
                               const isLastDayHalfTeardown = isSameDayTeardown && isTeardownOnLastDay;
+
+                              const mainDuration = Math.max(1, getCalendarDayDiff(rawEventStart, rawEventEnd) + 1);
 
                               // 2. Montaggio (Setup)
                               let setupDays = 0;
                               if (diffSetupShow > 0) {
                                 setupDays = diffSetupShow;
                               } else if (hasExplicitSetup) {
-                                if (groupDuration === 1 && isLastDayHalfTeardown) {
+                                if (mainDuration === 1 && isLastDayHalfTeardown) {
                                   setupDays = 1 / 3;
                                 } else {
                                   setupDays = 0.5;
@@ -1648,7 +1766,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                               // In middle days or when teardown continues across days, teardown starts at midnight (full days)!
                               let teardownDays = 0;
                               if (isLastDayHalfTeardown) {
-                                if (groupDuration === 1 && setupDays > 0) {
+                                if (mainDuration === 1 && setupDays > 0) {
                                   teardownDays = 1 / 3;
                                 } else {
                                   teardownDays = 0.5;
@@ -1658,7 +1776,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                               }
 
                               // 3. Evento (Show -> Teardown)
-                              const showDays = Math.max(0.2, groupDuration - truckDays - setupDays - teardownDays);
+                              const showDays = Math.max(0.2, mainDuration - truckDays - setupDays - teardownDays);
 
                               segments.push({
                                 type: 'show',
@@ -1679,7 +1797,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                                 icon: <Anchor size={10} />
                               });
 
-                              const totalSegDays = groupDuration;
+                              const totalSegDays = mainDuration;
                               const hasSetup = segments.some(s => s.type === 'setup');
                               const hasTeardown = segments.some(s => s.type === 'teardown');
 
@@ -1723,6 +1841,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                                         <MapPin size={8} />
                                         <span className="text-[8px] truncate italic">{event.location || 'N/D'}</span>
                                       </div>
+                                    )}
+
+                                    {/* Internal handle between Truck and Setup */}
+                                    {isDesktop && seg.type === 'truck' && hasSetup && (
+                                      <ResizeHandle 
+                                        position="right" 
+                                        label="Inizio Montaggio" 
+                                        onStartDrag={(e) => startDragEvent(event, 'setup-start', e)} 
+                                        isDraggingThis={activeResizeState?.targetType === 'event' && activeResizeState?.eventId === event.id && activeResizeState?.handleType === 'setup-start'}
+                                      />
                                     )}
 
                                     {/* Internal split handle between Setup and Show */}
@@ -1785,7 +1913,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                               aria-label={isShowingEventZones ? "Chiudi tendina zone" : "Apri tendina zone"}
                             >
                               <Layers size={11} />
-                              <span>{event.zones!.length}</span>
+                              <span>{resolvedEventZones.length}</span>
                             </button>
                           )}
 
@@ -1800,12 +1928,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                       </div>
 
                       {/* 2. Window Body: Zone Rows directly joined to the event row with ZERO gap, ZERO padding, ZERO separation line */}
-                      {isShowingEventZones && event.zones && (
+                      {isShowingEventZones && resolvedEventZones.length > 0 && (
                         <div 
                           onClick={(e) => e.stopPropagation()}
                           className="w-full flex flex-col"
                         >
-                          {event.zones.map((zone, zIdx) => {
+                          {resolvedEventZones.map((zone, zIdx) => {
                             const zs = zoneSegmentsList[zIdx];
                             if (!zs) return null;
                             const { zoneStartDate, segments, totalSegDays } = zs;
@@ -1993,28 +2121,44 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
                 setSummaryEventId(null);
               }}
               onUpdateZone={async (zoneId, updatedFields) => {
-                if (summaryEv && summaryEv.zones) {
-                  const updatedZones = summaryEv.zones.map(z => 
-                    (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
-                  );
-                  let updatedSnapshot = summaryEv.snapshot;
-                  if (updatedSnapshot && updatedSnapshot.length > 0) {
-                    updatedSnapshot = updatedSnapshot.map(sz => 
-                      (sz.id && zoneId ? sz.id === zoneId : sz.name === zoneId) ? { ...sz, ...updatedFields } : sz
+                if (summaryEv) {
+                  const zonesSource = getCalendarEventZones(summaryEv);
+                  if (zonesSource.length > 0) {
+                    const updatedZones = zonesSource.map(z => 
+                      (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
                     );
-                  }
-                  setOptimisticOverrides(prev => {
-                    const next = new Map(prev);
-                    next.set(summaryEv.id, { 
-                      ...(next.get(summaryEv.id) || {}), 
-                      zones: updatedZones,
-                      ...(updatedSnapshot ? { snapshot: updatedSnapshot } : {})
+                    const hasDraft = Array.isArray(summaryEv.draftZones) && summaryEv.draftZones.length > 0;
+                    const updatedDraftZones = hasDraft
+                      ? summaryEv.draftZones!.map(z => 
+                          (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
+                        )
+                      : undefined;
+                    let updatedSnapshot = summaryEv.snapshot;
+                    if (updatedSnapshot && updatedSnapshot.length > 0) {
+                      updatedSnapshot = updatedSnapshot.map(sz => 
+                        (sz.id && zoneId ? sz.id === zoneId : sz.name === zoneId) ? { ...sz, ...updatedFields } : sz
+                      );
+                    }
+
+                    const compactedZones = compactZonesForStorage(updatedZones, 'zones') || updatedZones;
+                    const compactedDraft = updatedDraftZones ? compactZonesForStorage(updatedDraftZones, 'draft') : undefined;
+                    const compactedSnapshot = updatedSnapshot ? compactZonesForStorage(updatedSnapshot, 'snapshot') : undefined;
+
+                    setOptimisticOverrides(prev => {
+                      const next = new Map(prev);
+                      next.set(summaryEv.id, { 
+                        ...(next.get(summaryEv.id) || {}), 
+                        zones: compactedZones,
+                        ...(compactedDraft ? { draftZones: compactedDraft } : {}),
+                        ...(compactedSnapshot ? { snapshot: compactedSnapshot } : {})
+                      });
+                      return next;
                     });
-                    return next;
-                  });
-                  const payload: Partial<PackingList> = { zones: updatedZones };
-                  if (updatedSnapshot) payload.snapshot = updatedSnapshot;
-                  await updateItemFields(COLL_LISTS, summaryEv.id, payload);
+                    const payload: Partial<PackingList> = { zones: compactedZones };
+                    if (compactedDraft) payload.draftZones = compactedDraft;
+                    if (compactedSnapshot) payload.snapshot = compactedSnapshot;
+                    await updateItemFields(COLL_LISTS, summaryEv.id, payload);
+                  }
                 }
               }}
             />
@@ -2039,7 +2183,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
           const rawEv = selectedZone.event;
           const opt = optimisticOverrides.get(rawEv.id);
           const currentEvent = opt ? { ...rawEv, ...opt } : rawEv;
-          const currentZone = currentEvent.zones?.find(z => 
+          const currentZone = getCalendarEventZones(currentEvent).find(z => 
             (z.id && selectedZone.zone.id ? z.id === selectedZone.zone.id : z.name === selectedZone.zone.name)
           ) || selectedZone.zone;
 
@@ -2064,7 +2208,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
           const rawTarget = lists.find(l => l.id === editZoneData.eventId);
           const opt = optimisticOverrides.get(editZoneData.eventId);
           const targetEvent = rawTarget ? (opt ? { ...rawTarget, ...opt } : rawTarget) : null;
-          const currentZone = targetEvent?.zones?.find(z => 
+          const currentZone = (targetEvent ? getCalendarEventZones(targetEvent) : []).find(z => 
             (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
           ) || editZoneData.zone;
 
@@ -2075,32 +2219,50 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               isOpen={!!editZoneData}
               onClose={() => setEditZoneData(null)}
               onSave={async (updatedFields) => {
-                if (targetEvent && targetEvent.zones) {
-                  const updatedZones = targetEvent.zones.map(z => 
-                    (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
-                      ? { ...z, ...updatedFields }
-                      : z
-                  );
-                  let updatedSnapshot = targetEvent.snapshot;
-                  if (updatedSnapshot && updatedSnapshot.length > 0) {
-                    updatedSnapshot = updatedSnapshot.map(sz => 
-                      (sz.id && editZoneData.zone.id ? sz.id === editZoneData.zone.id : sz.name === editZoneData.zone.name)
-                        ? { ...sz, ...updatedFields }
-                        : sz
+                if (targetEvent) {
+                  const zonesSource = getCalendarEventZones(targetEvent);
+                  if (zonesSource.length > 0) {
+                    const updatedZones = zonesSource.map(z => 
+                      (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
+                        ? { ...z, ...updatedFields }
+                        : z
                     );
-                  }
-                  setOptimisticOverrides(prev => {
-                    const next = new Map(prev);
-                    next.set(targetEvent.id, { 
-                      ...(next.get(targetEvent.id) || {}), 
-                      zones: updatedZones,
-                      ...(updatedSnapshot ? { snapshot: updatedSnapshot } : {})
+                    const hasDraft = Array.isArray(targetEvent.draftZones) && targetEvent.draftZones.length > 0;
+                    const updatedDraftZones = hasDraft
+                      ? targetEvent.draftZones!.map(z => 
+                          (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
+                            ? { ...z, ...updatedFields }
+                            : z
+                        )
+                      : undefined;
+                    let updatedSnapshot = targetEvent.snapshot;
+                    if (updatedSnapshot && updatedSnapshot.length > 0) {
+                      updatedSnapshot = updatedSnapshot.map(sz => 
+                        (sz.id && editZoneData.zone.id ? sz.id === editZoneData.zone.id : sz.name === editZoneData.zone.name)
+                          ? { ...sz, ...updatedFields }
+                          : sz
+                      );
+                    }
+
+                    const compactedZones = compactZonesForStorage(updatedZones, 'zones') || updatedZones;
+                    const compactedDraft = updatedDraftZones ? compactZonesForStorage(updatedDraftZones, 'draft') : undefined;
+                    const compactedSnapshot = updatedSnapshot ? compactZonesForStorage(updatedSnapshot, 'snapshot') : undefined;
+
+                    setOptimisticOverrides(prev => {
+                      const next = new Map(prev);
+                      next.set(targetEvent.id, { 
+                        ...(next.get(targetEvent.id) || {}), 
+                        zones: compactedZones,
+                        ...(compactedDraft ? { draftZones: compactedDraft } : {}),
+                        ...(compactedSnapshot ? { snapshot: compactedSnapshot } : {})
+                      });
+                      return next;
                     });
-                    return next;
-                  });
-                  const payload: Partial<PackingList> = { zones: updatedZones };
-                  if (updatedSnapshot) payload.snapshot = updatedSnapshot;
-                  await updateItemFields(COLL_LISTS, targetEvent.id, payload);
+                    const payload: Partial<PackingList> = { zones: compactedZones };
+                    if (compactedDraft) payload.draftZones = compactedDraft;
+                    if (compactedSnapshot) payload.snapshot = compactedSnapshot;
+                    await updateItemFields(COLL_LISTS, targetEvent.id, payload);
+                  }
                 }
                 setEditZoneData(null);
               }}

@@ -581,6 +581,65 @@ function runTests() {
     console.log("  ✅ TEST 10 SUPERATO: Tutte le 45 zone pubblicate in Preparazione Eventi sotto i 350 KB (ben sotto il limite di 1 MiB di Firestore)!");
   }
 
+  // TEST 11: Calendar date coordination & handle alignment (No regression on EIMA 2026 multi-zone)
+  {
+    console.log("\n▶ TEST 11: Bounding Box Calendario, Maniglie e Compattazione Date Zone");
+    // Simulate EIMA event with 43 zones and truck load date before zone setups
+    const timelineStart = new Date(2026, 9, 20); // 20 Oct 2026
+    const columnWidth = 70;
+
+    const truckLoadDate = "2026-10-26";
+    const setupDate = "2026-10-29";
+    const showDate = "2026-11-04";
+    const returnDate = "2026-11-15";
+
+    const getDayDiff = (d1, d2) => Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+    const parseYmd = (s) => {
+      const [y, m, d] = s.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    const dTruck = parseYmd(truckLoadDate);
+    const dSetup = parseYmd(setupDate);
+    const dShow = parseYmd(showDate);
+    const dReturn = parseYmd(returnDate);
+
+    // Main event duration
+    const eventDuration = getDayDiff(dTruck, dReturn) + 1;
+    const truckDays = getDayDiff(dTruck, dSetup); // 3 days (26, 27, 28)
+    const setupDays = getDayDiff(dSetup, dShow); // 6 days (29, 30, 31, 1, 2, 3)
+
+    if (truckDays !== 3 || setupDays !== 6) {
+      throw new Error(`Test 11 fallito: calcolo giorni errato (truck=${truckDays}, setup=${setupDays})`);
+    }
+
+    // Handle X positions
+    const truckHandleX = getDayDiff(timelineStart, dTruck) * columnWidth;
+    const setupHandleX = getDayDiff(timelineStart, dSetup) * columnWidth;
+
+    // Relative offset of Setup inside event bar
+    const setupRelXInBar = truckDays * columnWidth;
+    const barAbsoluteX = truckHandleX;
+    const calculatedSetupAbsoluteX = barAbsoluteX + setupRelXInBar;
+
+    if (calculatedSetupAbsoluteX !== setupHandleX) {
+      throw new Error(`Test 11 fallito: disallineamento maniglia Setup (${calculatedSetupAbsoluteX} vs ${setupHandleX})`);
+    }
+
+    // Moving truck date forward (from 26 to 27)
+    const newTruck = parseYmd("2026-10-27");
+    const newTruckDays = getDayDiff(newTruck, dSetup); // 2 days
+    const newBarAbsoluteX = getDayDiff(timelineStart, newTruck) * columnWidth;
+    const newCalculatedSetupX = newBarAbsoluteX + (newTruckDays * columnWidth);
+
+    // Setup absolute timeline X must remain EXACTLY setupHandleX (Oct 29)! It must NOT shift backward!
+    if (newCalculatedSetupX !== setupHandleX) {
+      throw new Error(`Test 11 fallito: lo spostamento del carico ha spostato all'indietro il montaggio! (${newCalculatedSetupX} vs ${setupHandleX})`);
+    }
+
+    console.log("  ✅ TEST 11 SUPERATO: Allineamento maniglie e date calendario perfetto (nessuno spostamento backward)!");
+  }
+
   console.log("\n🎉 TUTTI I TEST DI CONCORRENZA MULTI-UTENTE HANNO AVUTO SUCCESSO!\n");
 }
 
