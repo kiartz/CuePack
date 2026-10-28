@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Search, MapPin, CornerDownRight, Calendar, ArrowLeft, Truck, CheckSquare, Square, Check, MessageSquare, AlertTriangle, ChevronRight, ChevronDown, AlertOctagon, X, Save, AlertCircle, LayoutList, Layers, Archive, RefreshCcw, Copy, Rocket, Trash2, Share, Share2, FileText, ClipboardList, ClipboardCheck, FileDown, Database, Filter, WifiOff, Eye, ArrowLeftRight, History, RotateCcw, Info, Edit2, Minus, Calculator } from 'lucide-react';
 import { PackingList, ListComponent, WarehouseState, ListZone, ListSection, InventoryItem, InventoryDatabase, Kit, ItemReplacementInfo } from '../types';
 import { reconcileZones, compactZonesForStorage } from '../services/syncReconciler';
+import { applyZoneSchedules } from '../services/zoneSchedule';
+import { persistZoneEdit } from '../services/zoneScheduleService';
 import { addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, db, DEFAULT_DATABASE_ID } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { Modal } from './Modal';
@@ -222,7 +224,7 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
     // Direct Firestore real-time listener for active list document
     const unsubDoc = onSnapshot(doc(db, COLL_LISTS, activeListId), (snapshot) => {
       if (!snapshot.exists()) return;
-      const incomingData = { id: snapshot.id, ...snapshot.data() } as PackingList;
+      const incomingData = applyZoneSchedules({ id: snapshot.id, ...snapshot.data() } as PackingList);
 
       // Reconcile incoming server data with local state using the Reconciler
       if (localListRef.current) {
@@ -5248,18 +5250,10 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                       const newZones = (activeList.zones || []).map(z => 
                         (z.id && targetId ? z.id === targetId : z.name === targetName) ? { ...z, ...updatedFields } : z
                       );
-                      let updatedSnapshot = activeList.snapshot;
-                      if (updatedSnapshot && updatedSnapshot.length > 0) {
-                        updatedSnapshot = updatedSnapshot.map(sz => 
-                          (sz.id && targetId ? sz.id === targetId : sz.name === targetName) ? { ...sz, ...updatedFields } : sz
-                        );
-                      }
-                      const updatedList = { ...activeList, zones: newZones, snapshot: updatedSnapshot };
+                      const updatedList = { ...activeList, zones: newZones };
                       setLocalList(updatedList);
                       localListRef.current = updatedList;
-                      const payload: Partial<PackingList> = { zones: newZones };
-                      if (updatedSnapshot) payload.snapshot = updatedSnapshot;
-                      await updateItemFields(COLL_LISTS, activeList.id, payload);
+                      await persistZoneEdit(activeList, zoneForEdit, updatedFields);
                       setZoneForEdit(null);
                   }}
               />
@@ -5293,18 +5287,9 @@ export const PrepMaterialView: React.FC<PrepMaterialViewProps> = ({
                           const newZones = (activeList.zones || []).map(z => 
                             (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
                           );
-                          let updatedSnapshot = activeList.snapshot;
-                          if (updatedSnapshot && updatedSnapshot.length > 0) {
-                            updatedSnapshot = updatedSnapshot.map(sz => 
-                              (sz.id && zoneId ? sz.id === zoneId : sz.name === zoneId) ? { ...sz, ...updatedFields } : sz
-                            );
-                          }
-                          const updatedList = { ...activeList, zones: newZones, snapshot: updatedSnapshot };
+                          const updatedList = { ...activeList, zones: newZones };
                           setLocalList(updatedList);
                           localListRef.current = updatedList;
-                          const payload: Partial<PackingList> = { zones: newZones };
-                          if (updatedSnapshot) payload.snapshot = updatedSnapshot;
-                          await updateItemFields(COLL_LISTS, activeList.id, payload);
                       }
                   }}
               />

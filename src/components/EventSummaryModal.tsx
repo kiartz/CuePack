@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 import { ShareEventModal } from './ShareEventModal';
 import { ZoneEditModal } from './ZoneEditModal';
 import { updateItemFields, COLL_LISTS } from '../firebase';
+import { persistZoneEdit } from '../services/zoneScheduleService';
 import { formatItalianDate } from '../utils';
 import { 
   MapPin, Calendar, Clock, FileText, Anchor, User, PenSquare, 
@@ -77,9 +78,7 @@ export const EventSummaryModal: React.FC<EventSummaryModalProps> = ({
     setLocalEvent(updatedEv);
     
     try {
-      const payload: Partial<PackingList> = { zones: newZones };
-      if (updatedSnapshot) payload.snapshot = updatedSnapshot;
-      await updateItemFields(COLL_LISTS, localEvent.id, payload);
+      await persistZoneEdit(localEvent, editingZone, updatedFields);
       if (onUpdateZone) {
         onUpdateZone(targetId || targetName, updatedFields);
       }

@@ -258,6 +258,18 @@ export interface ZoneLockInfo {
   lockedAt: number;
 }
 
+/** Per-zone dates stored outside the `zones` array (written via atomic dot-path updates). */
+export interface ZoneSchedule {
+  setupDate?: string;
+  showDate?: string;
+  showTimeStart?: string;
+  showTimeEnd?: string;
+  endDate?: string;
+  teardownDate?: string;
+  returnDate?: string;
+  updatedAt?: number;
+}
+
 export interface PackingList {
   id: string;
   eventName: string;
@@ -286,6 +298,7 @@ export interface PackingList {
   zones?: ListZone[]; // Published/confirmed zones when list is completed, or working zones before completion
   draftZones?: ListZone[]; // Unconfirmed working draft zones in Crea Liste before pressing Aggiorna
   zoneLocks?: Record<string, ZoneLockInfo | null>; // Exclusive per-zone editing lock in Crea Liste
+  zoneSchedules?: Record<string, ZoneSchedule>; // Per-zone dates (Calendar), overlaid on zones/draftZones/snapshot at read time
   sections?: ListSection[]; // Legacy structure (kept for backward compatibility during migration)
   notes: string;
   // Checklist State Persistence

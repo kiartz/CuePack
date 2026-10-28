@@ -11,6 +11,8 @@ import { ZoneEditModal } from './ZoneEditModal';
 import { addOrUpdateItem, updateItemFields, COLL_LISTS } from '../firebase';
 import { formatItalianDate } from '../utils';
 import { compactZonesForStorage } from '../services/syncReconciler';
+import { applyZoneSchedules, mergeZoneScheduleLocal, type ZoneScheduleField } from '../services/zoneSchedule';
+import { saveZoneSchedule, persistZoneEdit } from '../services/zoneScheduleService';
 
 interface CalendarViewProps {
   lists: PackingList[];
@@ -21,10 +23,11 @@ interface CalendarViewProps {
 
 // Resolve active zones of an event (prioritizing draftZones if in drafting state)
 const getCalendarEventZones = (ev: PackingList): ListZone[] => {
-  if (Array.isArray(ev.draftZones) && ev.draftZones.length > 0) {
-    return ev.draftZones;
+  const overlaid = applyZoneSchedules(ev);
+  if (Array.isArray(overlaid.draftZones) && overlaid.draftZones.length > 0) {
+    return overlaid.draftZones;
   }
-  return ev.zones || [];
+  return overlaid.zones || [];
 };
 
 const DEFAULT_COLUMN_WIDTH = 120;
@@ -749,112 +752,83 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               };
             }
           } else if (resize.targetType === 'zone' && resize.zoneId && targetEvent) {
-            const currentZonesList = targetEvent.zones || [];
-            const updatedZones = currentZonesList.map(z => {
-              if (z.id !== resize.zoneId) return z;
-              const updated: any = { ...z };
-              if (resize.handleType === 'zone-teardown-start') {
-                if (isHalfDay) {
-                  updated.endDate = newYmd;
-                  updated.teardownDate = newYmd;
-                } else {
-                  const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
-                  updated.endDate = toDateInputString(prevDate);
-                  updated.teardownDate = newYmd;
-                }
-                if (z.returnDate && z.returnDate < newYmd) {
-                  updated.returnDate = newYmd;
-                }
-              } else if (resize.handleType === 'zone-show') {
-                updated.showDate = newYmd;
-                // Never mutate setupDate when moving zone-show!
+            const scheduleFields: Partial<Record<ZoneScheduleField, string>> = {};
+            if (resize.handleType === 'zone-teardown-start') {
+              if (isHalfDay) {
+                scheduleFields.endDate = newYmd;
+                scheduleFields.teardownDate = newYmd;
               } else {
-                updated[resize.fieldToUpdate] = newYmd;
+                const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
+                scheduleFields.endDate = toDateInputString(prevDate);
+                scheduleFields.teardownDate = newYmd;
               }
-              return updated;
+              const curZone = getCalendarEventZones(targetEvent).find(z => z.id === resize.zoneId);
+              if (curZone?.returnDate && curZone.returnDate < newYmd) {
+                scheduleFields.returnDate = newYmd;
+              }
+            } else if (resize.handleType === 'zone-show') {
+              scheduleFields.showDate = newYmd;
+            } else if (resize.fieldToUpdate) {
+              scheduleFields[resize.fieldToUpdate as ZoneScheduleField] = newYmd;
+            }
+
+            const currentZones = getCalendarEventZones(targetEvent);
+            const updatedZones = currentZones.map(z => {
+              if (z.id !== resize.zoneId) return z;
+              return { ...z, ...scheduleFields };
             });
 
-            const hasDraft = Array.isArray(targetEvent.draftZones) && targetEvent.draftZones.length > 0;
-            const updatedDraftZones = hasDraft
-              ? targetEvent.draftZones!.map(z => {
-                  if (z.id !== resize.zoneId) return z;
-                  const updated: any = { ...z };
-                  if (resize.handleType === 'zone-teardown-start') {
-                    if (isHalfDay) {
-                      updated.endDate = newYmd;
-                      updated.teardownDate = newYmd;
-                    } else {
-                      const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
-                      updated.endDate = toDateInputString(prevDate);
-                      updated.teardownDate = newYmd;
-                    }
-                    if (z.returnDate && z.returnDate < newYmd) {
-                      updated.returnDate = newYmd;
-                    }
-                  } else if (resize.handleType === 'zone-show') {
-                    updated.showDate = newYmd;
-                  } else {
-                    updated[resize.fieldToUpdate] = newYmd;
-                  }
-                  return updated;
-                })
-              : undefined;
+            const updatedSchedules = mergeZoneScheduleLocal(
+              targetEvent.zoneSchedules,
+              resize.zoneId,
+              scheduleFields
+            );
 
-            let updatedSnapshot = targetEvent.snapshot;
-            if (updatedSnapshot && updatedSnapshot.length > 0) {
-              updatedSnapshot = updatedSnapshot.map(sz => {
-                if (sz.id !== resize.zoneId) return sz;
-                const updated: any = { ...sz };
-                if (resize.handleType === 'zone-teardown-start') {
-                  if (isHalfDay) {
-                    updated.endDate = newYmd;
-                    updated.teardownDate = newYmd;
-                  } else {
-                    const prevDate = addCalendarDays(parseLocalDate(newYmd), -1);
-                    updated.endDate = toDateInputString(prevDate);
-                    updated.teardownDate = newYmd;
-                  }
-                } else if (resize.handleType === 'zone-show') {
-                  updated.showDate = newYmd;
-                } else {
-                  updated[resize.fieldToUpdate] = newYmd;
-                }
-                return updated;
+            // Apply optimistic override synchronously to eliminate any release flicker
+            setOptimisticOverrides(prev => {
+              const next = new Map(prev);
+              const existing = next.get(resize.eventId) || {};
+              next.set(resize.eventId, { 
+                ...existing, 
+                zoneSchedules: updatedSchedules,
+                zones: updatedZones,
+                ...(targetEvent.draftZones ? { draftZones: updatedZones } : {})
               });
-            }
+              return next;
+            });
 
-            eventUpdates = {
-              zones: compactZonesForStorage(updatedZones, 'zones')
-            };
-            if (updatedDraftZones) {
-              eventUpdates.draftZones = compactZonesForStorage(updatedDraftZones, 'draft');
-            }
-            if (updatedSnapshot) {
-              eventUpdates.snapshot = compactZonesForStorage(updatedSnapshot, 'snapshot');
+            // Clear active drag state
+            activeResizeRef.current = null;
+            setActiveResizeState(null);
+
+            try {
+              await saveZoneSchedule(resize.eventId, resize.zoneId, scheduleFields);
+            } catch (err) {
+              console.error('Errore durante salvataggio zoneSchedule:', err);
             }
           }
 
-          // Apply optimistic override synchronously to eliminate any release flicker
-          setOptimisticOverrides(prev => {
-            const next = new Map(prev);
-            const existing = next.get(resize.eventId) || {};
-            next.set(resize.eventId, { 
-              ...existing, 
-              ...eventUpdates,
-              ...(eventUpdates.zones ? { zones: eventUpdates.zones } : {}),
-              ...(eventUpdates.draftZones ? { draftZones: eventUpdates.draftZones } : {})
+          if (resize.targetType === 'event') {
+            // Apply optimistic override synchronously to eliminate any release flicker
+            setOptimisticOverrides(prev => {
+              const next = new Map(prev);
+              const existing = next.get(resize.eventId) || {};
+              next.set(resize.eventId, { 
+                ...existing, 
+                ...eventUpdates
+              });
+              return next;
             });
-            return next;
-          });
 
-          // Clear active drag state
-          activeResizeRef.current = null;
-          setActiveResizeState(null);
+            // Clear active drag state
+            activeResizeRef.current = null;
+            setActiveResizeState(null);
 
-          try {
-            await updateItemFields(COLL_LISTS, resize.eventId, eventUpdates);
-          } catch (err) {
-            console.error('Errore durante salvataggio ridimensionamento timeline:', err);
+            try {
+              await updateItemFields(COLL_LISTS, resize.eventId, eventUpdates);
+            } catch (err) {
+              console.error('Errore durante salvataggio ridimensionamento timeline:', err);
+            }
           }
         } else {
           activeResizeRef.current = null;
@@ -2122,43 +2096,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               }}
               onUpdateZone={async (zoneId, updatedFields) => {
                 if (summaryEv) {
-                  const zonesSource = getCalendarEventZones(summaryEv);
-                  if (zonesSource.length > 0) {
-                    const updatedZones = zonesSource.map(z => 
-                      (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
-                    );
-                    const hasDraft = Array.isArray(summaryEv.draftZones) && summaryEv.draftZones.length > 0;
-                    const updatedDraftZones = hasDraft
-                      ? summaryEv.draftZones!.map(z => 
-                          (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
-                        )
-                      : undefined;
-                    let updatedSnapshot = summaryEv.snapshot;
-                    if (updatedSnapshot && updatedSnapshot.length > 0) {
-                      updatedSnapshot = updatedSnapshot.map(sz => 
-                        (sz.id && zoneId ? sz.id === zoneId : sz.name === zoneId) ? { ...sz, ...updatedFields } : sz
-                      );
-                    }
-
-                    const compactedZones = compactZonesForStorage(updatedZones, 'zones') || updatedZones;
-                    const compactedDraft = updatedDraftZones ? compactZonesForStorage(updatedDraftZones, 'draft') : undefined;
-                    const compactedSnapshot = updatedSnapshot ? compactZonesForStorage(updatedSnapshot, 'snapshot') : undefined;
-
-                    setOptimisticOverrides(prev => {
-                      const next = new Map(prev);
-                      next.set(summaryEv.id, { 
-                        ...(next.get(summaryEv.id) || {}), 
-                        zones: compactedZones,
-                        ...(compactedDraft ? { draftZones: compactedDraft } : {}),
-                        ...(compactedSnapshot ? { snapshot: compactedSnapshot } : {})
-                      });
-                      return next;
+                  const currentZones = getCalendarEventZones(summaryEv);
+                  const updatedZones = currentZones.map(z => 
+                    (z.id && zoneId ? z.id === zoneId : z.name === zoneId) ? { ...z, ...updatedFields } : z
+                  );
+                  setOptimisticOverrides(prev => {
+                    const next = new Map(prev);
+                    next.set(summaryEv.id, { 
+                      ...(next.get(summaryEv.id) || {}), 
+                      zones: updatedZones,
+                      ...(summaryEv.draftZones ? { draftZones: updatedZones } : {})
                     });
-                    const payload: Partial<PackingList> = { zones: compactedZones };
-                    if (compactedDraft) payload.draftZones = compactedDraft;
-                    if (compactedSnapshot) payload.snapshot = compactedSnapshot;
-                    await updateItemFields(COLL_LISTS, summaryEv.id, payload);
-                  }
+                    return next;
+                  });
                 }
               }}
             />
@@ -2220,49 +2170,22 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ lists, onOpenEvent, 
               onClose={() => setEditZoneData(null)}
               onSave={async (updatedFields) => {
                 if (targetEvent) {
-                  const zonesSource = getCalendarEventZones(targetEvent);
-                  if (zonesSource.length > 0) {
-                    const updatedZones = zonesSource.map(z => 
-                      (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
-                        ? { ...z, ...updatedFields }
-                        : z
-                    );
-                    const hasDraft = Array.isArray(targetEvent.draftZones) && targetEvent.draftZones.length > 0;
-                    const updatedDraftZones = hasDraft
-                      ? targetEvent.draftZones!.map(z => 
-                          (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
-                            ? { ...z, ...updatedFields }
-                            : z
-                        )
-                      : undefined;
-                    let updatedSnapshot = targetEvent.snapshot;
-                    if (updatedSnapshot && updatedSnapshot.length > 0) {
-                      updatedSnapshot = updatedSnapshot.map(sz => 
-                        (sz.id && editZoneData.zone.id ? sz.id === editZoneData.zone.id : sz.name === editZoneData.zone.name)
-                          ? { ...sz, ...updatedFields }
-                          : sz
-                      );
-                    }
-
-                    const compactedZones = compactZonesForStorage(updatedZones, 'zones') || updatedZones;
-                    const compactedDraft = updatedDraftZones ? compactZonesForStorage(updatedDraftZones, 'draft') : undefined;
-                    const compactedSnapshot = updatedSnapshot ? compactZonesForStorage(updatedSnapshot, 'snapshot') : undefined;
-
-                    setOptimisticOverrides(prev => {
-                      const next = new Map(prev);
-                      next.set(targetEvent.id, { 
-                        ...(next.get(targetEvent.id) || {}), 
-                        zones: compactedZones,
-                        ...(compactedDraft ? { draftZones: compactedDraft } : {}),
-                        ...(compactedSnapshot ? { snapshot: compactedSnapshot } : {})
-                      });
-                      return next;
+                  const currentZones = getCalendarEventZones(targetEvent);
+                  const updatedZones = currentZones.map(z => 
+                    (z.id && editZoneData.zone.id ? z.id === editZoneData.zone.id : z.name === editZoneData.zone.name)
+                      ? { ...z, ...updatedFields }
+                      : z
+                  );
+                  setOptimisticOverrides(prev => {
+                    const next = new Map(prev);
+                    next.set(targetEvent.id, { 
+                      ...(next.get(targetEvent.id) || {}), 
+                      zones: updatedZones,
+                      ...(targetEvent.draftZones ? { draftZones: updatedZones } : {})
                     });
-                    const payload: Partial<PackingList> = { zones: compactedZones };
-                    if (compactedDraft) payload.draftZones = compactedDraft;
-                    if (compactedSnapshot) payload.snapshot = compactedSnapshot;
-                    await updateItemFields(COLL_LISTS, targetEvent.id, payload);
-                  }
+                    return next;
+                  });
+                  await persistZoneEdit(targetEvent, currentZone, updatedFields);
                 }
                 setEditZoneData(null);
               }}

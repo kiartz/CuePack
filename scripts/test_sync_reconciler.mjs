@@ -1,4 +1,5 @@
 import { reconcileZones, createDefaultWarehouseState, compactZonesForStorage } from '../src/services/syncReconciler.ts';
+import { applyZoneSchedules, buildZoneSchedulePayload, mergeZoneScheduleLocal } from '../src/services/zoneSchedule.ts';
 
 // Test harness for Sync Reconciler
 function runTests() {
@@ -638,6 +639,108 @@ function runTests() {
     }
 
     console.log("  ✅ TEST 11 SUPERATO: Allineamento maniglie e date calendario perfetto (nessuno spostamento backward)!");
+  }
+
+  // TEST 12: Zero-Interference Between Calendar Zone Dates and Warehouse Prep Checkmarks
+  {
+    console.log("\n▶ TEST 12: Isolamento Totale tra Date Calendario (zoneSchedules) e Spunte Magazzinieri (EIMA 2026)");
+    
+    // Simulate EIMA 2026 with 43 zones
+    const zones = Array.from({ length: 43 }, (_, i) => ({
+      id: `zone-${i + 1}`,
+      name: `Padiglione ${i + 1}`,
+      sections: [{
+        id: `sec-${i + 1}`,
+        name: 'Audio/Video',
+        components: [
+          {
+            uniqueId: `comp-${i + 1}-1`,
+            name: `Diffusore Audio #${i + 1}`,
+            quantity: 2,
+            warehouseState: { inDistinta: true, loaded: false, returned: false, isBroken: false, warehouseNote: '' }
+          }
+        ]
+      }]
+    }));
+
+    const mockEvent = {
+      id: 'eima-2026',
+      eventName: 'EIMA 2026',
+      truckLoadDate: '2026-10-26',
+      setupDate: '2026-10-29',
+      eventDate: '2026-11-04',
+      returnDate: '2026-11-15',
+      zones: zones
+    };
+
+    // 1. Manager in Calendar sets custom setup/show dates for Zone 1 and Zone 2
+    const z1Payload = buildZoneSchedulePayload('zone-1', { setupDate: '2026-10-31', showDate: '2026-11-04' });
+    const z2Payload = buildZoneSchedulePayload('zone-2', { setupDate: '2026-11-02', showDate: '2026-11-05' });
+
+    if (!z1Payload || z1Payload['zoneSchedules.zone-1.setupDate'] !== '2026-10-31') {
+      throw new Error("Test 12 fallito: buildZoneSchedulePayload ha generato payload errato per zone-1");
+    }
+
+    // Manager updates local optimistic schedules
+    let localEvent = { ...mockEvent };
+    localEvent.zoneSchedules = mergeZoneScheduleLocal(localEvent.zoneSchedules, 'zone-1', { setupDate: '2026-10-31', showDate: '2026-11-04' });
+    localEvent.zoneSchedules = mergeZoneScheduleLocal(localEvent.zoneSchedules, 'zone-2', { setupDate: '2026-11-02', showDate: '2026-11-05' });
+
+    // 2. Concurrently, warehouse operators are ticking items in Preparazione Eventi:
+    // They tick "loaded: true" on zone-1 and zone-2 components.
+    // Their local copy of zones has NO setupDate (or old fallback).
+    const warehouseZonesCommit = mockEvent.zones.map(z => {
+      if (z.id === 'zone-1' || z.id === 'zone-2') {
+        return {
+          ...z,
+          setupDate: undefined, // Warehouse client had old/empty date
+          sections: [{
+            ...z.sections[0],
+            components: [{
+              ...z.sections[0].components[0],
+              warehouseState: { inDistinta: true, loaded: true, returned: false, isBroken: false, warehouseNote: 'Caricato su Camion 1' }
+            }]
+          }]
+        };
+      }
+      return z;
+    });
+
+    // 3. Firestore server receives warehouse commit to `zones` AND calendar atomic update to `zoneSchedules`
+    const serverFirestoreDoc = {
+      ...mockEvent,
+      zones: warehouseZonesCommit, // updated by warehouse operator
+      zoneSchedules: {
+        'zone-1': { setupDate: '2026-10-31', showDate: '2026-11-04', updatedAt: Date.now() },
+        'zone-2': { setupDate: '2026-11-02', showDate: '2026-11-05', updatedAt: Date.now() }
+      }
+    };
+
+    // 4. Any client (Calendar, Preparazione, Crea Liste) reads the document and applies `applyZoneSchedules`
+    const clientResolvedEvent = applyZoneSchedules(serverFirestoreDoc);
+
+    const resolvedZ1 = clientResolvedEvent.zones.find(z => z.id === 'zone-1');
+    const resolvedZ2 = clientResolvedEvent.zones.find(z => z.id === 'zone-2');
+
+    // VERIFICATION A: Calendar dates were NOT reset by warehouse write
+    if (resolvedZ1.setupDate !== '2026-10-31' || resolvedZ1.showDate !== '2026-11-04') {
+      throw new Error(`Test 12 fallito: data di zone-1 resettata (${resolvedZ1.setupDate}) invece di rimanere 2026-10-31!`);
+    }
+    if (resolvedZ2.setupDate !== '2026-11-02' || resolvedZ2.showDate !== '2026-11-05') {
+      throw new Error(`Test 12 fallito: data di zone-2 resettata (${resolvedZ2.setupDate}) invece di rimanere 2026-11-02!`);
+    }
+
+    // VERIFICATION B: Warehouse worker checkmarks were NOT overwritten by calendar
+    const z1Component = resolvedZ1.sections[0].components[0];
+    const z2Component = resolvedZ2.sections[0].components[0];
+    if (!z1Component.warehouseState.loaded || z1Component.warehouseState.warehouseNote !== 'Caricato su Camion 1') {
+      throw new Error("Test 12 fallito: spunta 'loaded: true' del magazziniere persa su zone-1!");
+    }
+    if (!z2Component.warehouseState.loaded) {
+      throw new Error("Test 12 fallito: spunta 'loaded: true' del magazziniere persa su zone-2!");
+    }
+
+    console.log("  ✅ TEST 12 SUPERATO: Date calendario e spunte magazzinieri coesistono al 100% senza alcun reset o conflitto!");
   }
 
   console.log("\n🎉 TUTTI I TEST DI CONCORRENZA MULTI-UTENTE HANNO AVUTO SUCCESSO!\n");

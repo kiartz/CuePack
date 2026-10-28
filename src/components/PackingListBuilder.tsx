@@ -21,6 +21,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { reconcileZones, compactZonesForStorage, compactDeletedItemsForStorage } from '../services/syncReconciler';
+import { persistZoneEdit } from '../services/zoneScheduleService';
 import { auth, addOrUpdateItem, deleteItem, updateItemFields, COLL_LISTS, COLL_INVENTORY, DEFAULT_DATABASE_ID, getInventoryCollection } from '../firebase';
 import { exportPDF, exportTotalsPDF, exportCSV, exportSectionPDF, exportSelectivePDF, exportZonePDF } from '../utils/export';
 import { getDbBadgeStyle } from '../utils/databaseColors';
@@ -5605,6 +5606,7 @@ export const PackingListBuilder: React.FC<PackingListBuilderProps> = ({
               (z.id && targetId ? z.id === targetId : z.name === targetName) ? { ...z, ...updatedFields } : z
             );
             await updateActiveList({ zones: newZones }, true);
+            await persistZoneEdit(activeList, zoneForEdit, updatedFields);
             setZoneForEdit(null);
           }}
         />

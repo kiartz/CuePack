@@ -18,6 +18,7 @@ import {
   batchWriteItems, addOrUpdateItem, cleanData 
 } from '../firebase';
 import { parseIndexSnapshot } from '../services/catalogIndexService';
+import { applyZoneSchedules } from '../services/zoneSchedule';
 import { EmulatorBanner } from './EmulatorBanner';
 import { trackCollectionSnapshot, trackDocSnapshot } from '../services/firestoreTelemetry';
 import { collection, doc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -270,7 +271,7 @@ export default function AuthenticatedApp() {
     const unsubLists = onSnapshot(collection(db, COLL_LISTS), (snapshot) => {
         trackCollectionSnapshot(COLL_LISTS, snapshot, isInitialListsRef);
         const items: PackingList[] = [];
-        snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() } as PackingList));
+        snapshot.forEach(doc => items.push(applyZoneSchedules({ id: doc.id, ...doc.data() } as PackingList)));
         setPackingLists(items);
     }, (error) => {
         console.error("Lists Sync Error:", error);
